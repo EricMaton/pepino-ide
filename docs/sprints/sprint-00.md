@@ -11,7 +11,7 @@
 - [x] Implementar `EventBus` tipado (subscribe/publish con tipos)
 - [x] CI en GitHub Actions: build + tests en cada PR
 - [x] Convenciones: ktlint/detekt, conventional commits, PR template, CODEOWNERS
-- [ ] Escribir ADR-001 (stack) y ADR-002 (plugins como JS interpretado)
+- [x] Escribir ADR-001 (stack) y ADR-002 (plugins como JS interpretado)
 
 ## Criterios de aceptación
 
