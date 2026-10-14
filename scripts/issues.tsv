@@ -1,0 +1,70 @@
+Sprint 0 — Cimientos	Configurar KMP + Compose Multiplatform	type:feat,area:infra,priority:high	Android minSdk 26 + iOS framework stub. Ver docs/sprints/sprint-00.md
+Sprint 0 — Cimientos	Crear estructura de módulos del proyecto	type:feat,area:infra,priority:high	:core:commands, :core:events, :core:plugins (esqueleto), :feature:*
+Sprint 0 — Cimientos	Implementar CommandRegistry + dispatcher + paleta de comandos	type:feat,area:core,priority:high	Columna vertebral para plugins y agentes IA. Demo interna con 2 comandos.
+Sprint 0 — Cimientos	Implementar EventBus tipado	type:feat,area:core,priority:high	Subscribe/publish con tipos.
+Sprint 0 — Cimientos	CI en GitHub Actions (build + tests por PR)	type:feat,area:infra,priority:high	Build Android + iOS en cada PR.
+Sprint 0 — Cimientos	Convenciones: ktlint, detekt, conventional commits, PR template	type:feat,area:infra,priority:medium	
+Sprint 0 — Cimientos	Escribir ADR-001 y ADR-002	type:docs,priority:medium	ADR-001: stack. ADR-002: plugins como JS interpretado.
+Sprint 1 — Espacio de proyectos	Crear carpeta reservada de proyectos	type:feat,area:projects,priority:high	Scoped storage correcto, sin permisos broad innecesarios.
+Sprint 1 — Espacio de proyectos	File explorer táctil	type:feat,area:projects,priority:high	Lista, navegación, ordenación. 100% táctil.
+Sprint 1 — Espacio de proyectos	Operaciones de archivo	type:feat,area:projects,priority:high	Crear, renombrar, mover, copiar, borrar (con confirmación).
+Sprint 1 — Espacio de proyectos	Abrir/cerrar proyecto (marcador de proyecto)	type:feat,area:projects,priority:high	Proyecto = carpeta con marcador.
+Sprint 1 — Espacio de proyectos	Home con proyectos recientes	type:feat,area:projects,priority:medium	Persisten entre reinicios.
+Sprint 1 — Espacio de proyectos	Flujo de permisos de storage	type:feat,area:projects,priority:medium	Cuando el usuario no ha dado acceso aún.
+Sprint 1 — Espacio de proyectos	Tests capa de datos del filesystem	type:feat,area:projects,priority:medium	
+Sprint 2 — Editor v1	Editor con syntax highlighting	type:feat,area:editor,priority:high	tree-sitter o equivalente; decidir y documentar la elección.
+Sprint 2 — Editor v1	Edición táctil (cursor, selección, zoom)	type:feat,area:editor,priority:high	Posicionar cursor preciso, selección, gestos de zoom de texto.
+Sprint 2 — Editor v1	Toolbar superior configurable	type:feat,area:editor,priority:high	Símbolos {}[]()=;, tab, undo/redo.
+Sprint 2 — Editor v1	Autosave con snapshot pre-édición	type:feat,area:editor,priority:high	El SO mata apps: nunca perder trabajo.
+Sprint 2 — Editor v1	Restaurar estado del editor	type:feat,area:editor,priority:medium	Scroll, cursor, archivo abierto al reabrir.
+Sprint 2 — Editor v1	Rendimiento con archivos 5k+ líneas	type:feat,area:editor,priority:medium	Sin tirones visibles.
+Sprint 3 — Git local	Spike: libgit2 vía bindings KMP	type:spike,area:git,priority:high	Validar bindings al inicio del sprint antes de comprometer diseño.
+Sprint 3 — Git local	git init / abrir repo existente	type:feat,area:git,priority:high	
+Sprint 3 — Git local	Commits con staging	type:feat,area:git,priority:high	Mensaje, staging de archivos, stage parcial si viable.
+Sprint 3 — Git local	Branches	type:feat,area:git,priority:high	Crear, cambiar, borrar, lista.
+Sprint 3 — Git local	Diff viewer táctil	type:feat,area:git,priority:high	Cambios por archivo, antes/después, legible en 6 pulgadas.
+Sprint 3 — Git local	History (log de commits)	type:feat,area:git,priority:medium	Autor, fecha, mensaje.
+Sprint 3 — Git local	Snapshot automático pre-cambio	type:feat,area:git,priority:high	Integración con autosave del editor.
+Sprint 3 — Git local	Tests operaciones core de git	type:feat,area:git,priority:medium	
+Sprint 4 — GitHub	OAuth con PKCE contra GitHub	type:feat,area:git,priority:high	
+Sprint 4 — GitHub	Token en Keystore/Keychain	type:feat,area:git,priority:high	Nunca plaintext: ni logs, ni crash reports, ni disco sin cifrar.
+Sprint 4 — GitHub	Listar repos del usuario	type:feat,area:git,priority:high	Búsqueda y paginación.
+Sprint 4 — GitHub	Clonar repo a carpeta de proyectos	type:feat,area:git,priority:high	
+Sprint 4 — GitHub	Push/pull con estados de conflicto	type:feat,area:git,priority:high	Mínimo: detectar y avisar claramente.
+Sprint 4 — GitHub	Crear PR desde la app	type:feat,area:git,priority:high	Rama, título, descripción, base. CIERRA EL MVP.
+Sprint 4 — GitHub	Pantalla de estado de sync	type:feat,area:git,priority:medium	Ahead/behind, último fetch.
+Sprint 4 — GitHub	Errores de red y token expirado	type:feat,area:git,priority:medium	Re-auth fluido.
+Sprint 5 — Terminal v1	PTY embebido	type:feat,area:terminal,priority:high	Proceso shell hijo real en Android.
+Sprint 5 — Terminal v1	Shell + PATH de la app	type:feat,area:terminal,priority:high	sh/toybox disponibles.
+Sprint 5 — Terminal v1	Terminal UI	type:feat,area:terminal,priority:high	Scrollback, colores, resize con teclado.
+Sprint 5 — Terminal v1	Teclado terminal	type:feat,area:terminal,priority:high	Fila especial: Ctrl, Esc, Tab, flechas, |, ~.
+Sprint 5 — Terminal v1	git del sistema en terminal	type:feat,area:terminal,priority:medium	
+Sprint 5 — Terminal v1	Spike: node/npm embebido	type:spike,area:terminal,priority:low	nodejs-mobile. Decidir sí/no con datos.
+Sprint 5 — Terminal v1	Documentar terminal no disponible en iOS	type:docs,priority:medium	Restricción de plataforma, no del proyecto.
+Sprint 6 — Plugins	Temas: claro/oscuro/custom	type:feat,area:settings,priority:high	Colores de editor + UI.
+Sprint 6 — Plugins	Settings del editor	type:feat,area:settings,priority:medium	Font size, tab size, word wrap.
+Sprint 6 — Plugins	Plugin loader (manifest + apiVersion)	type:feat,area:plugins,priority:high	Leer plugin.json, validar, version check.
+Sprint 6 — Plugins	Motor QuickJS embebido (JNI)	type:feat,area:plugins,priority:high	Ejecutar main.js en sandbox.
+Sprint 6 — Plugins	Exponer API al sandbox	type:feat,area:plugins,priority:high	commands.register, editor getText/setText, eventos onSave/onChange/onOpen.
+Sprint 6 — Plugins	Sistema de permisos de plugins	type:feat,area:plugins,priority:high	Declarados en manifest, aprobados al instalar, enforceados en runtime.
+Sprint 6 — Plugins	Timeout en callbacks de plugin	type:feat,area:plugins,priority:high	Un plugin colgado no congela la app.
+Sprint 7 — Plugins	Plugin ejemplo: formateador	type:feat,area:plugins,priority:high	JS/CSS/HTML.
+Sprint 7 — Plugins	Plugin ejemplo: tema custom	type:feat,area:plugins,priority:high	
+Sprint 7 — Plugins	Plugin ejemplo: snippet manager	type:feat,area:plugins,priority:high	
+Sprint 7 — Plugins	Actualizar spec v1 de la API	type:docs,area:plugins,priority:high	Con lo aprendido construyendo los 3 plugins.
+Sprint 7 — Plugins	Repo de plugins con index.json	type:feat,area:plugins,priority:medium	Repo de GitHub, sin backend propio.
+Sprint 7 — Plugins	Instalar/desinstalar plugins	type:feat,area:plugins,priority:high	Descargar, verificar permisos, activar.
+Sprint 7 — Plugins	Pantalla de gestión de plugins	type:feat,area:plugins,priority:medium	Lista, permisos, enable/disable.
+Sprint 8 — Agente IA	Integrar API de Claude (streaming)	type:feat,area:ai,priority:high	Desde el plugin AI Assistant.
+Sprint 8 — Agente IA	Selección → explicar / refactorizar	type:feat,area:ai,priority:high	
+Sprint 8 — Agente IA	Diffs inline aceptar/rechazar	type:feat,area:ai,priority:high	Por bloque, 100% táctil.
+Sprint 8 — Agente IA	Historial de conversación por proyecto	type:feat,area:ai,priority:medium	Persistido localmente.
+Sprint 8 — Agente IA	Rate limiting y errores de API	type:feat,area:ai,priority:medium	Offline/quota con mensaje claro, nunca crash.
+Sprint 8 — Agente IA	Notas: agentes autónomos fase 2	type:docs,area:ai,priority:low	Qué necesitaría la API de plugins.
+Sprints 9-10 — Release	Performance general	type:feat,priority:high	50k+ líneas, repos grandes, cold start < 2s.
+Sprints 9-10 — Release	Onboarding de primer uso	type:feat,priority:high	Crear proyecto o clonar de GitHub.
+Sprints 9-10 — Release	Crash reporting + analytics mínimo	type:feat,priority:medium	Respetando privacidad.
+Sprints 9-10 — Release	Checklist accesibilidad táctil	type:feat,priority:medium	Todas las pantallas.
+Sprints 9-10 — Release	Closed testing en Play Store	type:feat,priority:high	
+Sprints 9-10 — Release	iOS: build TestFlight (editor+git+GitHub)	type:feat,priority:low	Opcional. Sin terminal.
+Sprints 9-10 — Release	Página del proyecto	type:docs,priority:low	Simple, docs/website.

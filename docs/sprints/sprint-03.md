@@ -1,0 +1,21 @@
+# Sprint 3 — Git local
+
+**Duración:** 2 semanas
+**Objetivo:** control de versiones local completo.
+
+## Tareas
+
+- [ ] Integrar libgit2 vía bindings KMP (spike técnico al inicio del sprint)
+- [ ] `git init` / abrir repo existente en un proyecto
+- [ ] Commits con mensaje, staging de archivos (incl. stage parcial si es viable)
+- [ ] Branches: crear, cambiar, borrar, lista
+- [ ] Diff viewer táctil (cambios por archivo, antes/después)
+- [ ] History: log de commits con autor, fecha, mensaje
+- [ ] Snapshot automático pre-cambio + integración con el autosave del editor
+- [ ] Tests de las operaciones core de git
+
+## Criterios de aceptación
+
+1. Flujo completo táctil: editar → stage → commit → ver en history.
+2. El diff viewer es legible en pantalla de 6 pulgadas.
+3. Ningún estado se pierde si la app muere a mitad de un commit.
