@@ -14,6 +14,7 @@ import platform.Foundation.NSURL
 import platform.Foundation.NSUserDomainMask
 import platform.Foundation.stringByAppendingPathComponent
 import platform.Foundation.stringByStandardizingPath
+import platform.Foundation.timeIntervalSince1970
 
 private const val MILLIS_PER_SECOND = 1000.0
 
