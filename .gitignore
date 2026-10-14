@@ -1,18 +1,16 @@
-# Gradle
-.gradle/
-build/
-**/build/
+# Node
+node_modules/
+dist/
 
-# Android
-local.properties
-*.apk
-*.aab
-*.keystore
+# Capacitor / Android (android/ has its own .gitignore)
+android/app/build/
+android/.gradle/
+android/local.properties
 
-# Kotlin / IDEA
-.kotlin/
+# IDEs
 .idea/
 *.iml
+.vscode/
 
 # Xcode / iOS
 *.xcworkspace
