@@ -26,4 +26,15 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "pepino-ide"
-include(":composeApp")
+
+enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
+
+include(":app")
+include(":core:commands")
+include(":core:events")
+include(":core:plugins")
+include(":feature:projects")
+include(":feature:editor")
+include(":feature:git")
+include(":feature:terminal")
+include(":feature:settings")
