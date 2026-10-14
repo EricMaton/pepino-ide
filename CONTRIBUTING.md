@@ -6,10 +6,29 @@
   `feat:`, `fix:`, `docs:`, `chore:`, `ci:`, `refactor:`, `test:`, `perf:`
   (e.g. `feat: add file explorer`). PR titles are enforced by CI and become
   the squashed commit message.
-- **ktlint** for Kotlin formatting — run `./gradlew ktlintFormat` before pushing.
-- **detekt** for static analysis — run `./gradlew detekt`.
-- Every PR runs CI: lint, Android build + tests, iOS framework build.
-- Feature work happens in its own module (`:core:*`, `:feature:*`), never in `:app`.
+- **Prettier** for formatting — run `npm run format` before pushing.
+- **ESLint** (typescript-eslint + react-hooks) — run `npm run lint`.
+- **Vitest** for tests — `npm test`. Pure logic lives outside components so it
+  can be tested without a DOM.
+- Every PR runs CI: typecheck, lint, format check, tests, web build and the
+  Android debug build.
+
+## Code layout
+
+```
+src/
+├── app/         shell: navigation, command palette, service wiring
+├── core/        commands + events — the backbone plugins talk to
+├── ui/          design system: tokens, components, back handling
+├── features/    one folder per feature (projects, editor, git…)
+└── dev/         dev-only tools (component catalog at /#catalog)
+android/         Capacitor Android project (native code only)
+```
+
+- Feature work lives in `src/features/<feature>`, never in `src/app`.
+- Components only use design tokens (`var(--…)`), never hardcoded colors.
+- Native APIs go through Capacitor plugins behind an interface, so the logic
+  can be tested with an in-memory implementation (see `FsBackend`).
 
 ## Workflow
 

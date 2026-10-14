@@ -4,11 +4,11 @@
 
 ## How to verify
 
-<!-- Commands run, emulator/device checks, screenshots if UI -->
+<!-- Commands run, browser/emulator/device checks, screenshots if UI -->
 
 ## Checklist
 
-- [ ] `./gradlew :app:assembleDebug` builds
-- [ ] `./gradlew ktlintCheck detekt` passes
+- [ ] `npm run typecheck && npm run lint && npm test` pass
+- [ ] `npm run build && npx cap sync android` and the app runs on Android (if UI or native changes)
 - [ ] Sprint checklist / docs updated if affected
 - [ ] PR title follows Conventional Commits (e.g. `feat: ...`, `fix: ...`)

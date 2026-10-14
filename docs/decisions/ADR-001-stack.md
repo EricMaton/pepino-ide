@@ -1,6 +1,6 @@
 # ADR-001: Stack tecnológico
 
-- **Estado:** Aceptada
+- **Estado:** Reemplazada por [ADR-004](ADR-004-typescript.md)
 - **Fecha:** 2026-10-14
 
 ## Contexto
