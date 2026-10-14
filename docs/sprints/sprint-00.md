@@ -5,7 +5,7 @@
 
 ## Tareas
 
-- [ ] Configurar KMP + Compose Multiplatform (Android minSdk 26, iOS framework stub)
+- [x] Configurar KMP + Compose Multiplatform (Android minSdk 26, iOS framework stub)
 - [ ] Crear estructura de módulos: `:core:commands`, `:core:events`, `:core:plugins` (esqueleto), `:feature:*`
 - [ ] Implementar `CommandRegistry` + dispatcher + paleta de comandos básica (demo interna)
 - [ ] Implementar `EventBus` tipado (subscribe/publish con tipos)

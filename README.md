@@ -1,31 +1,37 @@
 # 🥒 Pepino
 
-Un IDE completo para móvil. Android-first, iOS en camino.
+A full-featured IDE for mobile. Android-first, iOS on the way.
 
-## Visión
+## Vision
 
-Un IDE de código nativo para móvil con: editor de código, git local y GitHub,
-terminal (Android), sistema de plugins propio (scripts JS sandboxeados) y
-asistencia de agentes IA en el futuro.
+A native code IDE for mobile with: code editor, local git and GitHub,
+terminal (Android), its own plugin system (sandboxed JS scripts) and
+AI agent assistance in the future.
 
-## Decisiones clave
+## Key decisions
 
-| Decisión | Elección | Por qué |
+| Decision | Choice | Why |
 |---|---|---|
-| Plataforma | Android-first, iOS con scope reducido | iOS no permite terminal real ni JIT |
-| Stack | Kotlin Multiplatform + Compose Multiplatform | 70% de código compartido, acceso nativo en Android |
-| Plugins | Scripts JS interpretados (QuickJS) | Legal en iOS, sandboxeable, portable |
-| Git | libgit2 vía bindings KMP | Git real, no reimplementación |
+| Platform | Android-first, iOS with reduced scope | iOS allows neither a real terminal nor JIT |
+| Stack | Kotlin Multiplatform + Compose Multiplatform | 70% shared code, native access on Android |
+| Plugins | Interpreted JS scripts (QuickJS) | Legal on iOS, sandboxable, portable |
+| Git | libgit2 via KMP bindings | Real git, not a reimplementation |
 
-Ver [docs/roadmap.md](docs/roadmap.md) para el plan completo por sprints y
-[docs/plugin-api/v1-spec.md](docs/plugin-api/v1-spec.md) para la API de plugins.
+See [docs/roadmap.md](docs/roadmap.md) for the full sprint plan and
+[docs/plugin-api/v1-spec.md](docs/plugin-api/v1-spec.md) for the plugin API.
 
-## Estado
+## Status
 
-🚧 En fase de cimientos. Sprint 0 en curso.
+🚧 Laying the foundations. Sprint 0 in progress.
 
-## Setup (cuando exista código)
+## Setup
+
+Requirements: JDK 17+, Android SDK (API 35). iOS builds require macOS with Xcode.
 
 ```bash
-# Próximamente — Sprint 0
+# Android app
+./gradlew :composeApp:assembleDebug
+
+# iOS framework (macOS only)
+./gradlew :composeApp:linkDebugFrameworkIosSimulatorArm64
 ```
