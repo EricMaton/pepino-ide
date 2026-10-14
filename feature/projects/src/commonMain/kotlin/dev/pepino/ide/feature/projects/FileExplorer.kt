@@ -19,8 +19,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,6 +30,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
@@ -46,14 +49,29 @@ fun FileExplorer(
     var currentPath by remember(rootPath) { mutableStateOf(rootPath) }
     var sortOrder by remember { mutableStateOf(FileSortOrder.NAME) }
     var listing by remember { mutableStateOf<Result<List<FileEntry>>?>(null) }
+    var refreshTick by remember { mutableIntStateOf(0) }
+    var dialog by remember { mutableStateOf<ExplorerDialog?>(null) }
+    var opError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
 
-    LaunchedEffect(currentPath) {
+    LaunchedEffect(currentPath, refreshTick) {
         listing = null
         listing = withContext(Dispatchers.Default) { projectSpace.listDirectory(currentPath) }
     }
 
     val entries = listing?.getOrNull().orEmpty().sortedForExplorer(sortOrder)
     val error = listing?.exceptionOrNull()
+
+    fun runOperation(operation: () -> Result<Unit>) {
+        scope.launch {
+            val result = withContext(Dispatchers.Default) { operation() }
+            result
+                .onSuccess {
+                    opError = null
+                    refreshTick++
+                }.onFailure { opError = it.message }
+        }
+    }
 
     Column(
         modifier
@@ -66,8 +84,21 @@ fun FileExplorer(
             sortOrder = sortOrder,
             onUp = { currentPath = currentPath.substringBeforeLast('/') },
             onCycleSort = { sortOrder = sortOrder.next() },
+            onCreate = { dialog = ExplorerDialog.Create },
         )
         HorizontalDivider()
+        opError?.let { message ->
+            Text(
+                "ERROR: ${message.uppercase()}",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.error,
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            HorizontalDivider()
+        }
         when {
             listing == null -> ExplorerMessage("LOADING…")
             error != null -> ExplorerMessage("CAN'T READ FOLDER\n${error.message.orEmpty()}")
@@ -78,11 +109,76 @@ fun FileExplorer(
                         FileRow(
                             entry = entry,
                             onOpen = { if (entry.isDirectory) currentPath = entry.path },
+                            onActions = { dialog = ExplorerDialog.Actions(entry) },
                         )
                         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
                     }
                 }
         }
+    }
+
+    when (val active = dialog) {
+        null -> Unit
+        ExplorerDialog.Create ->
+            CreateEntryDialog(
+                onDismiss = { dialog = null },
+                onCreate = { asDirectory, name ->
+                    dialog = null
+                    runOperation {
+                        val path = "$currentPath/$name"
+                        if (asDirectory) {
+                            projectSpace.createDirectory(path)
+                        } else {
+                            projectSpace.createFile(path)
+                        }
+                    }
+                },
+            )
+
+        is ExplorerDialog.Actions ->
+            EntryActionsDialog(
+                entry = active.entry,
+                onDismiss = { dialog = null },
+                onAction = { dialog = it },
+            )
+
+        is ExplorerDialog.Rename ->
+            RenameEntryDialog(
+                entry = active.entry,
+                onDismiss = { dialog = null },
+                onRename = { newName ->
+                    dialog = null
+                    runOperation { projectSpace.rename(active.entry.path, newName) }
+                },
+            )
+
+        is ExplorerDialog.Delete ->
+            DeleteEntryDialog(
+                entry = active.entry,
+                onDismiss = { dialog = null },
+                onConfirm = {
+                    dialog = null
+                    runOperation { projectSpace.delete(active.entry.path) }
+                },
+            )
+
+        is ExplorerDialog.Transfer ->
+            TransferDialog(
+                entry = active.entry,
+                move = active.move,
+                projectSpace = projectSpace,
+                onDismiss = { dialog = null },
+                onConfirm = { destinationDir ->
+                    dialog = null
+                    runOperation {
+                        if (active.move) {
+                            projectSpace.move(active.entry.path, destinationDir)
+                        } else {
+                            projectSpace.copy(active.entry.path, destinationDir)
+                        }
+                    }
+                },
+            )
     }
 }
 
@@ -93,6 +189,7 @@ private fun ExplorerToolbar(
     sortOrder: FileSortOrder,
     onUp: () -> Unit,
     onCycleSort: () -> Unit,
+    onCreate: () -> Unit,
 ) {
     val isAtRoot = currentPath == rootPath
     val segments = currentPath.removePrefix(rootPath).split('/').filter { it.isNotEmpty() }
@@ -121,6 +218,8 @@ private fun ExplorerToolbar(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        ToolbarButton(text = "+", onClick = onCreate)
+        Box(Modifier.size(8.dp))
         ToolbarButton(text = "SORT: ${sortOrder.label}", onClick = onCycleSort)
     }
 }
@@ -153,19 +252,20 @@ private fun ToolbarButton(
 private fun FileRow(
     entry: FileEntry,
     onOpen: () -> Unit,
+    onActions: () -> Unit,
 ) {
     Row(
         Modifier
             .fillMaxWidth()
             .heightIn(min = TouchTarget)
-            .clickable(enabled = entry.isDirectory, onClick = onOpen)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(start = 16.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             Modifier
                 .size(32.dp)
-                .border(1.dp, MaterialTheme.colorScheme.outline),
+                .border(1.dp, MaterialTheme.colorScheme.outline)
+                .clickable(enabled = entry.isDirectory, onClick = onOpen),
             contentAlignment = Alignment.Center,
         ) {
             Text(
@@ -179,7 +279,12 @@ private fun FileRow(
                     },
             )
         }
-        Column(Modifier.padding(start = 16.dp)) {
+        Column(
+            Modifier
+                .weight(1f)
+                .clickable(enabled = entry.isDirectory, onClick = onOpen)
+                .padding(start = 16.dp),
+        ) {
             Text(
                 entry.name,
                 style = MaterialTheme.typography.bodyMedium,
@@ -195,6 +300,18 @@ private fun FileRow(
                 color = MaterialTheme.colorScheme.outline,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Box(
+            Modifier
+                .size(TouchTarget)
+                .clickable(onClick = onActions),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                "···",
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.outline,
             )
         }
     }

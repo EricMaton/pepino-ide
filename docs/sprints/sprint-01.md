@@ -7,7 +7,7 @@
 
 - [x] Definir y crear la carpeta reservada en el storage de la app (scoped storage correcto)
 - [x] File explorer táctil: lista de archivos, navegación, ordenación
-- [ ] Operaciones: crear archivo/carpeta, renombrar, mover, copiar, borrar (con confirmación)
+- [x] Operaciones: crear archivo/carpeta, renombrar, mover, copiar, borrar (con confirmación)
 - [ ] Abrir/cerrar proyecto (proyecto = carpeta con marcador)
 - [ ] Lista de proyectos recientes en la home
 - [ ] Manejo de permisos: flujo cuando el usuario no ha dado acceso
