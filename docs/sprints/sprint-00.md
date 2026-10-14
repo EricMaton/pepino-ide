@@ -9,7 +9,7 @@
 - [x] Crear estructura de módulos: `:core:commands`, `:core:events`, `:core:plugins` (esqueleto), `:feature:*`
 - [x] Implementar `CommandRegistry` + dispatcher + paleta de comandos básica (demo interna)
 - [x] Implementar `EventBus` tipado (subscribe/publish con tipos)
-- [ ] CI en GitHub Actions: build + tests en cada PR
+- [x] CI en GitHub Actions: build + tests en cada PR
 - [ ] Convenciones: ktlint/detekt, conventional commits, PR template, CODEOWNERS
 - [ ] Escribir ADR-001 (stack) y ADR-002 (plugins como JS interpretado)
 
