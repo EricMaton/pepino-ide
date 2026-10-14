@@ -14,6 +14,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -25,7 +26,11 @@ import androidx.compose.ui.Modifier
 import dev.pepino.ide.core.commands.CommandDispatcher
 import dev.pepino.ide.core.commands.CommandRegistry
 import dev.pepino.ide.core.commands.command
+import dev.pepino.ide.core.events.EventBus
+import dev.pepino.ide.core.events.events
 import kotlinx.coroutines.launch
+
+data class CounterChanged(val count: Int)
 
 @Composable
 fun App() {
@@ -33,6 +38,13 @@ fun App() {
     var invocationCount by remember { mutableIntStateOf(0) }
     var paletteOpen by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val eventBus = remember { EventBus() }
+
+    LaunchedEffect(Unit) {
+        eventBus.events<CounterChanged>().collect { event ->
+            snackbarHostState.showSnackbar("Counter is now ${event.count}")
+        }
+    }
 
     val registry = remember {
         CommandRegistry().apply {
@@ -44,6 +56,7 @@ fun App() {
             register(
                 command(id = "demo.count", title = "Increment counter") {
                     invocationCount++
+                    eventBus.publish(CounterChanged(invocationCount))
                 }
             )
         }
