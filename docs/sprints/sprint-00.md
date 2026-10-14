@@ -10,7 +10,7 @@
 - [x] Implementar `CommandRegistry` + dispatcher + paleta de comandos básica (demo interna)
 - [x] Implementar `EventBus` tipado (subscribe/publish con tipos)
 - [x] CI en GitHub Actions: build + tests en cada PR
-- [ ] Convenciones: ktlint/detekt, conventional commits, PR template, CODEOWNERS
+- [x] Convenciones: ktlint/detekt, conventional commits, PR template, CODEOWNERS
 - [ ] Escribir ADR-001 (stack) y ADR-002 (plugins como JS interpretado)
 
 ## Criterios de aceptación

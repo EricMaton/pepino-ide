@@ -1,10 +1,10 @@
 package dev.pepino.ide.core.commands
 
 class CommandDispatcher(private val registry: CommandRegistry) {
-
     suspend fun execute(id: String): Result<Unit> {
-        val command = registry.find(id)
-            ?: return Result.failure(CommandNotFoundException(id))
+        val command =
+            registry.find(id)
+                ?: return Result.failure(CommandNotFoundException(id))
         return runCatching { command.execute() }
     }
 }

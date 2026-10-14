@@ -1,8 +1,8 @@
 package dev.pepino.ide.core.events
 
-import kotlin.reflect.KClass
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlin.reflect.KClass
 
 class EventBus {
     private val channels = mutableMapOf<KClass<*>, MutableSharedFlow<Any>>()
@@ -18,8 +18,7 @@ class EventBus {
         channel<T>(event::class).emit(event)
     }
 
-    fun <T : Any> tryPublish(event: T): Boolean =
-        channel<T>(event::class).tryEmit(event)
+    fun <T : Any> tryPublish(event: T): Boolean = channel<T>(event::class).tryEmit(event)
 
     companion object {
         private const val BUFFER_CAPACITY = 64
