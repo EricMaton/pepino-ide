@@ -1,0 +1,24 @@
+# Gradle
+.gradle/
+build/
+**/build/
+
+# Android
+local.properties
+*.apk
+*.aab
+*.keystore
+
+# Kotlin / IDEA
+.kotlin/
+.idea/
+*.iml
+
+# Xcode / iOS
+*.xcworkspace
+xcuserdata/
+DerivedData/
+
+# OS
+.DS_Store
+Thumbs.db
