@@ -46,7 +46,8 @@ fun FileExplorer(
     modifier: Modifier = Modifier,
 ) {
     val rootPath = projectSpace.rootPath
-    var currentPath by remember(rootPath) { mutableStateOf(rootPath) }
+    var pathStack by remember(rootPath) { mutableStateOf(listOf(rootPath)) }
+    val currentPath = pathStack.last()
     var sortOrder by remember { mutableStateOf(FileSortOrder.NAME) }
     var listing by remember { mutableStateOf<Result<List<FileEntry>>?>(null) }
     var refreshTick by remember { mutableIntStateOf(0) }
@@ -79,10 +80,10 @@ fun FileExplorer(
             .background(MaterialTheme.colorScheme.background),
     ) {
         ExplorerToolbar(
-            currentPath = currentPath,
-            rootPath = rootPath,
+            canGoUp = pathStack.size > 1,
+            segments = pathStack.drop(1).map { it.substringAfterLast('/') },
             sortOrder = sortOrder,
-            onUp = { currentPath = currentPath.substringBeforeLast('/') },
+            onUp = { pathStack = pathStack.dropLast(1) },
             onCycleSort = { sortOrder = sortOrder.next() },
             onCreate = { dialog = ExplorerDialog.Create },
         )
@@ -108,7 +109,7 @@ fun FileExplorer(
                     items(entries, key = { it.path }) { entry ->
                         FileRow(
                             entry = entry,
-                            onOpen = { if (entry.isDirectory) currentPath = entry.path },
+                            onOpen = { if (entry.isDirectory) pathStack = pathStack + entry.path },
                             onActions = { dialog = ExplorerDialog.Actions(entry) },
                         )
                         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
@@ -184,22 +185,20 @@ fun FileExplorer(
 
 @Composable
 private fun ExplorerToolbar(
-    currentPath: String,
-    rootPath: String,
+    canGoUp: Boolean,
+    segments: List<String>,
     sortOrder: FileSortOrder,
     onUp: () -> Unit,
     onCycleSort: () -> Unit,
     onCreate: () -> Unit,
 ) {
-    val isAtRoot = currentPath == rootPath
-    val segments = currentPath.removePrefix(rootPath).split('/').filter { it.isNotEmpty() }
     Row(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ToolbarButton(text = "UP", enabled = !isAtRoot, onClick = onUp)
+        ToolbarButton(text = "UP", enabled = canGoUp, onClick = onUp)
         Column(
             Modifier
                 .weight(1f)
