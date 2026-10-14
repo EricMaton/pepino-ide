@@ -228,7 +228,8 @@ internal fun TransferDialog(
     onConfirm: (destinationDir: String) -> Unit,
 ) {
     val rootPath = projectSpace.rootPath
-    var pickPath by remember { mutableStateOf(rootPath) }
+    var pickStack by remember { mutableStateOf(listOf(rootPath)) }
+    val pickPath = pickStack.last()
     var listing by remember { mutableStateOf<Result<List<FileEntry>>?>(null) }
 
     LaunchedEffect(pickPath) {
@@ -241,8 +242,8 @@ internal fun TransferDialog(
             .orEmpty()
             .filter { it.isDirectory && it.path != entry.path }
             .sortedForExplorer(FileSortOrder.NAME)
-    val isAtRoot = pickPath == rootPath
-    val segments = pickPath.removePrefix(rootPath).split('/').filter { it.isNotEmpty() }
+    val canGoUp = pickStack.size > 1
+    val segments = pickStack.drop(1).map { it.substringAfterLast('/') }
     val verb = if (move) "MOVE" else "COPY"
 
     AlertDialog(
@@ -258,7 +259,7 @@ internal fun TransferDialog(
         text = {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { pickPath = pickPath.substringBeforeLast('/') }, enabled = !isAtRoot) {
+                    TextButton(onClick = { pickStack = pickStack.dropLast(1) }, enabled = canGoUp) {
                         Text("UP", style = MaterialTheme.typography.labelLarge)
                     }
                     Text(
@@ -303,7 +304,7 @@ internal fun TransferDialog(
                                     Modifier
                                         .fillMaxWidth()
                                         .heightIn(min = TouchTarget)
-                                        .clickable { pickPath = folder.path }
+                                        .clickable { pickStack = pickStack + folder.path }
                                         .padding(horizontal = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
