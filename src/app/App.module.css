@@ -1,0 +1,86 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding-top: var(--inset-top);
+  padding-left: var(--inset-left);
+  padding-right: var(--inset-right);
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-4) var(--space-6);
+}
+
+.header h1 {
+  margin: 0;
+}
+
+.content {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.status {
+  padding: var(--space-6);
+}
+
+.comingSoon {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+}
+
+.nav {
+  display: flex;
+  flex: none;
+  padding-bottom: var(--inset-bottom);
+  background: var(--surface-variant);
+  border-top: 1px solid var(--outline);
+}
+
+.navItem {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--nav-height);
+  padding: 0;
+  border: none;
+  border-top: 3px solid transparent;
+  background: none;
+  color: var(--outline);
+  cursor: pointer;
+}
+
+.navItem[aria-current='page'] {
+  border-top-color: var(--primary);
+  color: var(--primary);
+}
+
+.fab {
+  position: absolute;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  z-index: 1;
+  min-height: 56px;
+  padding: 0 var(--space-6);
+}
+
+.paletteList {
+  display: flex;
+  flex-direction: column;
+  margin-top: var(--space-2);
+}
+
+.paletteEmpty {
+  padding: var(--space-4) 0;
+}

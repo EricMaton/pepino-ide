@@ -1,0 +1,145 @@
+.explorer {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+}
+
+.location {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--space-2);
+}
+
+/* Ellipsize the start of long paths so the current folder stays visible */
+.breadcrumb {
+  direction: rtl;
+  text-align: left;
+}
+
+.opError {
+  padding: var(--space-2) var(--space-4);
+  color: var(--error);
+  border-bottom: 1px solid var(--outline);
+}
+
+.message {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  text-align: center;
+  white-space: pre-line;
+}
+
+.scroller {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  contain: strict;
+}
+
+.rows {
+  position: relative;
+  width: 100%;
+}
+
+.row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--surface-variant);
+}
+
+.rowMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: 100%;
+  padding: 0 0 0 var(--space-4);
+  border: none;
+  background: none;
+  text-align: left;
+}
+
+button.rowMain {
+  cursor: pointer;
+}
+
+button.rowMain:active {
+  background: var(--surface-variant);
+}
+
+.icon {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: var(--border);
+}
+
+.rowText {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.more {
+  flex: none;
+  letter-spacing: 0;
+}
+
+/* Transfer picker */
+.pickerBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--outline);
+  padding-bottom: var(--space-2);
+}
+
+.pickerList {
+  display: flex;
+  flex-direction: column;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.pickerFolder {
+  gap: var(--space-2);
+  text-transform: none;
+}
+
+.pickerMessage {
+  padding: var(--space-4) 0;
+}
+
+.actionList {
+  display: flex;
+  flex-direction: column;
+}
+
+.deleteText {
+  margin: 0;
+  white-space: pre-line;
+  word-break: break-word;
+}
