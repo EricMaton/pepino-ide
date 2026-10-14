@@ -30,8 +30,8 @@ Requirements: JDK 17+, Android SDK (API 35). iOS builds require macOS with Xcode
 
 ```bash
 # Android app
-./gradlew :composeApp:assembleDebug
+./gradlew :app:assembleDebug
 
 # iOS framework (macOS only)
-./gradlew :composeApp:linkDebugFrameworkIosSimulatorArm64
+./gradlew :app:linkDebugFrameworkIosSimulatorArm64
 ```
