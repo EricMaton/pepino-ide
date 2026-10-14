@@ -1,0 +1,176 @@
+/* Button */
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--touch-target);
+  min-width: var(--touch-target);
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--fg);
+  text-transform: uppercase;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.button:active:not(:disabled) {
+  background: var(--surface-variant);
+}
+
+.button:disabled {
+  color: var(--outline);
+  cursor: default;
+}
+
+.outlined {
+  border: 1px solid currentColor;
+}
+
+.filled {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.filled:active:not(:disabled) {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+.danger {
+  color: var(--error);
+}
+
+/* Full-width row inside a list; text lines up with the surrounding content */
+.listItem {
+  justify-content: flex-start;
+  width: 100%;
+  padding: 0;
+  text-align: left;
+}
+
+/* Divider */
+.divider {
+  margin: 0;
+  border: none;
+  border-top: 1px solid var(--outline);
+}
+
+.subtle {
+  border-top-color: var(--surface-variant);
+}
+
+/* Red bar */
+.redBar {
+  height: 6px;
+  background: var(--primary);
+  flex: none;
+}
+
+/* Dialog */
+.dialog {
+  width: min(560px, calc(100vw - 2 * var(--space-4)));
+  max-width: none;
+  max-height: calc(100dvh - var(--inset-top) - var(--inset-bottom) - 2 * var(--space-4));
+  padding: 0;
+  border: 1px solid var(--fg);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--fg);
+}
+
+.dialog:focus-visible {
+  outline: none;
+}
+
+.dialog::backdrop {
+  background: var(--scrim);
+}
+
+.dialogPanel {
+  display: flex;
+  flex-direction: column;
+  max-height: inherit;
+}
+
+.dialogTitle {
+  margin: 0;
+  padding: var(--space-6) var(--space-6) var(--space-4);
+  border-bottom: 1px solid var(--outline);
+}
+
+.dialogContent {
+  padding: var(--space-4) var(--space-6);
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.dialogActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4) var(--space-4);
+}
+
+/* Text field */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.input {
+  min-height: var(--touch-target);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--outline);
+  border-radius: var(--radius);
+  background: var(--bg);
+  outline: none;
+}
+
+.input:focus {
+  border-color: var(--fg);
+  box-shadow: inset 0 0 0 1px var(--fg);
+}
+
+.invalid,
+.invalid:focus {
+  border-color: var(--error);
+  box-shadow: inset 0 0 0 1px var(--error);
+}
+
+.fieldError {
+  color: var(--error);
+}
+
+/* Snackbar */
+.snackbar {
+  position: fixed;
+  left: calc(var(--inset-left) + var(--space-4));
+  right: calc(var(--inset-right) + var(--space-4));
+  bottom: calc(var(--snackbar-offset, 0px) + var(--inset-bottom) + var(--space-4));
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  min-height: var(--touch-target);
+  padding: var(--space-3) var(--space-4);
+  border-left: 6px solid var(--primary);
+  background: var(--fg);
+  color: var(--bg);
+  animation: snackbar-in 120ms ease-out;
+}
+
+@keyframes snackbar-in {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .snackbar {
+    animation: none;
+  }
+}

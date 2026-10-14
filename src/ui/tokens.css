@@ -1,0 +1,60 @@
+/*
+ * Pepino brutalist design tokens. Components only read the semantic layer
+ * (--bg, --fg, --primary…), so a theme (#44) only has to redefine that layer.
+ */
+:root {
+  /* Palette */
+  --pepino-black: #0a0a0a;
+  --pepino-panel: #161616;
+  --pepino-white: #f2f2f2;
+  --pepino-red: #e10600;
+  --pepino-grey: #8a8a8a;
+
+  /* Semantic colors */
+  --bg: var(--pepino-black);
+  --fg: var(--pepino-white);
+  --surface: var(--pepino-black);
+  --surface-variant: var(--pepino-panel);
+  --primary: var(--pepino-red);
+  --on-primary: var(--pepino-white);
+  --error: var(--pepino-red);
+  --outline: var(--pepino-grey);
+  --scrim: rgb(0 0 0 / 0.72);
+
+  /* Typography */
+  --font-sans: 'Inter Variable', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+
+  --headline-size: 32px;
+  --headline-weight: 900;
+  --headline-tracking: -0.5px;
+  --title-size: 20px;
+  --title-weight: 800;
+  --title-tracking: 1px;
+  --label-size: 14px;
+  --label-weight: 700;
+  --label-tracking: 1.5px;
+  --body-size: 14px;
+  --body-weight: 400;
+  --body-tracking: 0.25px;
+
+  /* Shape & sizing */
+  --radius: 0;
+  --border: 1px solid var(--outline);
+  --touch-target: 48px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+
+  /* App chrome */
+  --nav-height: 56px;
+  --snackbar-offset: calc(var(--nav-height) + 1px);
+
+  /* Safe areas: Capacitor injects --safe-area-inset-* on Android WebViews where env() reports 0 */
+  --inset-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --inset-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --inset-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+  --inset-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+}

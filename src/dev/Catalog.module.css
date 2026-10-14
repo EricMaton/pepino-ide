@@ -1,0 +1,41 @@
+.catalog {
+  min-height: 100%;
+  padding: var(--inset-top) var(--inset-right) var(--inset-bottom) var(--inset-left);
+  overflow-y: auto;
+}
+
+.catalog section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-6);
+}
+
+.catalog h2,
+.catalog p {
+  margin: 0;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.swatch {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.swatch span {
+  width: 64px;
+  height: 64px;
+  border: var(--border);
+}
