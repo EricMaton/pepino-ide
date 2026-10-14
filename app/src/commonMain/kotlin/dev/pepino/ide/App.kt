@@ -3,7 +3,6 @@ package dev.pepino.ide
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -26,13 +25,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import dev.pepino.ide.core.commands.CommandDispatcher
 import dev.pepino.ide.core.commands.CommandRegistry
 import dev.pepino.ide.core.commands.command
 import dev.pepino.ide.core.events.EventBus
 import dev.pepino.ide.core.events.events
+import dev.pepino.ide.feature.projects.FileExplorer
 import dev.pepino.ide.feature.projects.ProjectSpace
 import dev.pepino.ide.feature.settings.theme.PepinoRed
 import dev.pepino.ide.feature.settings.theme.PepinoTheme
@@ -94,7 +93,9 @@ fun App(projectSpace: ProjectSpace) {
                         .height(6.dp)
                         .background(PepinoRed),
                 )
-                Column(Modifier.padding(24.dp)) {
+                Column(
+                    Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
+                ) {
                     Text(
                         "PEPINO",
                         style = MaterialTheme.typography.headlineLarge,
@@ -104,33 +105,20 @@ fun App(projectSpace: ProjectSpace) {
                         style = MaterialTheme.typography.labelLarge,
                         color = PepinoRed,
                     )
-                    Spacer(Modifier.height(24.dp))
-                    HorizontalDivider()
-                    Spacer(Modifier.height(16.dp))
-                    Text(
-                        "PROJECT SPACE",
-                        style = MaterialTheme.typography.labelLarge,
-                    )
-                    Text(
-                        projectSpace.rootPath,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.outline,
-                    )
-                    Text(
-                        when (spaceReady) {
-                            null -> "CREATING…"
-                            true -> "● READY"
-                            false -> "● ERROR"
-                        },
-                        style = MaterialTheme.typography.labelLarge,
-                        color = if (spaceReady == false) PepinoRed else MaterialTheme.colorScheme.onBackground,
-                    )
-                    Spacer(Modifier.height(32.dp))
-                    Text(
-                        "COMMANDS RUN: $invocationCount",
-                        style = MaterialTheme.typography.titleLarge,
-                    )
+                }
+                HorizontalDivider()
+                when (spaceReady) {
+                    true -> FileExplorer(projectSpace, Modifier.fillMaxSize())
+                    else ->
+                        Text(
+                            when (spaceReady) {
+                                null -> "CREATING PROJECT SPACE…"
+                                else -> "● PROJECT SPACE ERROR"
+                            },
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (spaceReady == false) PepinoRed else MaterialTheme.colorScheme.outline,
+                            modifier = Modifier.padding(24.dp),
+                        )
                 }
             }
 
