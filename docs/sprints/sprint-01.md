@@ -5,7 +5,7 @@
 
 ## Tareas
 
-- [ ] Definir y crear la carpeta reservada en el storage de la app (scoped storage correcto)
+- [x] Definir y crear la carpeta reservada en el storage de la app (scoped storage correcto)
 - [ ] File explorer táctil: lista de archivos, navegación, ordenación
 - [ ] Operaciones: crear archivo/carpeta, renombrar, mover, copiar, borrar (con confirmación)
 - [ ] Abrir/cerrar proyecto (proyecto = carpeta con marcador)
