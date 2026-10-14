@@ -17,6 +17,11 @@ enum class FileSortOrder(val label: String) {
     fun next(): FileSortOrder = entries[(ordinal + 1) % entries.size]
 }
 
+fun isValidEntryName(name: String): Boolean {
+    val trimmed = name.trim()
+    return trimmed.isNotEmpty() && trimmed != "." && trimmed != ".." && trimmed.none { it == '/' || it == '\\' }
+}
+
 fun List<FileEntry>.sortedForExplorer(order: FileSortOrder): List<FileEntry> {
     val byKey =
         when (order) {
