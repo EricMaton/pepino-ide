@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -209,7 +208,7 @@ private fun AppNavBar(
                 Column(
                     Modifier
                         .weight(1f)
-                        .heightIn(min = NavBarItemHeight)
+                        .height(NavBarItemHeight)
                         .clickable { onSelect(destination) },
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
@@ -220,7 +219,7 @@ private fun AppNavBar(
                             .background(if (active) PepinoRed else Color.Transparent),
                     )
                     Box(
-                        Modifier.weight(1f),
+                        Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
