@@ -46,21 +46,22 @@ fun App() {
         }
     }
 
-    val registry = remember {
-        CommandRegistry().apply {
-            register(
-                command(id = "demo.hello", title = "Say hello") {
-                    snackbarHostState.showSnackbar("Hello from Pepino 🥒")
-                }
-            )
-            register(
-                command(id = "demo.count", title = "Increment counter") {
-                    invocationCount++
-                    eventBus.publish(CounterChanged(invocationCount))
-                }
-            )
+    val registry =
+        remember {
+            CommandRegistry().apply {
+                register(
+                    command(id = "demo.hello", title = "Say hello") {
+                        snackbarHostState.showSnackbar("Hello from Pepino 🥒")
+                    },
+                )
+                register(
+                    command(id = "demo.count", title = "Increment counter") {
+                        invocationCount++
+                        eventBus.publish(CounterChanged(invocationCount))
+                    },
+                )
+            }
         }
-    }
     val dispatcher = remember { CommandDispatcher(registry) }
 
     MaterialTheme {
@@ -70,11 +71,11 @@ fun App() {
                 ExtendedFloatingActionButton(onClick = { paletteOpen = true }) {
                     Text("Commands")
                 }
-            }
+            },
         ) { padding ->
             Box(
                 Modifier.fillMaxSize().padding(padding),
-                contentAlignment = Alignment.Center
+                contentAlignment = Alignment.Center,
             ) {
                 Text("🥒 Pepino — commands run: $invocationCount")
             }
@@ -92,12 +93,12 @@ fun App() {
                                         scope.launch {
                                             dispatcher.execute(cmd.id).onFailure { error ->
                                                 snackbarHostState.showSnackbar(
-                                                    "Error: ${error.message}"
+                                                    "Error: ${error.message}",
                                                 )
                                             }
                                         }
                                     },
-                                    modifier = Modifier.fillMaxWidth()
+                                    modifier = Modifier.fillMaxWidth(),
                                 ) {
                                     Text(cmd.title)
                                 }
@@ -108,7 +109,7 @@ fun App() {
                         TextButton(onClick = { paletteOpen = false }) {
                             Text("Close")
                         }
-                    }
+                    },
                 )
             }
         }
