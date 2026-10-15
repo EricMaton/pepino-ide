@@ -18,10 +18,11 @@ export const pepinoEditorTheme = EditorView.theme(
       height: '100%',
       color: 'var(--fg)',
       backgroundColor: 'var(--bg)',
-      fontSize: 'var(--editor-font-size, 14px)',
     },
     '&.cm-focused': { outline: 'none' },
     '.cm-scroller': {
+      // Native pinch-zoom would scale the whole page; the editor handles pinch itself (font size).
+      touchAction: 'pan-x pan-y',
       fontFamily: 'var(--font-mono)',
       lineHeight: '1.6',
       fontVariantLigatures: 'none',

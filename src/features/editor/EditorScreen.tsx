@@ -23,6 +23,9 @@ import { languageFor } from './languages';
 import { takeSnapshot } from './snapshots';
 import { detectLineSeparator, type LineSeparator, serialize } from './text';
 import { DEFAULT_TOOLBAR } from './toolbar';
+import { clampFontSize, DEFAULT_FONT_SIZE, ZOOM_STEP } from './zoom';
+
+const FONT_SIZE_KEY = 'pepino.editor.fontSize';
 
 /** Quiet time after the last keystroke before autosaving. */
 const AUTOSAVE_DELAY_MS = 1000;
@@ -59,7 +62,7 @@ export default function EditorScreen({
   initialViewState,
   onViewState,
 }: EditorScreenProps) {
-  const { projectSpace, registry, dispatcher, events, workspace } = useServices();
+  const { projectSpace, registry, dispatcher, events, workspace, preferences } = useServices();
   const showSnackbar = useSnackbar();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('saved');
@@ -68,6 +71,30 @@ export default function EditorScreen({
   const [view, setView] = useState<EditorView | null>(null);
   const [filesOpen, setFilesOpen] = useState(false);
   const files = useFileSource();
+  const [fontSize, setFontSize] = useState(DEFAULT_FONT_SIZE);
+
+  // The editor font size is a user preference shared by every file (pinch or Zoom commands).
+  useEffect(() => {
+    let active = true;
+    preferences
+      .get(FONT_SIZE_KEY)
+      .then((saved) => {
+        if (active && saved !== null) setFontSize(clampFontSize(Number(saved)));
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [preferences]);
+
+  const changeFontSize = useCallback(
+    (size: number, persist = true) => {
+      const next = clampFontSize(size);
+      setFontSize(next);
+      if (persist) preferences.set(FONT_SIZE_KEY, String(next)).catch(() => undefined);
+    },
+    [preferences],
+  );
   const doc = useRef<Text | null>(null);
   const savedDoc = useRef<Text | null>(null);
   const opened = useRef<{ text: string; doc: Text; separator: LineSeparator } | null>(null);
@@ -246,9 +273,12 @@ export default function EditorScreen({
       registry.register({ id: 'editor.close', title: `Close ${name}`, run: () => void requestClose() }),
       registry.register({ id: 'editor.revert', title: `Revert ${name} to the opened version`, run: revertToOpened }),
       registry.register({ id: 'editor.files', title: 'Project files', run: () => setFilesOpen(true) }),
+      registry.register({ id: 'editor.zoomIn', title: 'Zoom in', run: () => changeFontSize(fontSize + ZOOM_STEP) }),
+      registry.register({ id: 'editor.zoomOut', title: 'Zoom out', run: () => changeFontSize(fontSize - ZOOM_STEP) }),
+      registry.register({ id: 'editor.zoomReset', title: 'Reset zoom', run: () => changeFontSize(DEFAULT_FONT_SIZE) }),
     ];
     return () => disposers.forEach((dispose) => dispose());
-  }, [registry, visible, name, save, requestClose, revertToOpened]);
+  }, [registry, visible, name, save, requestClose, revertToOpened, fontSize, changeFontSize]);
 
   // Toolbar keys are commands, registered while this editor is the one showing.
   useEffect(() => {
@@ -331,6 +361,8 @@ export default function EditorScreen({
             onReady={setView}
             initialViewState={initialViewState}
             onViewState={queueViewState}
+            fontSize={fontSize}
+            onFontSize={(size, final) => changeFontSize(size, final)}
           />
           <EditorToolbar keys={DEFAULT_TOOLBAR} onRun={runKey} />
         </>

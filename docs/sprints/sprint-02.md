@@ -6,7 +6,7 @@
 ## Tareas
 
 - [x] Editor con syntax highlighting: CodeMirror 6 (Lezer), decidido en ADR-005
-- [ ] Edición táctil: posicionar cursor preciso, selección, gestos de zoom de texto (validar el IME de Gboard/SwiftKey en el WebView)
+- [x] Edición táctil: posicionar cursor preciso, selección, gestos de zoom de texto (validado con Gboard en el WebView del emulador, #16; SwiftKey pendiente)
 - [x] Toolbar configurable encima del teclado: símbolos `{}[]()=;`, tab, undo/redo (botones = comandos del `CommandRegistry`)
 - [x] Autosave con snapshot antes de cada edición (el SO mata apps: nunca perder trabajo; guardar también en el evento `pause` de la app)
 - [x] Estado del editor restaurado al reabrir (scroll, cursor, archivo abierto)
