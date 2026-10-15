@@ -5,9 +5,9 @@
 
 ## Tareas
 
-- [ ] PTY embebido en la app (proceso shell hijo real)
+- [ ] PTY embebido: plugin Capacitor propio en Kotlin + NDK (`forkpty`), con binarios empaquetados como `jniLibs` por la restricción W^X de Android 10+
 - [ ] Shell disponible en Android (sh/toybox) + PATH de la app
-- [ ] Terminal UI: scrollback, colores, resize al abrir/cerrar teclado
+- [ ] Terminal UI con xterm.js: scrollback, colores, resize al abrir/cerrar teclado
 - [ ] Teclado terminal: fila de teclas especiales (Ctrl, Esc, Tab, flechas, |, ~)
 - [ ] Integración con git del sistema dentro de la terminal
 - [ ] Evaluar incluir node/npm embebido (nodejs-mobile) — spike

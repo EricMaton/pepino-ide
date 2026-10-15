@@ -10,7 +10,7 @@
 - [ ] Crash reporting + analytics mínimo (respetando privacidad)
 - [ ] Pasar la checklist de accesibilidad táctil por todas las pantallas
 - [ ] Closed testing en Play Store
-- [ ] (Opcional) iOS: build de TestFlight con editor + git + GitHub (sin terminal)
+- [ ] (Opcional) iOS: `npx cap add ios` y build de TestFlight con editor + git + GitHub (sin terminal)
 - [ ] Página simple del proyecto (docs/website)
 
 ## Criterios de aceptación

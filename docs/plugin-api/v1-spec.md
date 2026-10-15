@@ -71,3 +71,13 @@ un plugin colgado nunca congela la app.
 ## Ciclo de vida
 
 `install → (usuario aprueba permisos) → onActivate → ... → onDeactivate → uninstall`
+
+## Implementación del host (ADR-004)
+
+La spec no cambia con el paso a TypeScript + Capacitor; solo cambia quién la implementa:
+
+- Cada plugin corre en **QuickJS compilado a WASM** (`quickjs-emscripten`) dentro de un **Web Worker** propio: sin DOM, sin `fetch` y fuera del hilo de UI.
+- `api.*` es un RPC por mensajes con el host, por eso todas las operaciones del editor, git y fs devuelven promesas. `api.settings.get` es síncrono porque los settings del plugin se copian al sandbox al activarlo.
+- Los permisos se comprueban en el host, en el lado que recibe cada llamada. `network` expone una función de red del host solo a los plugins que lo declaran.
+- El timeout combina el interrupt handler de QuickJS (deadline por callback) y, si no basta, `worker.terminate()` + desactivar el plugin.
+- Los comandos se registran en el `CommandRegistry` y los eventos llegan desde el `EventBus` (topics string con payloads de datos planos).

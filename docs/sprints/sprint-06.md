@@ -5,13 +5,13 @@
 
 ## Tareas
 
-- [ ] Temas: claro, oscuro, y tema custom (colores de editor + UI)
+- [ ] Temas: claro, oscuro, y tema custom (colores de editor + UI) redefiniendo la capa semántica de `src/ui/tokens.css`
 - [ ] Settings del editor: font size, tab size, word wrap, líneas visibles
 - [ ] Plugin loader: leer `plugin.json`, validar manifest, `apiVersion` check
-- [ ] Motor QuickJS embebido (JNI) ejecutando `main.js`
+- [ ] Motor QuickJS como WASM (`quickjs-emscripten`) en un Web Worker por plugin, ejecutando `main.js`
 - [ ] Exponer al sandbox: `api.commands.register`, `api.editor.getText/setText`, eventos `onSave/onChange/onOpen`
 - [ ] Sistema de permisos: declarados en manifest, aprobados por el usuario al instalar, enforceados en runtime
-- [ ] Timeout en todos los callbacks de plugin (un plugin colgado no congela la app)
+- [ ] Timeout en todos los callbacks de plugin (interrupt handler de QuickJS + `worker.terminate()` como último recurso)
 
 ## Criterios de aceptación
 

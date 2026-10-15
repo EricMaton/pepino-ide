@@ -5,7 +5,7 @@
 
 ## Tareas
 
-- [ ] Integrar API de Claude (streaming) desde el plugin "AI Assistant"
+- [ ] Integrar API de Claude (streaming) desde el plugin "AI Assistant"; la petición la hace el host vía el permiso `network`
 - [ ] Selección de código → "Explícame esto" / "Refactoriza"
 - [ ] Ediciones inline como diff con aceptar/rechazar por bloque
 - [ ] Historial de conversación por proyecto (persistido)
