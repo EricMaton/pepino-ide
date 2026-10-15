@@ -26,3 +26,6 @@ createRoot(document.getElementById('root')!).render(
     </ServicesContext>
   </StrictMode>,
 );
+
+// Spike #21 (spike branch only): git engine measurements, driven over DevTools as window.__gitSpike.
+void import('./dev/gitSpike/bench');
