@@ -80,6 +80,18 @@ export function App() {
     };
   }, [projectSpace]);
 
+  // Lets screens that hide the COMMANDS button (the editor) open the palette.
+  useEffect(
+    () =>
+      registry.register({
+        id: 'app.openPalette',
+        title: 'Command palette',
+        hidden: true,
+        run: () => setPaletteOpen(true),
+      }),
+    [registry],
+  );
+
   useEffect(() => {
     let count = 0;
     const disposers = [
