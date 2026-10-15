@@ -46,7 +46,7 @@ la elección es entre editores web.
 - El IME de Android (Gboard, SwiftKey) sobre `contenteditable` es el riesgo
   principal; se valida en #16. Autocapitalización y autocorrección se
   desactivan en el contenido.
-- Los finales de línea se normalizan a `\n` al guardar: un archivo CRLF se
-  convierte a LF si se edita. Pendiente de decidir si preservarlos (#18).
+- Los finales de línea se detectan al abrir y se conservan al guardar (un
+  archivo CRLF sigue siendo CRLF), aunque CodeMirror trabaje con `\n` (#18).
 - La API de plugins para el editor (#48) se construye sobre transacciones de
   CodeMirror.
