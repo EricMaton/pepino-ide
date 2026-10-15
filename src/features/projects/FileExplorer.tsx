@@ -1,5 +1,5 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { type ReactNode, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { useBackHandler } from '../../ui/back';
 import { Button } from '../../ui/components';
 import { cx } from '../../ui/cx';
@@ -48,6 +48,10 @@ interface FileExplorerProps {
   onOpenProject?: (path: string) => void;
   /** Opens a file in the editor; without it file rows are not tappable. */
   onOpenFile?: (path: string) => void;
+  /** Path stack to start from (restored session); must start at [rootPath]. */
+  initialStack?: string[];
+  /** Called whenever the path stack changes, to remember where the user was. */
+  onStackChange?: (stack: string[]) => void;
   /** Shown above the listing while the explorer is at its root (e.g. recent projects). */
   rootHeader?: ReactNode;
 }
@@ -66,9 +70,20 @@ export function FileExplorer({
   onOpenProject,
   rootHeader,
   onOpenFile,
+  initialStack,
+  onStackChange,
 }: FileExplorerProps) {
-  const [pathStack, setPathStack] = useState<string[]>([rootPath]);
+  const [pathStack, setPathStack] = useState<string[]>(() =>
+    initialStack?.[0] === rootPath ? initialStack : [rootPath],
+  );
   const currentPath = pathStack[pathStack.length - 1];
+  const reportStack = useRef(onStackChange);
+  useEffect(() => {
+    reportStack.current = onStackChange;
+  });
+  useEffect(() => {
+    reportStack.current?.(pathStack);
+  }, [pathStack]);
   const [sortOrder, setSortOrder] = useState<FileSortOrder>('name');
   const [refreshTick, setRefreshTick] = useState(0);
   const [dialog, setDialog] = useState<ExplorerDialog | null>(null);
