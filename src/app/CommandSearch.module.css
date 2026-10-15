@@ -1,0 +1,109 @@
+/* The search box sits in a header that must be `position: relative`; results drop below it. */
+.box {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--touch-target);
+  padding: var(--space-1) var(--space-3);
+  border: var(--stroke) solid var(--outline);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+  text-align: left;
+  cursor: text;
+}
+
+button.box:active {
+  border-color: var(--fg);
+}
+
+.active {
+  border-color: var(--fg);
+  box-shadow: var(--shadow-primary);
+}
+
+.prompt {
+  flex: none;
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.idle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  min-height: calc(var(--touch-target) - 2 * var(--stroke) - 2 * var(--space-1));
+  padding: 0;
+  border: none;
+  background: none;
+  outline: none;
+  caret-color: var(--primary);
+}
+
+.backdrop {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  height: 100vh;
+  z-index: 3;
+  background: var(--scrim);
+}
+
+.results {
+  position: absolute;
+  top: calc(100% + var(--stroke));
+  left: var(--space-2);
+  right: var(--space-2);
+  z-index: 4;
+  max-height: min(60vh, 420px);
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  border: var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-dialog);
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--touch-target);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--hairline);
+  cursor: pointer;
+}
+
+.option:last-child {
+  border-bottom: none;
+}
+
+.optionActive,
+.option:active {
+  background: var(--surface-variant);
+  box-shadow: inset 4px 0 0 var(--primary);
+}
+
+.title {
+  flex: 1;
+  min-width: 0;
+}
+
+.option > :last-child {
+  flex: none;
+  max-width: 40%;
+}
+
+.empty {
+  padding: var(--space-4);
+}

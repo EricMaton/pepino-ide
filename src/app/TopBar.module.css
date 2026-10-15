@@ -1,0 +1,35 @@
+.bar {
+  /* Anchors the command search results, which drop down over the content. */
+  position: relative;
+  z-index: 5;
+  flex: none;
+  border-bottom: var(--border);
+  background: var(--surface-variant);
+}
+
+/* The overlay layer (editor) wins over the screen layer whenever it has content. */
+.bar:has(.overlayLayer:not(:empty)) .screenLayer {
+  display: none;
+}
+
+.screenLayer:empty,
+.overlayLayer:empty {
+  display: none;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 64px;
+  padding: var(--space-2) var(--space-3);
+}
+
+.title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 700;
+  font-size: 15px;
+}

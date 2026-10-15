@@ -69,9 +69,8 @@
 
   /* App chrome */
   --nav-height: 60px;
-  --fab-height: 56px;
-  /* Snackbars float above the bottom nav and the COMMANDS button */
-  --snackbar-offset: calc(var(--nav-height) + var(--stroke) + var(--fab-height) + var(--space-4));
+  /* Snackbars float just above the bottom nav */
+  --snackbar-offset: calc(var(--nav-height) + var(--stroke));
 
   /* Safe areas: Capacitor injects --safe-area-inset-* on Android WebViews where env() reports 0 */
   --inset-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));

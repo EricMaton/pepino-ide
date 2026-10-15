@@ -5,31 +5,15 @@
   flex-direction: column;
 }
 
-/* Toolbar */
+/* Toolbar: one row — where you are, sort, new */
 .toolbar {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) calc(var(--space-3) + var(--shadow-offset)) calc(var(--space-2) + var(--shadow-offset))
+    var(--space-2);
   background: var(--bg);
   border-bottom: var(--border);
-}
-
-.pathRow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4) var(--space-2);
-}
-
-.actionRow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-2) calc(var(--space-4) + var(--shadow-offset)) calc(var(--space-3) + var(--shadow-offset))
-    var(--space-4);
-}
-
-.actionRow > :first-child {
-  margin-right: auto;
 }
 
 /* Breadcrumb: scrolls sideways, deepest segment stays visible */
@@ -98,7 +82,6 @@
   justify-content: center;
   gap: var(--space-3);
   padding: var(--space-6);
-  padding-bottom: calc(var(--space-6) + 56px);
   text-align: center;
 }
 

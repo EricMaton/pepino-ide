@@ -14,6 +14,8 @@ export function Breadcrumb({
   onJump: (depth: number) => void;
 }) {
   const scrollRef = useRef<HTMLElement>(null);
+  // A "/" root is its own separator: "/ src / ui", never "/ / src".
+  const rootIsSlash = rootLabel === '/';
   useEffect(() => {
     const scroller = scrollRef.current;
     if (scroller) scroller.scrollLeft = scroller.scrollWidth;
@@ -25,7 +27,7 @@ export function Breadcrumb({
         const last = depth === stack.length - 1;
         return (
           <span key={path} className={styles.crumb}>
-            {depth > 0 && (
+            {(depth > 1 || (depth === 1 && !rootIsSlash)) && (
               <span className="muted" aria-hidden>
                 /
               </span>
