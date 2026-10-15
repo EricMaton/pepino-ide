@@ -17,7 +17,9 @@ export interface FsBackend {
   stat(path: string): Promise<FsStat | null>;
   list(path: string): Promise<Array<FsStat & { name: string }>>;
   mkdir(path: string): Promise<void>;
-  writeEmpty(path: string): Promise<void>;
+  readText(path: string): Promise<string>;
+  /** Creates or replaces the file at [path] with UTF-8 [text]. */
+  writeText(path: string, text: string): Promise<void>;
   rename(from: string, to: string): Promise<void>;
   /** Recursive for directories. */
   copy(from: string, to: string): Promise<void>;
@@ -38,6 +40,10 @@ export interface ProjectSpace {
   createFile(path: string): Promise<void>;
   /** Creates a directory at [path]. Fails if it already exists. */
   createDirectory(path: string): Promise<void>;
+  /** UTF-8 contents of the file at [path]. */
+  readTextFile(path: string): Promise<string>;
+  /** Creates or replaces the file at [path]; its folder must exist. */
+  writeTextFile(path: string, text: string): Promise<void>;
   /** Renames [path] to [newName], keeping it in the same directory. */
   rename(path: string, newName: string): Promise<void>;
   /** Moves [source] into [destinationDir], keeping its name. */
@@ -83,13 +89,18 @@ export function createProjectSpace(backend: FsBackend): ProjectSpace {
     }
   }
 
-  async function newEntry(rawPath: string): Promise<string> {
+  async function writablePath(rawPath: string): Promise<string> {
     const path = resolveInRoot(rawPath);
     notRoot(path, 'create');
     if (!isValidEntryName(basename(path))) {
       throw new ProjectSpaceError('InvalidName', `Invalid name: ${basename(path)}`);
     }
     await directory(parentPath(path));
+    return path;
+  }
+
+  async function newEntry(rawPath: string): Promise<string> {
+    const path = await writablePath(rawPath);
     await ensureAbsent(path);
     return path;
   }
@@ -133,12 +144,28 @@ export function createProjectSpace(backend: FsBackend): ProjectSpace {
 
     async createFile(rawPath) {
       const path = await newEntry(rawPath);
-      await io('create file', path, () => backend.writeEmpty(path));
+      await io('create file', path, () => backend.writeText(path, ''));
     },
 
     async createDirectory(rawPath) {
       const path = await newEntry(rawPath);
       await io('create folder', path, () => backend.mkdir(path));
+    },
+
+    async readTextFile(rawPath) {
+      const path = resolveInRoot(rawPath);
+      if ((await existing(path)).isDirectory) {
+        throw new ProjectSpaceError('IsADirectory', `Is a folder: ${basename(path) || '/'}`);
+      }
+      return io('read', path, () => backend.readText(path));
+    },
+
+    async writeTextFile(rawPath, text) {
+      const path = await writablePath(rawPath);
+      if ((await io('read', path, () => backend.stat(path)))?.isDirectory) {
+        throw new ProjectSpaceError('IsADirectory', `Is a folder: ${basename(path)}`);
+      }
+      await io('write', path, () => backend.writeText(path, text));
     },
 
     async rename(rawPath, newName) {

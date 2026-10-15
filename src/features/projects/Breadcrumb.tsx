@@ -1,10 +1,18 @@
-import { useEffect, useRef } from 'react';
+import { type ReactNode, useEffect, useRef } from 'react';
 import { cx } from '../../ui/cx';
 import styles from './FileExplorer.module.css';
 import { basename } from './paths';
 
-/** `~ / src / ui` — every segment is a jump target; keeps the deepest one in view. */
-export function Breadcrumb({ stack, onJump }: { stack: string[]; onJump: (depth: number) => void }) {
+/** `~/projects / src / ui` — every segment is a jump target; keeps the deepest one in view. */
+export function Breadcrumb({
+  stack,
+  rootLabel,
+  onJump,
+}: {
+  stack: string[];
+  rootLabel: ReactNode;
+  onJump: (depth: number) => void;
+}) {
   const scrollRef = useRef<HTMLElement>(null);
   useEffect(() => {
     const scroller = scrollRef.current;
@@ -29,13 +37,7 @@ export function Breadcrumb({ stack, onJump }: { stack: string[]; onJump: (depth:
               disabled={last}
               onClick={() => onJump(depth)}
             >
-              {depth === 0 ? (
-                <>
-                  <span className="muted">~/</span>projects
-                </>
-              ) : (
-                basename(path)
-              )}
+              {depth === 0 ? rootLabel : basename(path)}
             </button>
           </span>
         );

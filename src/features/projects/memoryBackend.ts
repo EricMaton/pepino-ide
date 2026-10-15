@@ -39,9 +39,16 @@ export function createMemoryBackend(now: () => number = Date.now): FsBackend & {
       nodes.set(path, { isDirectory: true, sizeBytes: 0, modifiedMillis: now() });
     },
 
-    async writeEmpty(path) {
+    async readText(path) {
+      const node = nodes.get(path);
+      if (!node || node.isDirectory) throw new Error(`Not a file: ${path}`);
+      return node.content ?? '';
+    },
+
+    async writeText(path, text) {
       requireParent(path);
-      nodes.set(path, { isDirectory: false, sizeBytes: 0, modifiedMillis: now(), content: '' });
+      const sizeBytes = new TextEncoder().encode(text).length;
+      nodes.set(path, { isDirectory: false, sizeBytes, modifiedMillis: now(), content: text });
     },
 
     async rename(from, to) {
