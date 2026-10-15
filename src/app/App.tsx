@@ -3,6 +3,7 @@ import { Capacitor } from '@capacitor/core';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { folderLabelFor } from '../features/editor/labels';
 import { errorMessage } from '../features/projects/errors';
+import { basename, isWithin } from '../features/projects/paths';
 import { FileExplorer } from '../features/projects/FileExplorer';
 import { RecentProjects } from '../features/projects/RecentProjects';
 import { type ProjectInfo, readProject } from '../features/projects/projects';
@@ -28,6 +29,8 @@ type SpaceState = 'creating' | 'ready' | 'error';
 const EditorScreen = lazy(() => import('../features/editor/EditorScreen'));
 
 interface OpenFile {
+  /** One per editing session: a rename changes [path] but keeps the same editor. */
+  id: number;
   path: string;
   folderLabel: string;
   /** Cursor and scroll to reopen at. */
@@ -55,6 +58,21 @@ export function App() {
   const [initialStacks, setInitialStacks] = useState<Record<string, string[]>>({});
   // Updated on every cursor move/scroll, so a ref: only read in event handlers, never while rendering.
   const editorStates = useRef<Record<string, EditorViewState>>({});
+  const editorSessions = useRef(0);
+  const openFileRef = useRef(openFile);
+  useEffect(() => {
+    openFileRef.current = openFile;
+  });
+  /** A new editing session for [path], reopening at its last cursor and scroll. */
+  const openFileAt = useCallback(
+    (path: string, root: string, rootName: string): OpenFile => ({
+      id: ++editorSessions.current,
+      path,
+      folderLabel: folderLabelFor(path, root, rootName),
+      viewState: editorStates.current[path],
+    }),
+    [],
+  );
 
   const openProject = useCallback(
     (path: string) => {
@@ -105,11 +123,7 @@ export function App() {
           events.publish('project.opened', last.project);
         }
         if (last.openFile) {
-          setOpenFile({
-            path: last.openFile,
-            folderLabel: folderLabelFor(last.openFile, root, last.project?.name ?? '~/projects'),
-            viewState: last.editors[last.openFile],
-          });
+          setOpenFile(openFileAt(last.openFile, root, last.project?.name ?? '~/projects'));
         }
       })
       .catch((error: unknown) => console.error('Cannot restore the session', error))
@@ -119,7 +133,7 @@ export function App() {
     return () => {
       active = false;
     };
-  }, [space, session, projectSpace, events]);
+  }, [space, session, projectSpace, events, openFileAt]);
 
   // The workspace (#106) follows the open project and the open file.
   useEffect(() => {
@@ -138,14 +152,31 @@ export function App() {
   useEffect(
     () =>
       events.subscribe('workspace.openRequested', ({ path }) =>
-        setOpenFile({
-          path,
-          folderLabel: folderLabelFor(path, project?.path ?? '', project?.name ?? '~/projects'),
-          viewState: editorStates.current[path],
-        }),
+        setOpenFile(openFileAt(path, project?.path ?? '', project?.name ?? '~/projects')),
       ),
-    [events, project],
+    [events, project, openFileAt],
   );
+
+  // The open file follows renames and moves; if it is deleted the editor closes.
+  useEffect(() => {
+    const root = project?.path ?? '';
+    const rootName = project?.name ?? '~/projects';
+    const disposers = [
+      events.subscribe('fs.moved', ({ from, to }) => {
+        const current = openFileRef.current;
+        if (!current || !isWithin(current.path, from)) return;
+        const path = to + current.path.slice(from.length);
+        setOpenFile({ ...current, path, folderLabel: folderLabelFor(path, root, rootName) });
+      }),
+      events.subscribe('fs.deleted', ({ path }) => {
+        const current = openFileRef.current;
+        if (!current || !isWithin(current.path, path)) return;
+        setOpenFile(null);
+        showSnackbar(`${basename(current.path)} was deleted`);
+      }),
+    ];
+    return () => disposers.forEach((dispose) => dispose());
+  }, [events, project, showSnackbar]);
 
   // Persist only after restoring, or the empty start-up state would overwrite the saved one.
   useEffect(() => {
@@ -244,19 +275,13 @@ export function App() {
               project={project}
               onOpenProject={openProject}
               onCloseProject={closeProject}
-              onOpenFile={(path, rootPath, rootName) =>
-                setOpenFile({
-                  path,
-                  folderLabel: folderLabelFor(path, rootPath, rootName),
-                  viewState: editorStates.current[path],
-                })
-              }
+              onOpenFile={(path, rootPath, rootName) => setOpenFile(openFileAt(path, rootPath, rootName))}
             />
           )}
           {openFile && (
             <Suspense fallback={null}>
               <EditorScreen
-                key={openFile.path}
+                key={openFile.id}
                 path={openFile.path}
                 folderLabel={openFile.folderLabel}
                 initialViewState={openFile.viewState}

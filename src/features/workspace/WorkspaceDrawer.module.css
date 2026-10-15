@@ -122,3 +122,20 @@
   padding-top: var(--space-1);
   padding-bottom: var(--space-1);
 }
+
+.row {
+  display: flex;
+  align-items: center;
+}
+
+.row > .item {
+  flex: 1;
+  min-width: 0;
+}
+
+.more {
+  flex: none;
+  min-width: 40px;
+  width: 40px;
+  min-height: 40px;
+}

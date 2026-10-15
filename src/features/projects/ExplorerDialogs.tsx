@@ -171,6 +171,7 @@ export function EntryActionsDialog({
   onClose,
   onAction,
   onOpenAsProject,
+  extraActions = [],
 }: {
   entry: FileEntry;
   project: boolean;
@@ -179,8 +180,11 @@ export function EntryActionsDialog({
   onClose: () => void;
   onAction: (next: ExplorerDialog) => void;
   onOpenAsProject: () => void;
+  /** Listed first, e.g. "New file or folder here" in the workspace tree. */
+  extraActions?: Array<{ label: string; run: () => void }>;
 }) {
   const actions: Array<{ label: string; run: () => void; danger?: boolean }> = [
+    ...extraActions,
     ...(canOpenAsProject ? [{ label: 'Open as project', run: onOpenAsProject }] : []),
     { label: 'Rename', run: () => onAction({ kind: 'rename', entry, project }) },
     { label: 'Move to…', run: () => onAction({ kind: 'transfer', entry, project, move: true }) },
