@@ -2,7 +2,7 @@ import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { bracketMatching, indentOnInput, indentUnit, syntaxHighlighting } from '@codemirror/language';
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
-import { Compartment, EditorSelection, EditorState, type Text } from '@codemirror/state';
+import { Compartment, EditorSelection, EditorState, type Extension, type Text } from '@codemirror/state';
 import {
   drawSelection,
   EditorView,
@@ -45,13 +45,14 @@ export function CodeEditor({
   className,
 }: CodeEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
+  const language = useRef(new Compartment());
   const callbacks = useRef({ onChange, onReady, onViewState });
   useEffect(() => {
     callbacks.current = { onChange, onReady, onViewState };
   });
 
   useEffect(() => {
-    const language = new Compartment();
     const clamp = (position: number) => Math.max(0, Math.min(position, initialDoc.length));
     const view = new EditorView({
       parent: hostRef.current!,
@@ -82,7 +83,7 @@ export function CodeEditor({
             if (update.docChanged) callbacks.current.onChange(update.state.doc);
             if (update.docChanged || update.selectionSet) reportViewState();
           }),
-          language.of([]),
+          language.current.of([]),
         ],
       }),
     });
@@ -98,17 +99,11 @@ export function CodeEditor({
       view.requestMeasure({ read: () => undefined, write: () => void (view.scrollDOM.scrollTop = top) });
     }
 
+    viewRef.current = view;
     callbacks.current.onReady?.(view);
-    let active = true;
-    languageFor(fileName)
-      ?.load()
-      .then((extension) => {
-        if (active) view.dispatch({ effects: language.reconfigure(extension) });
-      })
-      .catch((error: unknown) => console.error(`Cannot load grammar for ${fileName}`, error));
 
     return () => {
-      active = false;
+      viewRef.current = null;
       callbacks.current.onReady?.(null);
       view.scrollDOM.removeEventListener('scroll', reportViewState);
       view.destroy();
@@ -116,6 +111,20 @@ export function CodeEditor({
     // The view owns its document after creation; changing props must not rebuild it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The grammar follows the file name (a rename from .ts to .py switches highlighting).
+  useEffect(() => {
+    let active = true;
+    const definition = languageFor(fileName);
+    const apply = (extension: Extension) => {
+      if (active) viewRef.current?.dispatch({ effects: language.current.reconfigure(extension) });
+    };
+    if (!definition) apply([]);
+    else definition.load().then(apply, (error: unknown) => console.error(`Cannot load grammar for ${fileName}`, error));
+    return () => {
+      active = false;
+    };
+  }, [fileName]);
 
   return <div ref={hostRef} className={className} />;
 }

@@ -14,7 +14,7 @@ import { BackIcon, FolderIcon } from '../../ui/icons';
 import { useSnackbar } from '../../ui/useSnackbar';
 import { errorMessage } from '../projects/errors';
 import { fileBadge } from '../projects/files';
-import { basename } from '../projects/paths';
+import { basename, isWithin } from '../projects/paths';
 import { WorkspaceDrawer } from '../workspace/WorkspaceDrawer';
 import { CodeEditor } from './CodeEditor';
 import styles from './EditorScreen.module.css';
@@ -100,8 +100,26 @@ export default function EditorScreen({
   useEffect(() => flushViewState, [flushViewState]);
   const dirty = saveState !== 'saved';
 
+  // The file can be renamed or moved while open (workspace tree, plugins): writes always go to
+  // the current path, and a deleted file is never written back.
+  const livePath = useRef(path);
+  const openedPath = useRef(path);
+  const gone = useRef(false);
+  useEffect(() => {
+    livePath.current = path;
+  });
+  useEffect(
+    () =>
+      events.subscribe('fs.deleted', ({ path: deleted }) => {
+        if (isWithin(livePath.current, deleted)) gone.current = true;
+      }),
+    [events],
+  );
+
+  // Loaded once per editing session; a rename keeps the document instead of reloading it.
   useEffect(() => {
     let active = true;
+    const path = openedPath.current;
     projectSpace.readTextFile(path).then(
       (text) => {
         if (!active) return;
@@ -123,11 +141,13 @@ export default function EditorScreen({
     return () => {
       active = false;
     };
-  }, [projectSpace, events, path]);
+  }, [projectSpace, events]);
 
   const writeNow = useCallback(async (): Promise<boolean> => {
     const current = doc.current;
     const original = opened.current;
+    const path = livePath.current;
+    if (gone.current) return true;
     if (!current || !original || (savedDoc.current && current.eq(savedDoc.current))) return true;
     setSaveState('saving');
     try {
@@ -148,7 +168,7 @@ export default function EditorScreen({
       showSnackbar(`Error: ${errorMessage(error)}`);
       return false;
     }
-  }, [projectSpace, events, path, showSnackbar]);
+  }, [projectSpace, events, showSnackbar]);
 
   /** Saves pending edits; saves run one after another, never in parallel. */
   const save = useCallback((): Promise<boolean> => {
@@ -194,7 +214,11 @@ export default function EditorScreen({
 
   // Leaving this file any other way than "close" (opening another one from the tree, closing the
   // project) unmounts the editor: pending edits are written then, not lost.
-  useEffect(() => () => void save(), [save]);
+  const latestSave = useRef(save);
+  useEffect(() => {
+    latestSave.current = save;
+  });
+  useEffect(() => () => void latestSave.current(), []);
 
   const openOther = (other: string) => {
     setFilesOpen(false);
@@ -298,8 +322,8 @@ export default function EditorScreen({
         <p className={cx('label', 'cursor', styles.message)}>Opening</p>
       ) : loaded.kind === 'text' ? (
         <>
+          {/* No key: the view lives as long as the editing session, across renames. */}
           <CodeEditor
-            key={path}
             className={styles.editor}
             fileName={name}
             initialDoc={loaded.text}
