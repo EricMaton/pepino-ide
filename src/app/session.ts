@@ -7,6 +7,8 @@ export interface Session {
   /** Explorer path stack per explorer root ('' = the space). */
   explorer: Record<string, string[]>;
   openFile: string | null;
+  /** Recently opened files per workspace root, most recent first (#106). */
+  openFiles: Record<string, string[]>;
   /** Cursor and scroll per file path, most recently used kept. */
   editors: Record<string, StoredEditorState>;
 }
@@ -24,7 +26,7 @@ interface StoredEditorState extends EditorViewState {
 const STORAGE_KEY = 'pepino.session';
 export const MAX_EDITOR_STATES = 50;
 
-export const EMPTY_SESSION: Session = { project: null, explorer: {}, openFile: null, editors: {} };
+export const EMPTY_SESSION: Session = { project: null, explorer: {}, openFile: null, openFiles: {}, editors: {} };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -48,6 +50,12 @@ export function parseSession(raw: string | null): Session {
       if (Array.isArray(stack) && stack.length > 0 && stack.every(isString)) explorer[root] = stack;
     }
   }
+  const openFiles: Session['openFiles'] = {};
+  if (isRecord(value.openFiles)) {
+    for (const [root, files] of Object.entries(value.openFiles)) {
+      if (Array.isArray(files) && files.every(isString)) openFiles[root] = files;
+    }
+  }
   const editors: Session['editors'] = {};
   if (isRecord(value.editors)) {
     for (const [path, state] of Object.entries(value.editors)) {
@@ -60,6 +68,7 @@ export function parseSession(raw: string | null): Session {
     project: isString(value.project) ? value.project : null,
     explorer,
     openFile: isString(value.openFile) ? value.openFile : null,
+    openFiles,
     editors,
   };
 }

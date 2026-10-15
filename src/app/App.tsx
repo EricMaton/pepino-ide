@@ -20,6 +20,7 @@ import { type AppDestination, DESTINATIONS, HOME } from './destinations';
 import { useServices } from './services';
 import { TopBar, TopBarFrame } from './TopBar';
 import { type TopBarSlots, TopBarSlotsContext } from './topBarSlots';
+import { useFileSource } from './useFileSource';
 
 type SpaceState = 'creating' | 'ready' | 'error';
 
@@ -40,7 +41,7 @@ const NAV_ICONS: Record<AppDestination, typeof FolderIcon> = {
 };
 
 export function App() {
-  const { registry, events, projectSpace, session } = useServices();
+  const { registry, events, projectSpace, session, workspace } = useServices();
   const showSnackbar = useSnackbar();
   const [destination, setDestination] = useState<AppDestination>(HOME);
   const [space, setSpace] = useState<SpaceState>('creating');
@@ -119,6 +120,32 @@ export function App() {
       active = false;
     };
   }, [space, session, projectSpace, events]);
+
+  // The workspace (#106) follows the open project and the open file.
+  useEffect(() => {
+    void workspace.setRoot(project?.path ?? '');
+  }, [workspace, project]);
+
+  useEffect(() => {
+    try {
+      workspace.setActiveFile(openFile?.path ?? null);
+    } catch (error) {
+      console.error('Active file outside the workspace', error);
+    }
+  }, [workspace, openFile]);
+
+  // The tree, the search, plugins and the agent ask for files through the workspace.
+  useEffect(
+    () =>
+      events.subscribe('workspace.openRequested', ({ path }) =>
+        setOpenFile({
+          path,
+          folderLabel: folderLabelFor(path, project?.path ?? '', project?.name ?? '~/projects'),
+          viewState: editorStates.current[path],
+        }),
+      ),
+    [events, project],
+  );
 
   // Persist only after restoring, or the empty start-up state would overwrite the saved one.
   useEffect(() => {
@@ -291,6 +318,7 @@ function ProjectsScreen({
   onStackChange,
 }: ProjectsScreenProps) {
   const { projectSpace, recentProjects } = useServices();
+  const files = useFileSource();
   if (state === 'ready' && project) {
     return (
       <>
@@ -304,6 +332,7 @@ function ProjectsScreen({
           subtitle="PROJECT · ~/projects"
           prefer="project."
           label={`Search commands · ${project.name}`}
+          files={files}
         />
         <FileExplorer
           key={project.path}

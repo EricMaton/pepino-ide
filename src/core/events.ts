@@ -3,11 +3,17 @@ export type EventMap = Record<string, unknown>;
 
 type Handler = (payload: never) => void;
 
+/** Just the publish/subscribe surface, so a feature can depend on only the topics it uses. */
+export interface EventChannel<Events extends EventMap> {
+  subscribe<K extends keyof Events>(topic: K, handler: (payload: Events[K]) => void): () => void;
+  publish<K extends keyof Events>(topic: K, payload: Events[K]): void;
+}
+
 /**
  * Typed pub/sub keyed by string topics. A failing handler never stops the
  * others: its error goes to [onHandlerError].
  */
-export class EventBus<Events extends EventMap> {
+export class EventBus<Events extends EventMap> implements EventChannel<Events> {
   private readonly handlers = new Map<keyof Events, Set<Handler>>();
 
   constructor(

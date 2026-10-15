@@ -1,7 +1,7 @@
 import { type ReactNode, useContext } from 'react';
 import { createPortal } from 'react-dom';
 import { cx } from '../ui/cx';
-import { CommandSearch } from './CommandSearch';
+import { CommandSearch, type FileSource } from './CommandSearch';
 import styles from './TopBar.module.css';
 import { type TopBarSlots, TopBarSlotsContext } from './topBarSlots';
 
@@ -24,15 +24,17 @@ interface TopBarProps {
   prefer?: string;
   /** Accessible name of the search box. */
   label: string;
+  /** Lets the search find files too (inside a project or the editor). */
+  files?: FileSource;
 }
 
-export function TopBar({ layer = 'screen', leading, title, subtitle, trailing, prefer, label }: TopBarProps) {
+export function TopBar({ layer = 'screen', leading, title, subtitle, trailing, prefer, label, files }: TopBarProps) {
   const slot = useContext(TopBarSlotsContext)[layer];
   if (!slot) return null;
   return createPortal(
     <div className={styles.row}>
       {leading}
-      <CommandSearch label={label} prefer={prefer}>
+      <CommandSearch label={label} prefer={prefer} files={files}>
         <span className={cx('ellipsis', styles.title)}>{title}</span>
         {subtitle && <span className={cx('caption', 'muted', 'ellipsis')}>{subtitle}</span>}
       </CommandSearch>
