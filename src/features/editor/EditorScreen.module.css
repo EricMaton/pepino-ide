@@ -104,3 +104,10 @@
   font-size: var(--label-size);
   letter-spacing: var(--label-tracking);
 }
+
+.saveState {
+  flex: none;
+  min-width: 9ch;
+  padding: 0 var(--space-3);
+  text-align: right;
+}

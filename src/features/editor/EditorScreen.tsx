@@ -1,3 +1,4 @@
+import { App as CapacitorApp } from '@capacitor/app';
 import { Text } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -5,7 +6,7 @@ import { useServices } from '../../app/services';
 import { useBackHandler } from '../../ui/back';
 import { Button, Dialog } from '../../ui/components';
 import { cx } from '../../ui/cx';
-import { BackIcon } from '../../ui/icons';
+import { BackIcon, PromptIcon } from '../../ui/icons';
 import { useSnackbar } from '../../ui/useSnackbar';
 import { errorMessage } from '../projects/errors';
 import { fileBadge } from '../projects/files';
@@ -14,9 +15,15 @@ import { CodeEditor } from './CodeEditor';
 import styles from './EditorScreen.module.css';
 import { EditorToolbar } from './EditorToolbar';
 import { languageFor } from './languages';
+import { takeSnapshot } from './snapshots';
+import { detectLineSeparator, type LineSeparator, serialize } from './text';
 import { DEFAULT_TOOLBAR } from './toolbar';
 
+/** Quiet time after the last keystroke before autosaving. */
+const AUTOSAVE_DELAY_MS = 1000;
+
 type Loaded = { kind: 'text'; text: string } | { kind: 'binary' } | { kind: 'error'; message: string };
+type SaveState = 'saved' | 'unsaved' | 'saving' | 'failed';
 
 interface EditorScreenProps {
   path: string;
@@ -27,17 +34,27 @@ interface EditorScreenProps {
   onClose: () => void;
 }
 
-/** Full-height editor for one file, laid over the explorer so closing it returns to the same folder. */
+/**
+ * Full-height editor for one file, laid over the explorer so closing it
+ * returns to the same folder. Work is never lost: edits autosave shortly
+ * after typing stops and whenever the app goes to the background, and the
+ * file's previous content is snapshotted before it is first overwritten.
+ */
 export default function EditorScreen({ path, visible, folderLabel, onClose }: EditorScreenProps) {
   const { projectSpace, registry, dispatcher, events } = useServices();
   const showSnackbar = useSnackbar();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
-  const [dirty, setDirty] = useState(false);
+  const [saveState, setSaveState] = useState<SaveState>('saved');
+  const [editCount, setEditCount] = useState(0);
   const [confirmClose, setConfirmClose] = useState(false);
   const [view, setView] = useState<EditorView | null>(null);
   const doc = useRef<Text | null>(null);
   const savedDoc = useRef<Text | null>(null);
+  const opened = useRef<{ text: string; doc: Text; separator: LineSeparator } | null>(null);
+  const snapshotTaken = useRef(false);
+  const saveQueue = useRef<Promise<boolean>>(Promise.resolve(true));
   const name = basename(path);
+  const dirty = saveState !== 'saved';
 
   useEffect(() => {
     let active = true;
@@ -49,7 +66,9 @@ export default function EditorScreen({ path, visible, folderLabel, onClose }: Ed
           setLoaded({ kind: 'binary' });
           return;
         }
-        savedDoc.current = Text.of(text.split(/\r\n?|\n/));
+        const openedDoc = Text.of(text.split(/\r\n?|\n/));
+        opened.current = { text, doc: openedDoc, separator: detectLineSeparator(text) };
+        savedDoc.current = openedDoc;
         setLoaded({ kind: 'text', text });
         events.publish('file.opened', { path });
       },
@@ -62,27 +81,69 @@ export default function EditorScreen({ path, visible, folderLabel, onClose }: Ed
     };
   }, [projectSpace, events, path]);
 
-  const save = useCallback(async () => {
+  const writeNow = useCallback(async (): Promise<boolean> => {
     const current = doc.current;
-    if (!current || (savedDoc.current && current.eq(savedDoc.current))) return true;
+    const original = opened.current;
+    if (!current || !original || (savedDoc.current && current.eq(savedDoc.current))) return true;
+    setSaveState('saving');
     try {
-      await projectSpace.writeTextFile(path, current.toString());
+      if (!snapshotTaken.current) {
+        // A failed snapshot must not cost the user their edits: log it and save anyway.
+        await takeSnapshot(projectSpace, path, original.text).catch((error: unknown) =>
+          console.error(`Cannot snapshot ${path}`, error),
+        );
+        snapshotTaken.current = true;
+      }
+      await projectSpace.writeTextFile(path, serialize(current, original.separator));
       savedDoc.current = current;
-      setDirty(doc.current !== null && !doc.current.eq(current));
+      setSaveState(doc.current && !doc.current.eq(current) ? 'unsaved' : 'saved');
       events.publish('file.saved', { path });
       return true;
     } catch (error) {
+      setSaveState('failed');
       showSnackbar(`Error: ${errorMessage(error)}`);
       return false;
     }
   }, [projectSpace, events, path, showSnackbar]);
 
-  const requestClose = useCallback(() => {
-    if (dirty) setConfirmClose(true);
-    else onClose();
-  }, [dirty, onClose]);
+  /** Saves pending edits; saves run one after another, never in parallel. */
+  const save = useCallback((): Promise<boolean> => {
+    saveQueue.current = saveQueue.current.then(writeNow, writeNow);
+    return saveQueue.current;
+  }, [writeNow]);
 
-  useBackHandler(visible && !confirmClose, requestClose);
+  // Autosave once typing pauses.
+  useEffect(() => {
+    if (saveState !== 'unsaved') return;
+    const timer = setTimeout(() => void save(), AUTOSAVE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [saveState, editCount, save]);
+
+  // The OS may kill a backgrounded app at any moment: save the instant it leaves the foreground.
+  useEffect(() => {
+    const flush = () => void save();
+    const onVisibility = () => document.visibilityState === 'hidden' && flush();
+    const pause = CapacitorApp.addListener('pause', flush);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      void pause.then((handle) => handle.remove());
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [save]);
+
+  const requestClose = useCallback(async () => {
+    if (!dirty || (await save())) onClose();
+    else setConfirmClose(true);
+  }, [dirty, save, onClose]);
+
+  const revertToOpened = useCallback(() => {
+    const original = opened.current;
+    if (!view || !original) return;
+    // A normal (undoable) edit, saved like any other.
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: original.doc }, userEvent: 'revert' });
+  }, [view]);
+
+  useBackHandler(visible && !confirmClose, () => void requestClose());
 
   // Hardware keyboards: Ctrl/Cmd+S saves while the editor is showing, even when focus is elsewhere.
   useEffect(() => {
@@ -101,10 +162,11 @@ export default function EditorScreen({ path, visible, folderLabel, onClose }: Ed
     if (!visible) return;
     const disposers = [
       registry.register({ id: 'editor.save', title: `Save ${name}`, run: () => void save() }),
-      registry.register({ id: 'editor.close', title: `Close ${name}`, run: requestClose }),
+      registry.register({ id: 'editor.close', title: `Close ${name}`, run: () => void requestClose() }),
+      registry.register({ id: 'editor.revert', title: `Revert ${name} to the opened version`, run: revertToOpened }),
     ];
     return () => disposers.forEach((dispose) => dispose());
-  }, [registry, visible, name, save, requestClose]);
+  }, [registry, visible, name, save, requestClose, revertToOpened]);
 
   // Toolbar keys are commands, registered while this editor is the one showing.
   useEffect(() => {
@@ -120,7 +182,9 @@ export default function EditorScreen({ path, visible, folderLabel, onClose }: Ed
 
   const onChange = (next: Text) => {
     doc.current = next;
-    setDirty(savedDoc.current === null || !next.eq(savedDoc.current));
+    const clean = savedDoc.current !== null && next.eq(savedDoc.current);
+    setSaveState((state) => (clean ? 'saved' : state === 'saving' ? 'saving' : 'unsaved'));
+    setEditCount((count) => count + 1);
   };
 
   const language = languageFor(name);
@@ -128,7 +192,7 @@ export default function EditorScreen({ path, visible, folderLabel, onClose }: Ed
   return (
     <section className={styles.screen} hidden={!visible} aria-label={`Editor: ${name}`}>
       <header className={styles.bar}>
-        <Button square onClick={requestClose} aria-label="Close file">
+        <Button square onClick={() => void requestClose()} aria-label="Close file">
           <BackIcon size={20} />
         </Button>
         <div className={styles.file}>
@@ -140,9 +204,26 @@ export default function EditorScreen({ path, visible, folderLabel, onClose }: Ed
             {dirty && <span className={styles.dirty} role="img" aria-label="Unsaved changes" />}
           </h2>
         </div>
-        <Button variant="filled" disabled={!dirty} onClick={() => void save()}>
-          Save
+        <Button variant="text" square aria-label="Commands" onClick={() => void runKey('app.openPalette')}>
+          <PromptIcon size={20} />
         </Button>
+        {saveState === 'failed' ? (
+          <Button variant="filled" onClick={() => void save()}>
+            Retry
+          </Button>
+        ) : (
+          <span
+            className={cx(
+              'label',
+              styles.saveState,
+              saveState === 'saving' && 'cursor',
+              saveState === 'saved' && 'muted',
+            )}
+            role="status"
+          >
+            {saveState === 'saved' ? 'Saved' : saveState === 'saving' ? 'Saving' : 'Unsaved'}
+          </span>
+        )}
       </header>
 
       {loaded === null ? (
@@ -168,7 +249,7 @@ export default function EditorScreen({ path, visible, folderLabel, onClose }: Ed
 
       {confirmClose && (
         <Dialog
-          title="Unsaved changes"
+          title="Couldn't save"
           eyebrow={`FILE · ${name}`}
           onClose={() => setConfirmClose(false)}
           actions={
@@ -182,13 +263,13 @@ export default function EditorScreen({ path, visible, folderLabel, onClose }: Ed
                   if (await save()) onClose();
                 }}
               >
-                Save & close
+                Retry
               </Button>
             </>
           }
         >
           <p className="body">
-            <strong>{name}</strong> has changes that are not saved yet.
+            <strong>{name}</strong> has changes that could not be saved. Discarding loses them.
           </p>
         </Dialog>
       )}
