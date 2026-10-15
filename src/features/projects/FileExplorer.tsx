@@ -1,10 +1,10 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useRef, useState } from 'react';
+import { type ReactNode, useRef, useState } from 'react';
 import { useBackHandler } from '../../ui/back';
 import { Button } from '../../ui/components';
 import { cx } from '../../ui/cx';
 import { BackIcon, FolderIcon, MoreIcon, PlusIcon, SortIcon } from '../../ui/icons';
-import { SliceOutline } from '../../ui/Logo';
+import { PepinoMark, SliceOutline } from '../../ui/Logo';
 import { Breadcrumb } from './Breadcrumb';
 import { errorMessage } from './errors';
 import {
@@ -27,29 +27,56 @@ import {
   sortEntries,
 } from './files';
 import { basename, joinPath } from './paths';
+import { canBeProject, createProject, markAsProject } from './projects';
 import type { ProjectSpace } from './projectSpace';
 import { useDirectoryListing } from './useDirectoryListing';
 
 const ROW_HEIGHT = 68;
 const FAB_CLEARANCE = 96;
 
+interface FileExplorerProps {
+  projectSpace: ProjectSpace;
+  /** Folder the explorer is anchored to: '' for the whole space, or a project. */
+  rootPath: string;
+  /** Breadcrumb label for [rootPath]. */
+  rootLabel: ReactNode;
+  /** Plain-text form of [rootLabel], e.g. "~/projects". */
+  rootName: string;
+  /** Called on back/UP at the root (closes the project); without it the root is a dead end. */
+  onExitRoot?: () => void;
+  /** Space mode: top-level projects open through here instead of being browsed into. */
+  onOpenProject?: (path: string) => void;
+}
+
 /**
- * Touch file explorer anchored to the project space root. Navigation is a
- * stack of paths (ADR-003): opening a folder pushes, back pops, a breadcrumb
- * segment truncates the stack, and the root can never be left.
+ * Touch file explorer anchored to [rootPath]. Navigation is a stack of paths
+ * (ADR-003): opening a folder pushes, back pops, a breadcrumb segment
+ * truncates the stack, and nothing above the root is ever reachable.
  */
-export function FileExplorer({ projectSpace }: { projectSpace: ProjectSpace }) {
-  const [pathStack, setPathStack] = useState<string[]>(['']);
+export function FileExplorer({
+  projectSpace,
+  rootPath,
+  rootLabel,
+  rootName,
+  onExitRoot,
+  onOpenProject,
+}: FileExplorerProps) {
+  const [pathStack, setPathStack] = useState<string[]>([rootPath]);
   const currentPath = pathStack[pathStack.length - 1];
   const [sortOrder, setSortOrder] = useState<FileSortOrder>('name');
   const [refreshTick, setRefreshTick] = useState(0);
   const [dialog, setDialog] = useState<ExplorerDialog | null>(null);
   const [opError, setOpError] = useState<string | null>(null);
-  const listing = useDirectoryListing(projectSpace, currentPath, refreshTick);
+  const atSpaceRoot = onOpenProject !== undefined && currentPath === '';
+  const listing = useDirectoryListing(projectSpace, currentPath, refreshTick, atSpaceRoot);
+  const projects = listing?.ok ? listing.projects : new Set<string>();
 
   const canGoUp = pathStack.length > 1;
-  const goUp = () => setPathStack((stack) => (stack.length > 1 ? stack.slice(0, -1) : stack));
-  useBackHandler(canGoUp, goUp);
+  const goUp = () => {
+    if (pathStack.length > 1) setPathStack((stack) => stack.slice(0, -1));
+    else onExitRoot?.();
+  };
+  useBackHandler(canGoUp || onExitRoot !== undefined, goUp);
 
   const runOperation = (operation: () => Promise<void>) => {
     setDialog(null);
@@ -62,16 +89,31 @@ export function FileExplorer({ projectSpace }: { projectSpace: ProjectSpace }) {
     );
   };
 
-  const where = ['~/projects', ...pathStack.slice(1).map(basename)].join('/');
+  const openProject = (operation: () => Promise<{ path: string }>) =>
+    runOperation(async () => {
+      const project = await operation();
+      onOpenProject?.(project.path);
+    });
+
+  const where = [rootName, ...pathStack.slice(1).map(basename)].join('/');
 
   return (
     <div className={styles.explorer}>
       <div className={styles.toolbar}>
         <div className={styles.pathRow}>
-          <Button square disabled={!canGoUp} onClick={goUp} aria-label="Up one folder">
+          <Button
+            square
+            disabled={!canGoUp && !onExitRoot}
+            onClick={goUp}
+            aria-label={canGoUp ? 'Up one folder' : 'Close project'}
+          >
             <BackIcon size={20} />
           </Button>
-          <Breadcrumb stack={pathStack} onJump={(depth) => setPathStack((stack) => stack.slice(0, depth + 1))} />
+          <Breadcrumb
+            stack={pathStack}
+            rootLabel={rootLabel}
+            onJump={(depth) => setPathStack((stack) => stack.slice(0, depth + 1))}
+          />
         </div>
         <div className={styles.actionRow}>
           <span className="caption muted">
@@ -102,34 +144,55 @@ export function FileExplorer({ projectSpace }: { projectSpace: ProjectSpace }) {
           </p>
         </div>
       ) : listing.entries.length === 0 ? (
-        <EmptyFolder />
+        <EmptyFolder spaceRoot={atSpaceRoot} />
       ) : (
         <EntryList
           key={currentPath}
           entries={sortEntries(listing.entries, sortOrder)}
-          onOpen={(entry) => setPathStack((stack) => [...stack, entry.path])}
-          onActions={(entry) => setDialog({ kind: 'actions', entry })}
+          projects={projects}
+          onOpen={(entry) =>
+            projects.has(entry.path) && onOpenProject
+              ? onOpenProject(entry.path)
+              : setPathStack((stack) => [...stack, entry.path])
+          }
+          onActions={(entry) => setDialog({ kind: 'actions', entry, project: projects.has(entry.path) })}
         />
       )}
 
       {dialog?.kind === 'create' && (
         <CreateEntryDialog
           where={where}
+          allowProject={atSpaceRoot}
           onClose={() => setDialog(null)}
-          onCreate={(asDirectory, name) =>
-            runOperation(() => {
-              const path = joinPath(currentPath, name);
-              return asDirectory ? projectSpace.createDirectory(path) : projectSpace.createFile(path);
-            })
+          onCreate={(kind, name) =>
+            kind === 'project'
+              ? openProject(() => createProject(projectSpace, name))
+              : runOperation(() => {
+                  const path = joinPath(currentPath, name);
+                  return kind === 'folder' ? projectSpace.createDirectory(path) : projectSpace.createFile(path);
+                })
           }
         />
       )}
       {dialog?.kind === 'actions' && (
-        <EntryActionsDialog entry={dialog.entry} onClose={() => setDialog(null)} onAction={setDialog} />
+        <EntryActionsDialog
+          entry={dialog.entry}
+          project={dialog.project}
+          canOpenAsProject={
+            onOpenProject !== undefined &&
+            !dialog.project &&
+            dialog.entry.isDirectory &&
+            canBeProject(dialog.entry.path)
+          }
+          onClose={() => setDialog(null)}
+          onAction={setDialog}
+          onOpenAsProject={() => openProject(() => markAsProject(projectSpace, dialog.entry.path))}
+        />
       )}
       {dialog?.kind === 'rename' && (
         <RenameEntryDialog
           entry={dialog.entry}
+          project={dialog.project}
           onClose={() => setDialog(null)}
           onRename={(newName) => runOperation(() => projectSpace.rename(dialog.entry.path, newName))}
         />
@@ -137,6 +200,7 @@ export function FileExplorer({ projectSpace }: { projectSpace: ProjectSpace }) {
       {dialog?.kind === 'delete' && (
         <DeleteEntryDialog
           entry={dialog.entry}
+          project={dialog.project}
           onClose={() => setDialog(null)}
           onConfirm={() => runOperation(() => projectSpace.delete(dialog.entry.path))}
         />
@@ -144,8 +208,11 @@ export function FileExplorer({ projectSpace }: { projectSpace: ProjectSpace }) {
       {dialog?.kind === 'transfer' && (
         <TransferDialog
           entry={dialog.entry}
+          project={dialog.project}
           move={dialog.move}
           projectSpace={projectSpace}
+          rootPath={rootPath}
+          rootLabel={rootLabel}
           onClose={() => setDialog(null)}
           onConfirm={(destination) =>
             runOperation(() =>
@@ -162,11 +229,12 @@ export function FileExplorer({ projectSpace }: { projectSpace: ProjectSpace }) {
 
 interface EntryListProps {
   entries: FileEntry[];
+  projects: ReadonlySet<string>;
   onOpen: (entry: FileEntry) => void;
   onActions: (entry: FileEntry) => void;
 }
 
-function EntryList({ entries, onOpen, onActions }: EntryListProps) {
+function EntryList({ entries, projects, onOpen, onActions }: EntryListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line react-hooks/incompatible-library -- the virtualizer is read during render by design
   const virtualizer = useVirtualizer({
@@ -186,6 +254,7 @@ function EntryList({ entries, onOpen, onActions }: EntryListProps) {
             key={item.key}
             index={item.index}
             entry={entries[item.index]}
+            project={projects.has(entries[item.index].path)}
             top={item.start}
             onOpen={onOpen}
             onActions={onActions}
@@ -199,19 +268,24 @@ function EntryList({ entries, onOpen, onActions }: EntryListProps) {
 interface FileRowProps {
   index: number;
   entry: FileEntry;
+  project: boolean;
   top: number;
   onOpen: (entry: FileEntry) => void;
   onActions: (entry: FileEntry) => void;
 }
 
-function FileRow({ index, entry, top, onOpen, onActions }: FileRowProps) {
-  const meta = [entry.isDirectory ? 'DIR' : formatSize(entry.sizeBytes), formatModified(entry.modifiedMillis)];
+function FileRow({ index, entry, project, top, onOpen, onActions }: FileRowProps) {
+  const kind = project ? 'PROJECT' : entry.isDirectory ? 'DIR' : formatSize(entry.sizeBytes);
   const content = (
     <>
       <span className={cx('caption', 'muted', styles.index)} aria-hidden>
         {String(index + 1).padStart(2, '0')}
       </span>
-      {entry.isDirectory ? (
+      {project ? (
+        <span className={styles.badge} aria-hidden>
+          <PepinoMark size={40} />
+        </span>
+      ) : entry.isDirectory ? (
         <span className={cx(styles.badge, styles.badgeDir)} aria-hidden>
           <FolderIcon size={20} />
         </span>
@@ -221,11 +295,15 @@ function FileRow({ index, entry, top, onOpen, onActions }: FileRowProps) {
         </span>
       )}
       <span className={styles.rowText}>
-        <span className="body ellipsis">
+        <span className={cx('body', 'ellipsis', project && styles.projectName)}>
           {entry.name}
-          {entry.isDirectory && <span className="muted">/</span>}
+          {entry.isDirectory && !project && <span className="muted">/</span>}
         </span>
-        <span className="caption muted ellipsis">{meta.join('  ·  ')}</span>
+        <span className="caption muted ellipsis">
+          <span className={cx(project && 'accent')}>{kind}</span>
+          {'  ·  '}
+          {formatModified(entry.modifiedMillis)}
+        </span>
       </span>
     </>
   );
@@ -252,13 +330,14 @@ function FileRow({ index, entry, top, onOpen, onActions }: FileRowProps) {
   );
 }
 
-function EmptyFolder() {
+function EmptyFolder({ spaceRoot }: { spaceRoot: boolean }) {
   return (
     <div className={styles.state}>
       <SliceOutline size={112} />
-      <p className="title">Empty folder</p>
+      <p className="title">{spaceRoot ? 'No projects yet' : 'Empty folder'}</p>
       <p className="caption muted">
-        Tap <span className="accent">+ NEW</span> to create a file or folder here.
+        Tap <span className="accent">+ NEW</span>{' '}
+        {spaceRoot ? 'to start your first project.' : 'to create a file or folder here.'}
       </p>
     </div>
   );

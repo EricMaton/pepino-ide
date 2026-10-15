@@ -2,10 +2,13 @@ import { createContext, useContext } from 'react';
 import { CommandDispatcher, CommandRegistry } from '../core/commands';
 import { EventBus } from '../core/events';
 import { createCapacitorBackend } from '../features/projects/capacitorBackend';
+import type { ProjectInfo } from '../features/projects/projects';
 import { createProjectSpace, type ProjectSpace } from '../features/projects/projectSpace';
 
 export type AppEvents = {
   'demo.counterChanged': { count: number };
+  'project.opened': ProjectInfo;
+  'project.closed': ProjectInfo;
 };
 
 export interface Services {

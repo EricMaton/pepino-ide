@@ -37,8 +37,13 @@ export function createCapacitorBackend(): FsBackend {
       await Filesystem.mkdir({ path: full(path), directory, recursive: path === '' });
     },
 
-    async writeEmpty(path) {
-      await Filesystem.writeFile({ path: full(path), directory, data: '', encoding: Encoding.UTF8 });
+    async readText(path) {
+      const { data } = await Filesystem.readFile({ path: full(path), directory, encoding: Encoding.UTF8 });
+      return typeof data === 'string' ? data : await data.text();
+    },
+
+    async writeText(path, text) {
+      await Filesystem.writeFile({ path: full(path), directory, data: text, encoding: Encoding.UTF8 });
     },
 
     async rename(from, to) {

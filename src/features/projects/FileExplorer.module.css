@@ -250,3 +250,29 @@ button.rowMain:active {
 .deleteText strong {
   color: var(--error);
 }
+
+.projectName {
+  font-weight: 700;
+}
+
+/* Open project strip */
+.projectBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border-bottom: var(--border);
+  background: var(--surface-variant);
+}
+
+.projectBarText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.projectBarText h2 {
+  margin: 0;
+}

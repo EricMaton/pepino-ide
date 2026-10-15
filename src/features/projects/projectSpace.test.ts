@@ -150,9 +150,31 @@ describe('delete', () => {
   });
 });
 
+describe('text files', () => {
+  it('writes, overwrites and reads back UTF-8 text', async () => {
+    await space.writeTextFile('notes.md', '# hola');
+    await space.writeTextFile('notes.md', '# adiós ✓');
+    expect(await space.readTextFile('notes.md')).toBe('# adiós ✓');
+    expect((await space.listDirectory('')).find((e) => e.name === 'notes.md')?.sizeBytes).toBe(12);
+  });
+
+  it('needs an existing parent folder and a valid name', async () => {
+    await fails(space.writeTextFile('missing/a.txt', ''), 'NotFound');
+    await fails(space.writeTextFile('../a.txt', ''), 'EscapesRoot');
+    await fails(space.writeTextFile('', ''), 'InvalidName');
+  });
+
+  it('refuses folders on both ends', async () => {
+    await space.createDirectory('dir');
+    await fails(space.writeTextFile('dir', 'x'), 'IsADirectory');
+    await fails(space.readTextFile('dir'), 'IsADirectory');
+    await fails(space.readTextFile('missing'), 'NotFound');
+  });
+});
+
 describe('backend failures', () => {
   it('are wrapped as Io errors', async () => {
-    backend.writeEmpty = async () => {
+    backend.writeText = async () => {
       throw new Error('disk full');
     };
     await fails(space.createFile('a'), 'Io');

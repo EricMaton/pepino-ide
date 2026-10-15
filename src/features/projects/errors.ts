@@ -1,5 +1,5 @@
 export type ProjectSpaceErrorCode =
-  'NotFound' | 'AlreadyExists' | 'InvalidName' | 'NotADirectory' | 'EscapesRoot' | 'IntoItself' | 'Io';
+  'NotFound' | 'AlreadyExists' | 'InvalidName' | 'NotADirectory' | 'IsADirectory' | 'EscapesRoot' | 'IntoItself' | 'Io';
 
 export class ProjectSpaceError extends Error {
   constructor(
