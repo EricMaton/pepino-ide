@@ -8,7 +8,8 @@ export function CommandPalette({ onClose, onRun }: { onClose: () => void; onRun:
   const [query, setQuery] = useState('');
   const needle = query.trim().toLowerCase();
   const commands = registry.all.filter(
-    (command) => command.title.toLowerCase().includes(needle) || command.id.toLowerCase().includes(needle),
+    (command) =>
+      !command.hidden && (command.title.toLowerCase().includes(needle) || command.id.toLowerCase().includes(needle)),
   );
 
   return (

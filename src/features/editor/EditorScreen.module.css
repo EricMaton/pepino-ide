@@ -65,3 +65,42 @@
 .message p {
   margin: 0;
 }
+
+/* Symbol keys */
+.toolbar {
+  flex: none;
+  display: flex;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-top: var(--border);
+  background: var(--surface-variant);
+}
+
+.toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+.key {
+  flex: none;
+  min-width: 44px;
+  height: var(--touch-target);
+  padding: 0 var(--space-2);
+  border: none;
+  border-right: 1px solid var(--hairline);
+  background: none;
+  color: var(--fg);
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.key:active {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.wideKey {
+  font-size: var(--label-size);
+  letter-spacing: var(--label-tracking);
+}

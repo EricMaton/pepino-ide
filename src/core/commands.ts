@@ -2,6 +2,8 @@ export interface Command {
   id: string;
   title: string;
   run: () => void | Promise<void>;
+  /** Not listed in the command palette (e.g. one-key toolbar actions); still runnable by id. */
+  hidden?: boolean;
 }
 
 export class UnknownCommandError extends Error {
