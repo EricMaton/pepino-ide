@@ -10,7 +10,7 @@
 - [x] Toolbar configurable encima del teclado: símbolos `{}[]()=;`, tab, undo/redo (botones = comandos del `CommandRegistry`)
 - [x] Autosave con snapshot antes de cada edición (el SO mata apps: nunca perder trabajo; guardar también en el evento `pause` de la app)
 - [x] Estado del editor restaurado al reabrir (scroll, cursor, archivo abierto)
-- [x] Soportar archivos de al menos 5k líneas sin tirones visibles (medido en [performance.md](../performance.md); falta dispositivo real, #16)
+- [x] Soportar archivos de al menos 5k líneas sin tirones visibles (medido en escritorio y en el WebView del emulador, [performance.md](../performance.md), #20)
 - [x] Workspace del proyecto (#106): árbol con acciones, open files, búsqueda de archivos y API
 - [ ] Teclado Pepino opcional para código (#107)
 
