@@ -28,6 +28,8 @@ export interface Services {
   recentProjects: RecentProjects;
   session: SessionStore;
   workspace: Workspace;
+  /** Small user preferences (editor font size…), persisted across restarts. */
+  preferences: KeyValueStore;
 }
 
 /** Capacitor Preferences: SharedPreferences on Android, UserDefaults on iOS, localStorage on the web. */
@@ -64,6 +66,7 @@ export function createServices(): Services {
     recentProjects,
     session,
     workspace,
+    preferences,
   };
 }
 
