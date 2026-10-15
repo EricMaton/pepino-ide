@@ -3,11 +3,12 @@ import { Text } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { EditorViewState } from '../../app/session';
+import { CommandSearch } from '../../app/CommandSearch';
 import { useServices } from '../../app/services';
 import { useBackHandler } from '../../ui/back';
 import { Button, Dialog } from '../../ui/components';
 import { cx } from '../../ui/cx';
-import { BackIcon, PromptIcon } from '../../ui/icons';
+import { BackIcon } from '../../ui/icons';
 import { useSnackbar } from '../../ui/useSnackbar';
 import { errorMessage } from '../projects/errors';
 import { fileBadge } from '../projects/files';
@@ -236,18 +237,15 @@ export default function EditorScreen({
         <Button square onClick={() => void requestClose()} aria-label="Close file">
           <BackIcon size={20} />
         </Button>
-        <div className={styles.file}>
+        <CommandSearch label={`Search commands · ${name}`} prefer="editor.">
+          <span className={styles.fileName}>
+            <span className="ellipsis">{name}</span>
+            {dirty && <span className={styles.dirty} role="img" aria-label="Unsaved changes" />}
+          </span>
           <span className="caption muted ellipsis">
             {folderLabel} · {language?.label.toUpperCase() ?? fileBadge(name)}
           </span>
-          <h2 className="title">
-            <span className="ellipsis">{name}</span>
-            {dirty && <span className={styles.dirty} role="img" aria-label="Unsaved changes" />}
-          </h2>
-        </div>
-        <Button variant="text" square aria-label="Commands" onClick={() => void runKey('app.openPalette')}>
-          <PromptIcon size={20} />
-        </Button>
+        </CommandSearch>
         {saveState === 'failed' ? (
           <Button variant="filled" onClick={() => void save()}>
             Retry

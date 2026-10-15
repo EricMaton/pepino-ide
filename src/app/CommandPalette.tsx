@@ -1,16 +1,13 @@
 import { useState } from 'react';
 import { Button, Dialog, TextField } from '../ui/components';
 import styles from './App.module.css';
+import { matchCommands } from './matchCommands';
 import { useServices } from './services';
 
 export function CommandPalette({ onClose, onRun }: { onClose: () => void; onRun: (id: string) => void }) {
   const { registry } = useServices();
   const [query, setQuery] = useState('');
-  const needle = query.trim().toLowerCase();
-  const commands = registry.all.filter(
-    (command) =>
-      !command.hidden && (command.title.toLowerCase().includes(needle) || command.id.toLowerCase().includes(needle)),
-  );
+  const commands = matchCommands(registry.all, query);
 
   return (
     <Dialog title="Commands" eyebrow={`${registry.all.length} registered`} onClose={onClose}>

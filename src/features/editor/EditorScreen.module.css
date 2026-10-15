@@ -12,6 +12,9 @@
 }
 
 .bar {
+  /* Anchors the command search results, which drop down over the editor. */
+  position: relative;
+  z-index: 3;
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -20,23 +23,12 @@
   background: var(--surface-variant);
 }
 
-.file {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.file h2 {
-  margin: 0;
+.fileName {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  text-transform: none;
-  font-family: var(--font-mono);
-  font-stretch: normal;
-  font-size: 16px;
+  font-weight: 700;
+  font-size: 15px;
 }
 
 .dirty {
