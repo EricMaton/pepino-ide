@@ -1,3 +1,4 @@
+import { Capacitor } from '@capacitor/core';
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem';
 import type { FsBackend } from './projectSpace';
 
@@ -38,6 +39,10 @@ export function createCapacitorBackend(): FsBackend {
     },
 
     async readText(path) {
+      if (Capacitor.isNativePlatform()) {
+        const text = await readThroughWebView(full(path));
+        if (text !== null) return text;
+      }
       const { data } = await Filesystem.readFile({ path: full(path), directory, encoding: Encoding.UTF8 });
       return typeof data === 'string' ? data : await data.text();
     },
@@ -63,4 +68,22 @@ export function createCapacitorBackend(): FsBackend {
       }
     },
   };
+}
+
+/**
+ * Reads a file through the WebView's local file server instead of the plugin
+ * bridge, which serialises the content as JSON: ~5x faster for large files
+ * (3.8 MB: 350 ms instead of 2 s on the emulator, see docs/performance.md).
+ * Null when it can't, so the caller falls back to the bridge and its errors.
+ */
+async function readThroughWebView(path: string): Promise<string | null> {
+  try {
+    const { uri } = await Filesystem.getUri({ path, directory });
+    const response = await fetch(Capacitor.convertFileSrc(uri), { cache: 'no-store' });
+    if (!response.ok) return null;
+    // Keep a byte-order mark, as the bridge does, so saving writes the file back unchanged.
+    return new TextDecoder('utf-8', { ignoreBOM: true }).decode(await response.arrayBuffer());
+  } catch {
+    return null;
+  }
 }

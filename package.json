@@ -16,7 +16,8 @@
     "test": "vitest run",
     "preview": "vite preview",
     "android": "npm run build && cap sync android && cap run android",
-    "perf:editor": "node scripts/perf/editor-large-files.mjs"
+    "perf:editor": "node scripts/perf/editor-large-files.mjs",
+    "perf:editor:device": "node scripts/perf/editor-device.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.3",
