@@ -5,7 +5,7 @@
 
 ## Tareas
 
-- [ ] Spike al inicio del sprint: isomorphic-git sobre `ProjectSpace` frente a un plugin Capacitor nativo (JGit / libgit2); decidir con medidas y documentar en un ADR
+- [x] Spike al inicio del sprint: isomorphic-git sobre `ProjectSpace` frente a un plugin Capacitor nativo (JGit / libgit2); decidir con medidas y documentar en un ADR ([ADR-006](../decisions/ADR-006-git.md): JGit, #21)
 - [ ] `git init` / abrir repo existente en un proyecto
 - [ ] Commits con mensaje, staging de archivos (incl. stage parcial si es viable)
 - [ ] Branches: crear, cambiar, borrar, lista
