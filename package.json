@@ -15,7 +15,8 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "preview": "vite preview",
-    "android": "npm run build && cap sync android && cap run android"
+    "android": "npm run build && cap sync android && cap run android",
+    "perf:editor": "node scripts/perf/editor-large-files.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.3",
@@ -55,6 +56,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.7",
     "globals": "^17.13.0",
+    "playwright-core": "^1.64.1",
     "prettier": "^3.9.10",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.71.2",
