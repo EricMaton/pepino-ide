@@ -1,0 +1,254 @@
+/* Button */
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--touch-target);
+  min-width: var(--touch-target);
+  padding: 0 var(--space-4);
+  border: none;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--fg);
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    transform var(--press-duration) linear,
+    box-shadow var(--press-duration) linear;
+}
+
+.button:disabled {
+  color: var(--outline);
+  cursor: default;
+}
+
+.text:active:not(:disabled) {
+  background: var(--surface-variant);
+}
+
+.outlined {
+  border: var(--stroke) solid currentColor;
+}
+
+.outlined:active:not(:disabled) {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+.outlined:disabled {
+  border-color: var(--hairline);
+}
+
+/* The signature press: a solid shadow that the button sinks into */
+.filled {
+  background: var(--primary);
+  color: var(--on-primary);
+  box-shadow: var(--shadow-fg);
+}
+
+.filled:active:not(:disabled) {
+  transform: translate(var(--shadow-offset), var(--shadow-offset));
+  box-shadow: 0 0 0 var(--fg);
+}
+
+.filled:disabled {
+  background: var(--surface-variant);
+  color: var(--outline);
+  box-shadow: none;
+}
+
+.square {
+  width: var(--touch-target);
+  padding: 0;
+}
+
+.danger {
+  color: var(--error);
+}
+
+/* Full-width row inside a list; text lines up with the surrounding content */
+.listItem {
+  justify-content: flex-start;
+  width: 100%;
+  padding: 0;
+  text-align: left;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button {
+    transition: none;
+  }
+}
+
+/* Divider */
+.divider {
+  margin: 0;
+  border: none;
+  border-top: var(--stroke) solid var(--fg);
+}
+
+.subtle {
+  border-top: 1px solid var(--hairline);
+}
+
+/* Red bar */
+.redBar {
+  height: 6px;
+  background: var(--primary);
+  flex: none;
+}
+
+/* Dialog: a window with a title bar, hard border and a red drop */
+.dialog {
+  width: min(560px, calc(100vw - 2 * var(--space-4) - 8px));
+  max-width: none;
+  max-height: calc(100dvh - var(--inset-top) - var(--inset-bottom) - 2 * var(--space-6));
+  margin: auto;
+  padding: 0;
+  overflow: visible;
+  border: var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--fg);
+  box-shadow: var(--shadow-dialog);
+}
+
+.dialog:focus-visible {
+  outline: none;
+}
+
+.dialog::backdrop {
+  background: var(--scrim);
+}
+
+.dialogPanel {
+  display: flex;
+  flex-direction: column;
+  max-height: inherit;
+}
+
+.dialogHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-5);
+  border-bottom: var(--border);
+  background: var(--surface-variant);
+}
+
+.dialogHeading {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) 0;
+}
+
+.dialogHeading h2 {
+  margin: 0;
+}
+
+.dialogContent {
+  padding: var(--space-5);
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.dialogActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5) var(--space-5);
+}
+
+/* Text field */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.inputBox {
+  display: flex;
+  align-items: center;
+  min-height: var(--touch-target);
+  border: var(--stroke) solid var(--outline);
+  background: var(--bg);
+}
+
+.inputBox:focus-within {
+  border-color: var(--fg);
+  box-shadow: var(--shadow-primary);
+}
+
+.prefix {
+  padding-left: var(--space-3);
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  min-height: calc(var(--touch-target) - 2 * var(--stroke));
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: var(--radius);
+  background: none;
+  outline: none;
+  caret-color: var(--primary);
+}
+
+.invalid,
+.invalid:focus-within {
+  border-color: var(--error);
+}
+
+.fieldError {
+  color: var(--error);
+}
+
+/* Snackbar */
+.snackbar {
+  position: fixed;
+  left: calc(var(--inset-left) + var(--space-4));
+  right: calc(var(--inset-right) + var(--space-4) + var(--shadow-offset));
+  bottom: calc(var(--snackbar-offset) + var(--inset-bottom) + var(--space-4) + var(--shadow-offset));
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--touch-target);
+  padding: var(--space-3) var(--space-4);
+  background: var(--fg);
+  color: var(--bg);
+  box-shadow: var(--shadow-primary);
+  animation: snackbar-in 120ms steps(3) both;
+}
+
+.snackbar::before {
+  content: '';
+  flex: none;
+  width: 10px;
+  height: 10px;
+  background: var(--primary);
+}
+
+@keyframes snackbar-in {
+  from {
+    transform: translateY(12px);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .snackbar {
+    animation: none;
+  }
+}

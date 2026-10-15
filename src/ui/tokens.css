@@ -1,0 +1,81 @@
+/*
+ * Pepino design tokens — "terminal brutalism": a monospace UI voice, an
+ * extra-wide black display face for names, hard offset shadows instead of
+ * blur, and a faint dot grid like engineering paper.
+ *
+ * Components only read the semantic layer (--bg, --fg, --primary…), so a
+ * theme (#44) only has to redefine that layer.
+ */
+:root {
+  /* Palette */
+  --pepino-black: #0a0a0a;
+  --pepino-panel: #161616;
+  --pepino-white: #f2f2f2;
+  --pepino-red: #e10600;
+  --pepino-grey: #8a8a8a;
+
+  /* Semantic colors */
+  --bg: var(--pepino-black);
+  --fg: var(--pepino-white);
+  --surface: var(--pepino-black);
+  --surface-variant: var(--pepino-panel);
+  --primary: var(--pepino-red);
+  --on-primary: var(--pepino-white);
+  --error: var(--pepino-red);
+  --outline: var(--pepino-grey);
+  --hairline: color-mix(in srgb, var(--fg) 14%, transparent);
+  --grid-dot: color-mix(in srgb, var(--fg) 9%, transparent);
+  --scrim: rgb(0 0 0 / 0.78);
+
+  /* Typography: mono carries the UI, Archivo Expanded carries names */
+  --font-display: 'Archivo Variable', 'Arial Black', sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+
+  --display-size: 30px;
+  --display-weight: 900;
+  --display-stretch: 125%;
+  --title-size: 19px;
+  --title-weight: 800;
+  --title-stretch: 112%;
+  --label-size: 12px;
+  --label-weight: 700;
+  --label-tracking: 0.12em;
+  --body-size: 14px;
+  --body-weight: 400;
+  --caption-size: 12px;
+
+  /* Shape & depth: no radius, no blur — shadows are solid offsets */
+  --radius: 0;
+  --stroke: 2px;
+  --border: var(--stroke) solid var(--fg);
+  --shadow-offset: 4px;
+  --shadow-primary: var(--shadow-offset) var(--shadow-offset) 0 var(--primary);
+  --shadow-fg: var(--shadow-offset) var(--shadow-offset) 0 var(--fg);
+  --shadow-dialog: 8px 8px 0 var(--primary);
+  --press-duration: 70ms;
+
+  /* Sizing */
+  --touch-target: 48px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  /* Surfaces */
+  --dot-grid: radial-gradient(var(--grid-dot) 1px, transparent 1.2px) 0 0 / 16px 16px;
+  --hazard: repeating-linear-gradient(-45deg, var(--primary) 0 14px, var(--bg) 14px 28px);
+
+  /* App chrome */
+  --nav-height: 60px;
+  --fab-height: 56px;
+  /* Snackbars float above the bottom nav and the COMMANDS button */
+  --snackbar-offset: calc(var(--nav-height) + var(--stroke) + var(--fab-height) + var(--space-4));
+
+  /* Safe areas: Capacitor injects --safe-area-inset-* on Android WebViews where env() reports 0 */
+  --inset-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --inset-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --inset-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+  --inset-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+}

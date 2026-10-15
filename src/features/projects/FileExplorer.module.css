@@ -1,0 +1,252 @@
+.explorer {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Toolbar */
+.toolbar {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-bottom: var(--border);
+}
+
+.pathRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-2);
+}
+
+.actionRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) calc(var(--space-4) + var(--shadow-offset)) calc(var(--space-3) + var(--shadow-offset))
+    var(--space-4);
+}
+
+.actionRow > :first-child {
+  margin-right: auto;
+}
+
+/* Breadcrumb: scrolls sideways, deepest segment stays visible */
+.breadcrumb {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  overflow-x: auto;
+  scrollbar-width: none;
+  white-space: nowrap;
+}
+
+.breadcrumb::-webkit-scrollbar {
+  display: none;
+}
+
+.crumb {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+
+.crumbButton {
+  min-height: var(--touch-target);
+  padding: 0 var(--space-2);
+  border: none;
+  background: none;
+  color: var(--outline);
+  cursor: pointer;
+}
+
+.crumbButton:active:not(:disabled) {
+  color: var(--fg);
+  background: var(--surface-variant);
+}
+
+.crumbCurrent {
+  color: var(--fg);
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-color: var(--primary);
+  text-decoration-thickness: 3px;
+  text-underline-offset: 6px;
+  cursor: default;
+}
+
+/* Messages */
+.opError {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--error);
+  color: var(--on-primary);
+  word-break: break-word;
+}
+
+.loading {
+  margin: var(--space-6) var(--space-4);
+}
+
+.state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-6);
+  padding-bottom: calc(var(--space-6) + 56px);
+  text-align: center;
+}
+
+.state p {
+  margin: 0;
+}
+
+.readError {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: var(--stroke) solid var(--error);
+  background: var(--bg);
+  color: var(--error);
+  text-align: left;
+  word-break: break-word;
+}
+
+/* Rows */
+.scroller {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  contain: strict;
+}
+
+.rows {
+  position: relative;
+  width: 100%;
+}
+
+.row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  padding-right: var(--space-2);
+  border-bottom: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+}
+
+.rowMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 100%;
+  padding: 0 0 0 var(--space-4);
+  border: none;
+  background: none;
+  text-align: left;
+}
+
+button.rowMain {
+  cursor: pointer;
+}
+
+button.rowMain:active {
+  background: var(--surface-variant);
+  box-shadow: inset 4px 0 0 var(--primary);
+}
+
+.index {
+  flex: none;
+  width: 2.2ch;
+  text-align: right;
+}
+
+.badge {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+}
+
+.badgeDir {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.badgeFile {
+  border: var(--stroke) solid var(--fg);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.rowText {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+/* Transfer picker */
+.pickerBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-bottom: var(--space-3);
+  border-bottom: var(--border);
+}
+
+.pickerList {
+  display: flex;
+  flex-direction: column;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.pickerFolder {
+  gap: var(--space-3);
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.pickerFolder svg {
+  color: var(--primary);
+}
+
+.pickerMessage {
+  margin: 0;
+  padding: var(--space-4) 0;
+}
+
+.actionList {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--hairline);
+}
+
+.actionList > button {
+  gap: var(--space-3);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.deleteText {
+  margin: 0;
+  word-break: break-word;
+}
+
+.deleteText strong {
+  color: var(--error);
+}

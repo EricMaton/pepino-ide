@@ -1,0 +1,61 @@
+.catalog {
+  min-height: 100%;
+  padding: var(--inset-top) var(--inset-right) var(--inset-bottom) var(--inset-left);
+  overflow-y: auto;
+  background: var(--dot-grid), var(--bg);
+}
+
+.catalog section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-4);
+}
+
+.catalog h2,
+.catalog p {
+  margin: 0;
+}
+
+.brand {
+  flex-direction: row !important;
+  align-items: center;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.swatch {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.swatch span {
+  width: 56px;
+  height: 56px;
+  border: var(--border);
+}
+
+.hazard {
+  height: 22px;
+  background: var(--hazard);
+}
+
+.icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--touch-target);
+  height: var(--touch-target);
+  border: 1px solid var(--hairline);
+}
