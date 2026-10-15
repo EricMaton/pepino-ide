@@ -4,22 +4,22 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { folderLabelFor } from '../features/editor/labels';
 import { errorMessage } from '../features/projects/errors';
 import { FileExplorer } from '../features/projects/FileExplorer';
-import { ProjectBar } from '../features/projects/ProjectBar';
 import { RecentProjects } from '../features/projects/RecentProjects';
 import { type ProjectInfo, readProject } from '../features/projects/projects';
 import { dispatchBack, useBackHandler } from '../ui/back';
 import { Button } from '../ui/components';
 import { cx } from '../ui/cx';
-import { BranchIcon, FolderIcon, PromptIcon, SlidersIcon } from '../ui/icons';
+import { BackIcon, BranchIcon, FolderIcon, SlidersIcon } from '../ui/icons';
 import { PepinoMark } from '../ui/Logo';
 import { useKeyboardVisible } from '../ui/keyboard';
 import { useSnackbar } from '../ui/useSnackbar';
 import styles from './App.module.css';
-import { CommandPalette } from './CommandPalette';
 import { restoreSession } from './restoreSession';
 import { type EditorViewState, withEditorState } from './session';
 import { type AppDestination, DESTINATIONS, HOME } from './destinations';
 import { useServices } from './services';
+import { TopBar, TopBarFrame } from './TopBar';
+import { type TopBarSlots, TopBarSlotsContext } from './topBarSlots';
 
 type SpaceState = 'creating' | 'ready' | 'error';
 
@@ -40,15 +40,14 @@ const NAV_ICONS: Record<AppDestination, typeof FolderIcon> = {
 };
 
 export function App() {
-  const { registry, dispatcher, events, projectSpace, session } = useServices();
+  const { registry, events, projectSpace, session } = useServices();
   const showSnackbar = useSnackbar();
   const [destination, setDestination] = useState<AppDestination>(HOME);
-  const [paletteOpen, setPaletteOpen] = useState(false);
   const [space, setSpace] = useState<SpaceState>('creating');
   const [project, setProject] = useState<ProjectInfo | null>(null);
   const [openFile, setOpenFile] = useState<OpenFile | null>(null);
   const keyboardOpen = useKeyboardVisible();
-  // Typing in the editor gets the whole screen: header and bottom nav step aside.
+  // Typing in the editor gets the whole screen: the bottom nav steps aside.
   const focusMode = keyboardOpen && openFile !== null && destination === 'projects';
   // Session (#19): restored once the space is ready, then kept up to date.
   const [restored, setRestored] = useState(false);
@@ -149,18 +148,6 @@ export function App() {
     [session],
   );
 
-  // Lets screens that hide the COMMANDS button (the editor) open the palette.
-  useEffect(
-    () =>
-      registry.register({
-        id: 'app.openPalette',
-        title: 'Command palette',
-        hidden: true,
-        run: () => setPaletteOpen(true),
-      }),
-    [registry],
-  );
-
   useEffect(() => {
     let count = 0;
     const disposers = [
@@ -202,82 +189,85 @@ export function App() {
 
   const current = DESTINATIONS.find((d) => d.id === destination)!;
 
-  const runCommand = (id: string) => {
-    setPaletteOpen(false);
-    dispatcher.execute(id).catch((error: unknown) => showSnackbar(`Error: ${errorMessage(error)}`));
-  };
+  // Screens portal their part of the top bar into these layers (see TopBar).
+  const [slots, setSlots] = useState<TopBarSlots>({ screen: null, overlay: null });
+  const onScreenSlot = useCallback(
+    (screen: HTMLElement | null) =>
+      setSlots((current) => (current.screen === screen ? current : { ...current, screen })),
+    [],
+  );
+  const onOverlaySlot = useCallback(
+    (overlay: HTMLElement | null) =>
+      setSlots((current) => (current.overlay === overlay ? current : { ...current, overlay })),
+    [],
+  );
 
   return (
-    <div className={styles.app} data-focus-mode={focusMode || undefined}>
-      <header className={styles.header}>
-        <PepinoMark size={44} />
-        <div className={styles.brand}>
-          <h1 className="display">Pepino</h1>
-          <span className="label">
-            <span className="accent">//</span> Mobile IDE
-          </span>
-        </div>
-        <span className={cx('caption', 'muted', styles.version)}>v{__APP_VERSION__}</span>
-      </header>
-      <main className={styles.content}>
-        {current.teaser ? (
-          <ComingSoon label={current.label} {...current.teaser} />
-        ) : (
-          <ProjectsScreen
-            state={space === 'ready' && !restored ? 'creating' : space}
-            initialStacks={initialStacks}
-            onStackChange={rememberStack}
-            project={project}
-            onOpenProject={openProject}
-            onCloseProject={closeProject}
-            onOpenFile={(path, rootPath, rootName) =>
-              setOpenFile({
-                path,
-                folderLabel: folderLabelFor(path, rootPath, rootName),
-                viewState: editorStates.current[path],
-              })
-            }
-          />
-        )}
-        {openFile && (
-          <Suspense fallback={null}>
-            <EditorScreen
-              key={openFile.path}
-              path={openFile.path}
-              folderLabel={openFile.folderLabel}
-              initialViewState={openFile.viewState}
-              onViewState={(state) => rememberViewState(openFile.path, state)}
-              visible={destination === 'projects'}
-              onClose={() => setOpenFile(null)}
+    <TopBarSlotsContext value={slots}>
+      <div className={styles.app} data-focus-mode={focusMode || undefined}>
+        <TopBarFrame onScreenSlot={onScreenSlot} onOverlaySlot={onOverlaySlot} />
+        <main className={styles.content}>
+          {current.teaser ? (
+            <ComingSoon label={current.label} {...current.teaser} />
+          ) : (
+            <ProjectsScreen
+              state={space === 'ready' && !restored ? 'creating' : space}
+              initialStacks={initialStacks}
+              onStackChange={rememberStack}
+              project={project}
+              onOpenProject={openProject}
+              onCloseProject={closeProject}
+              onOpenFile={(path, rootPath, rootName) =>
+                setOpenFile({
+                  path,
+                  folderLabel: folderLabelFor(path, rootPath, rootName),
+                  viewState: editorStates.current[path],
+                })
+              }
             />
-          </Suspense>
-        )}
-        {!(openFile && destination === 'projects') && (
-          <Button variant="filled" className={styles.fab} onClick={() => setPaletteOpen(true)}>
-            <PromptIcon size={20} />
-            Commands
-          </Button>
-        )}
-      </main>
-      <nav className={styles.nav}>
-        {DESTINATIONS.map(({ id, label }) => {
-          const NavIcon = NAV_ICONS[id];
-          return (
-            <button
-              key={id}
-              type="button"
-              className={styles.navItem}
-              aria-current={id === destination ? 'page' : undefined}
-              onClick={() => setDestination(id)}
-            >
-              <NavIcon size={22} />
-              <span className="label">{label}</span>
-            </button>
-          );
-        })}
-      </nav>
-      {paletteOpen && <CommandPalette onClose={() => setPaletteOpen(false)} onRun={runCommand} />}
-    </div>
+          )}
+          {openFile && (
+            <Suspense fallback={null}>
+              <EditorScreen
+                key={openFile.path}
+                path={openFile.path}
+                folderLabel={openFile.folderLabel}
+                initialViewState={openFile.viewState}
+                onViewState={(state) => rememberViewState(openFile.path, state)}
+                visible={destination === 'projects'}
+                onClose={() => setOpenFile(null)}
+              />
+            </Suspense>
+          )}
+        </main>
+        <nav className={styles.nav}>
+          {DESTINATIONS.map(({ id, label }) => {
+            const NavIcon = NAV_ICONS[id];
+            return (
+              <button
+                key={id}
+                type="button"
+                className={styles.navItem}
+                aria-current={id === destination ? 'page' : undefined}
+                onClick={() => setDestination(id)}
+              >
+                <NavIcon size={22} />
+                <span className="label">{label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      </div>
+    </TopBarSlotsContext>
+  );
+}
+
+const BRAND = `PEPINO · MOBILE IDE · v${__APP_VERSION__}`;
+
+/** Top bar for screens outside a project: the brand mark and where you are. */
+function HomeTopBar({ title, subtitle = BRAND }: { title: string; subtitle?: string }) {
+  return (
+    <TopBar leading={<PepinoMark size={40} />} title={title} subtitle={subtitle} label={`Search commands · ${title}`} />
   );
 }
 
@@ -304,12 +294,22 @@ function ProjectsScreen({
   if (state === 'ready' && project) {
     return (
       <>
-        <ProjectBar project={project} onClose={onCloseProject} />
+        <TopBar
+          leading={
+            <Button square onClick={onCloseProject} aria-label="Close project">
+              <BackIcon size={20} />
+            </Button>
+          }
+          title={project.name}
+          subtitle="PROJECT · ~/projects"
+          prefer="project."
+          label={`Search commands · ${project.name}`}
+        />
         <FileExplorer
           key={project.path}
           projectSpace={projectSpace}
           rootPath={project.path}
-          rootLabel={project.name}
+          rootLabel="/"
           rootName={project.name}
           onExitRoot={onCloseProject}
           onOpenFile={(path) => onOpenFile(path, project.path, project.name)}
@@ -321,33 +321,41 @@ function ProjectsScreen({
   }
   if (state === 'ready') {
     return (
-      <FileExplorer
-        key="space"
-        projectSpace={projectSpace}
-        rootPath=""
-        rootLabel={
-          <>
-            <span className="muted">~/</span>projects
-          </>
-        }
-        rootName="~/projects"
-        onOpenProject={onOpenProject}
-        onOpenFile={(path) => onOpenFile(path, '', '~/projects')}
-        initialStack={initialStacks['']}
-        onStackChange={(stack) => onStackChange('', stack)}
-        rootHeader={<RecentProjects store={recentProjects} onOpen={onOpenProject} />}
-      />
+      <>
+        <HomeTopBar title="~/projects" />
+        <FileExplorer
+          key="space"
+          projectSpace={projectSpace}
+          rootPath=""
+          rootLabel="~"
+          rootName="~/projects"
+          onOpenProject={onOpenProject}
+          onOpenFile={(path) => onOpenFile(path, '', '~/projects')}
+          initialStack={initialStacks['']}
+          onStackChange={(stack) => onStackChange('', stack)}
+          rootHeader={<RecentProjects store={recentProjects} onOpen={onOpenProject} />}
+        />
+      </>
     );
   }
-  if (state === 'creating') return <p className={cx('label', 'cursor', styles.status)}>Mounting project space</p>;
   return (
-    <p className={cx('label', styles.status, styles.statusError)}>✕ Project space error — storage is not writable</p>
+    <>
+      <HomeTopBar title="~/projects" />
+      {state === 'creating' ? (
+        <p className={cx('label', 'cursor', styles.status)}>Mounting project space</p>
+      ) : (
+        <p className={cx('label', styles.status, styles.statusError)}>
+          ✕ Project space error — storage is not writable
+        </p>
+      )}
+    </>
   );
 }
 
 function ComingSoon({ label, sprint, description }: { label: string; sprint: string; description: string }) {
   return (
     <div className={styles.comingSoon}>
+      <HomeTopBar title={label.charAt(0) + label.slice(1).toLowerCase()} subtitle={`${sprint} · ${BRAND}`} />
       <div className={styles.tape} aria-hidden />
       <div className={styles.comingBody}>
         <span className="label accent">// {sprint}</span>

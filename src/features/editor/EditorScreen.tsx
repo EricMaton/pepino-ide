@@ -3,8 +3,9 @@ import { Text } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { EditorViewState } from '../../app/session';
-import { CommandSearch } from '../../app/CommandSearch';
+
 import { useServices } from '../../app/services';
+import { TopBar } from '../../app/TopBar';
 import { useBackHandler } from '../../ui/back';
 import { Button, Dialog } from '../../ui/components';
 import { cx } from '../../ui/cx';
@@ -233,37 +234,44 @@ export default function EditorScreen({
 
   return (
     <section className={styles.screen} hidden={!visible} aria-label={`Editor: ${name}`}>
-      <header className={styles.bar}>
-        <Button square onClick={() => void requestClose()} aria-label="Close file">
-          <BackIcon size={20} />
-        </Button>
-        <CommandSearch label={`Search commands · ${name}`} prefer="editor.">
-          <span className={styles.fileName}>
-            <span className="ellipsis">{name}</span>
-            {dirty && <span className={styles.dirty} role="img" aria-label="Unsaved changes" />}
-          </span>
-          <span className="caption muted ellipsis">
-            {folderLabel} · {language?.label.toUpperCase() ?? fileBadge(name)}
-          </span>
-        </CommandSearch>
-        {saveState === 'failed' ? (
-          <Button variant="filled" onClick={() => void save()}>
-            Retry
-          </Button>
-        ) : (
-          <span
-            className={cx(
-              'label',
-              styles.saveState,
-              saveState === 'saving' && 'cursor',
-              saveState === 'saved' && 'muted',
-            )}
-            role="status"
-          >
-            {saveState === 'saved' ? 'Saved' : saveState === 'saving' ? 'Saving' : 'Unsaved'}
-          </span>
-        )}
-      </header>
+      {visible && (
+        <TopBar
+          layer="overlay"
+          leading={
+            <Button square onClick={() => void requestClose()} aria-label="Close file">
+              <BackIcon size={20} />
+            </Button>
+          }
+          title={
+            <>
+              <span className="ellipsis">{name}</span>
+              {dirty && <span className={styles.dirty} role="img" aria-label="Unsaved changes" />}
+            </>
+          }
+          subtitle={`${folderLabel} · ${language?.label.toUpperCase() ?? fileBadge(name)}`}
+          prefer="editor."
+          label={`Search commands · ${name}`}
+          trailing={
+            saveState === 'failed' ? (
+              <Button variant="filled" onClick={() => void save()}>
+                Retry
+              </Button>
+            ) : (
+              <span
+                className={cx(
+                  'label',
+                  styles.saveState,
+                  saveState === 'saving' && 'cursor',
+                  saveState === 'saved' && 'muted',
+                )}
+                role="status"
+              >
+                {saveState === 'saved' ? 'Saved' : saveState === 'saving' ? 'Saving' : 'Unsaved'}
+              </span>
+            )
+          }
+        />
+      )}
 
       {loaded === null ? (
         <p className={cx('label', 'cursor', styles.message)}>Opening</p>

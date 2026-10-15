@@ -11,26 +11,6 @@
   display: none;
 }
 
-.bar {
-  /* Anchors the command search results, which drop down over the editor. */
-  position: relative;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
-  border-bottom: var(--border);
-  background: var(--surface-variant);
-}
-
-.fileName {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-weight: 700;
-  font-size: 15px;
-}
-
 .dirty {
   flex: none;
   width: 10px;
@@ -99,7 +79,7 @@
 
 .saveState {
   flex: none;
-  min-width: 9ch;
-  padding: 0 var(--space-3);
+  min-width: 8ch;
+  padding: 0 var(--space-1);
   text-align: right;
 }

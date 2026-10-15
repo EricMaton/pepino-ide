@@ -3,7 +3,7 @@ import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { useBackHandler } from '../../ui/back';
 import { Button } from '../../ui/components';
 import { cx } from '../../ui/cx';
-import { BackIcon, FolderIcon, MoreIcon, PlusIcon, SortIcon } from '../../ui/icons';
+import { FolderIcon, MoreIcon, PlusIcon, SortIcon } from '../../ui/icons';
 import { PepinoMark, SliceOutline } from '../../ui/Logo';
 import { Breadcrumb } from './Breadcrumb';
 import { errorMessage } from './errors';
@@ -32,7 +32,7 @@ import type { ProjectSpace } from './projectSpace';
 import { useDirectoryListing } from './useDirectoryListing';
 
 const ROW_HEIGHT = 68;
-const FAB_CLEARANCE = 96;
+const LIST_END_PADDING = 16;
 
 interface FileExplorerProps {
   projectSpace: ProjectSpace;
@@ -120,35 +120,20 @@ export function FileExplorer({
 
   return (
     <div className={styles.explorer}>
+      {/* Up = tap a breadcrumb segment or the system back; the top bar's ← leaves the project. */}
       <div className={styles.toolbar}>
-        <div className={styles.pathRow}>
-          <Button
-            square
-            disabled={!canGoUp && !onExitRoot}
-            onClick={goUp}
-            aria-label={canGoUp ? 'Up one folder' : 'Close project'}
-          >
-            <BackIcon size={20} />
-          </Button>
-          <Breadcrumb
-            stack={pathStack}
-            rootLabel={rootLabel}
-            onJump={(depth) => setPathStack((stack) => stack.slice(0, depth + 1))}
-          />
-        </div>
-        <div className={styles.actionRow}>
-          <span className="caption muted">
-            {listing?.ok ? `${listing.entries.length} ${listing.entries.length === 1 ? 'ITEM' : 'ITEMS'}` : '— ITEMS'}
-          </span>
-          <Button onClick={() => setSortOrder(nextSortOrder)} aria-label={`Sort: ${SORT_LABELS[sortOrder]}`}>
-            <SortIcon size={18} />
-            {SORT_LABELS[sortOrder]}
-          </Button>
-          <Button variant="filled" onClick={() => setDialog({ kind: 'create' })}>
-            <PlusIcon size={18} />
-            New
-          </Button>
-        </div>
+        <Breadcrumb
+          stack={pathStack}
+          rootLabel={rootLabel}
+          onJump={(depth) => setPathStack((stack) => stack.slice(0, depth + 1))}
+        />
+        <Button onClick={() => setSortOrder(nextSortOrder)} aria-label={`Sort: ${SORT_LABELS[sortOrder]}`}>
+          <SortIcon size={18} />
+          {SORT_LABELS[sortOrder]}
+        </Button>
+        <Button variant="filled" square onClick={() => setDialog({ kind: 'create' })} aria-label="New file or folder">
+          <PlusIcon size={22} />
+        </Button>
       </div>
       {currentPath === rootPath && rootHeader}
       {opError && (
@@ -266,7 +251,7 @@ function EntryList({ entries, projects, filesOpenable, onOpen, onActions }: Entr
     getScrollElement: () => scrollRef.current,
     estimateSize: () => ROW_HEIGHT,
     getItemKey: (index) => entries[index].path,
-    paddingEnd: FAB_CLEARANCE,
+    paddingEnd: LIST_END_PADDING,
     overscan: 8,
   });
 
@@ -362,7 +347,7 @@ function EmptyFolder({ spaceRoot }: { spaceRoot: boolean }) {
       <SliceOutline size={112} />
       <p className="title">{spaceRoot ? 'No projects yet' : 'Empty folder'}</p>
       <p className="caption muted">
-        Tap <span className="accent">+ NEW</span>{' '}
+        Tap <span className="accent">+</span>{' '}
         {spaceRoot ? 'to start your first project.' : 'to create a file or folder here.'}
       </p>
     </div>
