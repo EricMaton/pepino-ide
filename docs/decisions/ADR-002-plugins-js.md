@@ -1,6 +1,6 @@
 # ADR-002: Plugins como scripts JS interpretados
 
-- **Estado:** Aceptada
+- **Estado:** Aceptada (actualizada el 2026-10-15 para el stack de [ADR-004](ADR-004-typescript.md))
 - **Fecha:** 2026-10-14
 
 ## Contexto
@@ -25,7 +25,7 @@ que consumirán la misma API. Las restricciones duras son:
   (`editor.*`, `git.*`, `fs.*`, `network`).
 - **Timeout de ejecución** en todo callback de plugin.
 - El único punto de entrada de los plugins son el `CommandRegistry` y el
-  `EventBus` (`:core:commands`, `:core:events`): la UI nunca llama a un
+  `EventBus` (`src/core/commands.ts`, `src/core/events.ts`): la UI nunca llama a un
   plugin directamente.
 - Los agentes IA serán un plugin más (con permiso `network`), no un caso
   especial en la arquitectura.
@@ -43,8 +43,8 @@ que consumirán la misma API. Las restricciones duras son:
 - El sistema de plugins es **legal en App Store** al ser código interpretado.
 - El rendimiento es el de un intérprete: aceptable para la API v1 (editor,
   git, settings), no para cómputo pesado.
-- QuickJS es una dependencia nativa a embeber vía KMP (cinterop / expect-actual),
-  coste que se asume en el Sprint 6.
+- QuickJS corre como WASM (`quickjs-emscripten`) en un Web Worker por plugin;
+  sin código nativo que embeber (antes: KMP + cinterop, ver ADR-004).
 - La superficie de ataque queda acotada por el sandbox de permisos y los
   timeouts; un plugin malicioso o colgado no compromete la app.
 - Romper la API nunca mata plugins antiguos: `apiVersion` lo garantiza.

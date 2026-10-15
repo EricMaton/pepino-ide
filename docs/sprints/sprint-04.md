@@ -5,8 +5,8 @@
 
 ## Tareas
 
-- [ ] OAuth con PKCE contra GitHub
-- [ ] Token almacenado en Android Keystore / iOS Keychain (nunca en plaintext)
+- [ ] Login con GitHub: Device Flow o authorization code + PKCE con deep link (llamadas OAuth vía `CapacitorHttp`, sin CORS)
+- [ ] Token almacenado en Android Keystore / iOS Keychain mediante un plugin de Capacitor (nunca en plaintext, nunca en Preferences/IndexedDB)
 - [ ] Listar repos del usuario (con búsqueda y paginación)
 - [ ] Clonar repo de GitHub a la carpeta de proyectos
 - [ ] Push / pull con manejo de conflictos (al mínimo: avisar y mostrar estados)

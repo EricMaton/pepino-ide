@@ -3,6 +3,8 @@
 **Duración:** 2 semanas
 **Objetivo:** repo KMP compilando para Android e iOS (stub), arquitectura base, CI verde.
 
+> **Nota (ADR-004):** este sprint se hizo con Kotlin Multiplatform. En #96 todo se migró a TypeScript + React + Capacitor; las equivalencias están en [ADR-004](../decisions/ADR-004-typescript.md).
+
 ## Tareas
 
 - [x] Configurar KMP + Compose Multiplatform (Android minSdk 26, iOS framework stub)
