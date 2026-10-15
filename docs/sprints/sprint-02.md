@@ -11,6 +11,8 @@
 - [x] Autosave con snapshot antes de cada edición (el SO mata apps: nunca perder trabajo; guardar también en el evento `pause` de la app)
 - [x] Estado del editor restaurado al reabrir (scroll, cursor, archivo abierto)
 - [x] Soportar archivos de al menos 5k líneas sin tirones visibles (medido en [performance.md](../performance.md); falta dispositivo real, #16)
+- [ ] Workspace del proyecto (#106): árbol, open files y búsqueda de archivos hechos; faltan acciones desde el árbol
+- [ ] Teclado Pepino opcional para código (#107)
 
 ## Criterios de aceptación
 

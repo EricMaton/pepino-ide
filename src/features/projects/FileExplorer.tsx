@@ -30,6 +30,7 @@ import { basename, joinPath } from './paths';
 import { canBeProject, createProject, markAsProject } from './projects';
 import type { ProjectSpace } from './projectSpace';
 import { useDirectoryListing } from './useDirectoryListing';
+import { useFolderChanges } from './useFolderChanges';
 
 const ROW_HEIGHT = 68;
 const LIST_END_PADDING = 16;
@@ -90,6 +91,8 @@ export function FileExplorer({
   const [opError, setOpError] = useState<string | null>(null);
   const atSpaceRoot = onOpenProject !== undefined && currentPath === '';
   const listing = useDirectoryListing(projectSpace, currentPath, refreshTick, atSpaceRoot);
+  // Changes made elsewhere (editor, workspace tree, plugins) show up without leaving the folder.
+  useFolderChanges(currentPath, () => setRefreshTick((tick) => tick + 1));
   const projects = listing?.ok ? listing.projects : new Set<string>();
 
   const canGoUp = pathStack.length > 1;

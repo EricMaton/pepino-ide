@@ -3,19 +3,22 @@ import { createContext, useContext } from 'react';
 import { CommandDispatcher, CommandRegistry } from '../core/commands';
 import { EventBus } from '../core/events';
 import { createCapacitorBackend } from '../features/projects/capacitorBackend';
+import { type FsEvents, observeProjectSpace } from '../features/projects/observed';
 import type { ProjectInfo } from '../features/projects/projects';
 import { createProjectSpace, type ProjectSpace } from '../features/projects/projectSpace';
 import type { KeyValueStore } from '../core/storage';
 import { createRecentProjects, type RecentProjects } from '../features/projects/recents';
+import { createWorkspace, type Workspace, type WorkspaceEvents } from '../features/workspace/workspace';
 import { createSessionStore, type SessionStore } from './session';
 
-export type AppEvents = {
-  'demo.counterChanged': { count: number };
-  'project.opened': ProjectInfo;
-  'project.closed': ProjectInfo;
-  'file.opened': { path: string };
-  'file.saved': { path: string };
-};
+export type AppEvents = FsEvents &
+  WorkspaceEvents & {
+    'demo.counterChanged': { count: number };
+    'project.opened': ProjectInfo;
+    'project.closed': ProjectInfo;
+    'file.opened': { path: string };
+    'file.saved': { path: string };
+  };
 
 export interface Services {
   registry: CommandRegistry;
@@ -24,6 +27,7 @@ export interface Services {
   projectSpace: ProjectSpace;
   recentProjects: RecentProjects;
   session: SessionStore;
+  workspace: Workspace;
 }
 
 /** Capacitor Preferences: SharedPreferences on Android, UserDefaults on iOS, localStorage on the web. */
@@ -35,8 +39,17 @@ const preferences: KeyValueStore = {
 export function createServices(): Services {
   const registry = new CommandRegistry();
   const events = new EventBus<AppEvents>();
-  const projectSpace = createProjectSpace(createCapacitorBackend());
+  // Every change to the project space is announced on the bus (fs.*), whoever makes it.
+  const projectSpace = observeProjectSpace(createProjectSpace(createCapacitorBackend()), (topic, payload) =>
+    events.publish(topic, payload as never),
+  );
   const recentProjects = createRecentProjects(preferences, projectSpace);
+  const session = createSessionStore(preferences);
+  const workspace = createWorkspace(projectSpace, events, {
+    load: async (root) => (await session.load()).openFiles[root] ?? [],
+    save: (root, files) =>
+      session.update((saved) => ({ ...saved, openFiles: { ...saved.openFiles, [root]: [...files] } })),
+  });
 
   // Recents only listen to the bus: whoever opens a project doesn't need to know about them.
   events.subscribe('project.opened', (project) => {
@@ -49,7 +62,8 @@ export function createServices(): Services {
     events,
     projectSpace,
     recentProjects,
-    session: createSessionStore(preferences),
+    session,
+    workspace,
   };
 }
 

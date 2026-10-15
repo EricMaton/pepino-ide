@@ -24,6 +24,7 @@ describe('parseSession', () => {
       project: 'app',
       explorer: { app: ['app', 'app/src'], bad: [1], empty: [] },
       openFile: 42,
+      openFiles: { app: ['app/a.ts', 'app/b.ts'], bad: [1] },
       editors: {
         'app/a.ts': { anchor: 3, head: 5, scrollTop: 120, savedMillis: 1 },
         'app/b.ts': { anchor: 'x' },
@@ -33,6 +34,7 @@ describe('parseSession', () => {
       project: 'app',
       explorer: { app: ['app', 'app/src'] },
       openFile: null,
+      openFiles: { app: ['app/a.ts', 'app/b.ts'] },
       editors: { 'app/a.ts': { anchor: 3, head: 5, scrollTop: 120, savedMillis: 1 } },
     });
   });
@@ -68,6 +70,7 @@ describe('createSessionStore', () => {
       project: 'app',
       openFile: 'app/a.ts',
       explorer: { app: ['app', 'app/src'] },
+      openFiles: {},
       editors: {},
     });
   });

@@ -6,14 +6,16 @@ import type { EditorViewState } from '../../app/session';
 
 import { useServices } from '../../app/services';
 import { TopBar } from '../../app/TopBar';
+import { useFileSource } from '../../app/useFileSource';
 import { useBackHandler } from '../../ui/back';
 import { Button, Dialog } from '../../ui/components';
 import { cx } from '../../ui/cx';
-import { BackIcon } from '../../ui/icons';
+import { BackIcon, FolderIcon } from '../../ui/icons';
 import { useSnackbar } from '../../ui/useSnackbar';
 import { errorMessage } from '../projects/errors';
 import { fileBadge } from '../projects/files';
 import { basename } from '../projects/paths';
+import { WorkspaceDrawer } from '../workspace/WorkspaceDrawer';
 import { CodeEditor } from './CodeEditor';
 import styles from './EditorScreen.module.css';
 import { EditorToolbar } from './EditorToolbar';
@@ -57,13 +59,15 @@ export default function EditorScreen({
   initialViewState,
   onViewState,
 }: EditorScreenProps) {
-  const { projectSpace, registry, dispatcher, events } = useServices();
+  const { projectSpace, registry, dispatcher, events, workspace } = useServices();
   const showSnackbar = useSnackbar();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('saved');
   const [editCount, setEditCount] = useState(0);
   const [confirmClose, setConfirmClose] = useState(false);
   const [view, setView] = useState<EditorView | null>(null);
+  const [filesOpen, setFilesOpen] = useState(false);
+  const files = useFileSource();
   const doc = useRef<Text | null>(null);
   const savedDoc = useRef<Text | null>(null);
   const opened = useRef<{ text: string; doc: Text; separator: LineSeparator } | null>(null);
@@ -188,6 +192,16 @@ export default function EditorScreen({
 
   useBackHandler(visible && !confirmClose, () => void requestClose());
 
+  // Leaving this file any other way than "close" (opening another one from the tree, closing the
+  // project) unmounts the editor: pending edits are written then, not lost.
+  useEffect(() => () => void save(), [save]);
+
+  const openOther = (other: string) => {
+    setFilesOpen(false);
+    if (other === path) return;
+    workspace.openFile(other).catch((error: unknown) => showSnackbar(`Error: ${errorMessage(error)}`));
+  };
+
   // Hardware keyboards: Ctrl/Cmd+S saves while the editor is showing, even when focus is elsewhere.
   useEffect(() => {
     if (!visible) return;
@@ -207,6 +221,7 @@ export default function EditorScreen({
       registry.register({ id: 'editor.save', title: `Save ${name}`, run: () => void save() }),
       registry.register({ id: 'editor.close', title: `Close ${name}`, run: () => void requestClose() }),
       registry.register({ id: 'editor.revert', title: `Revert ${name} to the opened version`, run: revertToOpened }),
+      registry.register({ id: 'editor.files', title: 'Project files', run: () => setFilesOpen(true) }),
     ];
     return () => disposers.forEach((dispose) => dispose());
   }, [registry, visible, name, save, requestClose, revertToOpened]);
@@ -250,25 +265,31 @@ export default function EditorScreen({
           }
           subtitle={`${folderLabel} · ${language?.label.toUpperCase() ?? fileBadge(name)}`}
           prefer="editor."
+          files={files}
           label={`Search commands · ${name}`}
           trailing={
-            saveState === 'failed' ? (
-              <Button variant="filled" onClick={() => void save()}>
-                Retry
+            <>
+              <Button variant="text" square aria-label="Project files" onClick={() => setFilesOpen(true)}>
+                <FolderIcon size={20} />
               </Button>
-            ) : (
-              <span
-                className={cx(
-                  'label',
-                  styles.saveState,
-                  saveState === 'saving' && 'cursor',
-                  saveState === 'saved' && 'muted',
-                )}
-                role="status"
-              >
-                {saveState === 'saved' ? 'Saved' : saveState === 'saving' ? 'Saving' : 'Unsaved'}
-              </span>
-            )
+              {saveState === 'failed' ? (
+                <Button variant="filled" onClick={() => void save()}>
+                  Retry
+                </Button>
+              ) : (
+                <span
+                  className={cx(
+                    'label',
+                    styles.saveState,
+                    saveState === 'saving' && 'cursor',
+                    saveState === 'saved' && 'muted',
+                  )}
+                  role="status"
+                >
+                  {saveState === 'saved' ? 'Saved' : saveState === 'saving' ? 'Saving' : 'Unsaved'}
+                </span>
+              )}
+            </>
           }
         />
       )}
@@ -295,6 +316,8 @@ export default function EditorScreen({
           <p className="caption muted">{loaded.kind === 'binary' ? 'Pepino only edits text files.' : loaded.message}</p>
         </div>
       )}
+
+      {visible && filesOpen && <WorkspaceDrawer onClose={() => setFilesOpen(false)} onOpenFile={openOther} />}
 
       {confirmClose && (
         <Dialog
