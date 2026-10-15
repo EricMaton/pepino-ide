@@ -1,9 +1,11 @@
+import { Preferences } from '@capacitor/preferences';
 import { createContext, useContext } from 'react';
 import { CommandDispatcher, CommandRegistry } from '../core/commands';
 import { EventBus } from '../core/events';
 import { createCapacitorBackend } from '../features/projects/capacitorBackend';
 import type { ProjectInfo } from '../features/projects/projects';
 import { createProjectSpace, type ProjectSpace } from '../features/projects/projectSpace';
+import { createRecentProjects, type KeyValueStore, type RecentProjects } from '../features/projects/recents';
 
 export type AppEvents = {
   'demo.counterChanged': { count: number };
@@ -16,16 +18,27 @@ export interface Services {
   dispatcher: CommandDispatcher;
   events: EventBus<AppEvents>;
   projectSpace: ProjectSpace;
+  recentProjects: RecentProjects;
 }
+
+/** Capacitor Preferences: SharedPreferences on Android, UserDefaults on iOS, localStorage on the web. */
+const preferences: KeyValueStore = {
+  get: async (key) => (await Preferences.get({ key })).value,
+  set: (key, value) => Preferences.set({ key, value }),
+};
 
 export function createServices(): Services {
   const registry = new CommandRegistry();
-  return {
-    registry,
-    dispatcher: new CommandDispatcher(registry),
-    events: new EventBus<AppEvents>(),
-    projectSpace: createProjectSpace(createCapacitorBackend()),
-  };
+  const events = new EventBus<AppEvents>();
+  const projectSpace = createProjectSpace(createCapacitorBackend());
+  const recentProjects = createRecentProjects(preferences, projectSpace);
+
+  // Recents only listen to the bus: whoever opens a project doesn't need to know about them.
+  events.subscribe('project.opened', (project) => {
+    recentProjects.record(project.path).catch((error: unknown) => console.error('Cannot record recent project', error));
+  });
+
+  return { registry, dispatcher: new CommandDispatcher(registry), events, projectSpace, recentProjects };
 }
 
 export const ServicesContext = createContext<Services | null>(null);

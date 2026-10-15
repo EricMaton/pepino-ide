@@ -11,7 +11,7 @@
 - [x] File explorer táctil: lista de archivos, navegación, ordenación
 - [x] Operaciones: crear archivo/carpeta, renombrar, mover, copiar, borrar (con confirmación)
 - [x] Abrir/cerrar proyecto (proyecto = carpeta con marcador `.pepino/project.json`)
-- [ ] Lista de proyectos recientes en la home
+- [x] Lista de proyectos recientes en la home
 - [ ] Manejo de permisos: flujo cuando el usuario no ha dado acceso (con el almacenamiento privado de la app no hace falta permiso; ver #13)
 - [x] Tests unitarios de la capa de datos del filesystem
 

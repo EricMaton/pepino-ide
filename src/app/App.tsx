@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { errorMessage } from '../features/projects/errors';
 import { FileExplorer } from '../features/projects/FileExplorer';
 import { ProjectBar } from '../features/projects/ProjectBar';
+import { RecentProjects } from '../features/projects/RecentProjects';
 import { type ProjectInfo, readProject } from '../features/projects/projects';
 import { dispatchBack, useBackHandler } from '../ui/back';
 import { Button } from '../ui/components';
@@ -163,7 +164,7 @@ interface ProjectsScreenProps {
 }
 
 function ProjectsScreen({ state, project, onOpenProject, onCloseProject }: ProjectsScreenProps) {
-  const { projectSpace } = useServices();
+  const { projectSpace, recentProjects } = useServices();
   if (state === 'ready' && project) {
     return (
       <>
@@ -192,6 +193,7 @@ function ProjectsScreen({ state, project, onOpenProject, onCloseProject }: Proje
         }
         rootName="~/projects"
         onOpenProject={onOpenProject}
+        rootHeader={<RecentProjects store={recentProjects} onOpen={onOpenProject} />}
       />
     );
   }

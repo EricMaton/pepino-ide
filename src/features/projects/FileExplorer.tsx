@@ -46,6 +46,8 @@ interface FileExplorerProps {
   onExitRoot?: () => void;
   /** Space mode: top-level projects open through here instead of being browsed into. */
   onOpenProject?: (path: string) => void;
+  /** Shown above the listing while the explorer is at its root (e.g. recent projects). */
+  rootHeader?: ReactNode;
 }
 
 /**
@@ -60,6 +62,7 @@ export function FileExplorer({
   rootName,
   onExitRoot,
   onOpenProject,
+  rootHeader,
 }: FileExplorerProps) {
   const [pathStack, setPathStack] = useState<string[]>([rootPath]);
   const currentPath = pathStack[pathStack.length - 1];
@@ -129,6 +132,7 @@ export function FileExplorer({
           </Button>
         </div>
       </div>
+      {currentPath === rootPath && rootHeader}
       {opError && (
         <p className={cx('label', styles.opError)} role="alert">
           ✕ {opError}
