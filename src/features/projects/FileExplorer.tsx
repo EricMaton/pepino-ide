@@ -46,6 +46,8 @@ interface FileExplorerProps {
   onExitRoot?: () => void;
   /** Space mode: top-level projects open through here instead of being browsed into. */
   onOpenProject?: (path: string) => void;
+  /** Opens a file in the editor; without it file rows are not tappable. */
+  onOpenFile?: (path: string) => void;
   /** Shown above the listing while the explorer is at its root (e.g. recent projects). */
   rootHeader?: ReactNode;
 }
@@ -63,6 +65,7 @@ export function FileExplorer({
   onExitRoot,
   onOpenProject,
   rootHeader,
+  onOpenFile,
 }: FileExplorerProps) {
   const [pathStack, setPathStack] = useState<string[]>([rootPath]);
   const currentPath = pathStack[pathStack.length - 1];
@@ -154,11 +157,12 @@ export function FileExplorer({
           key={currentPath}
           entries={sortEntries(listing.entries, sortOrder)}
           projects={projects}
-          onOpen={(entry) =>
-            projects.has(entry.path) && onOpenProject
-              ? onOpenProject(entry.path)
-              : setPathStack((stack) => [...stack, entry.path])
-          }
+          filesOpenable={onOpenFile !== undefined}
+          onOpen={(entry) => {
+            if (!entry.isDirectory) onOpenFile?.(entry.path);
+            else if (projects.has(entry.path) && onOpenProject) onOpenProject(entry.path);
+            else setPathStack((stack) => [...stack, entry.path]);
+          }}
           onActions={(entry) => setDialog({ kind: 'actions', entry, project: projects.has(entry.path) })}
         />
       )}
@@ -234,11 +238,12 @@ export function FileExplorer({
 interface EntryListProps {
   entries: FileEntry[];
   projects: ReadonlySet<string>;
+  filesOpenable: boolean;
   onOpen: (entry: FileEntry) => void;
   onActions: (entry: FileEntry) => void;
 }
 
-function EntryList({ entries, projects, onOpen, onActions }: EntryListProps) {
+function EntryList({ entries, projects, filesOpenable, onOpen, onActions }: EntryListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line react-hooks/incompatible-library -- the virtualizer is read during render by design
   const virtualizer = useVirtualizer({
@@ -259,6 +264,7 @@ function EntryList({ entries, projects, onOpen, onActions }: EntryListProps) {
             index={item.index}
             entry={entries[item.index]}
             project={projects.has(entries[item.index].path)}
+            openable={filesOpenable || entries[item.index].isDirectory}
             top={item.start}
             onOpen={onOpen}
             onActions={onActions}
@@ -273,12 +279,13 @@ interface FileRowProps {
   index: number;
   entry: FileEntry;
   project: boolean;
+  openable: boolean;
   top: number;
   onOpen: (entry: FileEntry) => void;
   onActions: (entry: FileEntry) => void;
 }
 
-function FileRow({ index, entry, project, top, onOpen, onActions }: FileRowProps) {
+function FileRow({ index, entry, project, openable, top, onOpen, onActions }: FileRowProps) {
   const kind = project ? 'PROJECT' : entry.isDirectory ? 'DIR' : formatSize(entry.sizeBytes);
   const content = (
     <>
@@ -314,7 +321,7 @@ function FileRow({ index, entry, project, top, onOpen, onActions }: FileRowProps
 
   return (
     <div className={styles.row} style={{ height: ROW_HEIGHT, transform: `translateY(${top}px)` }}>
-      {entry.isDirectory ? (
+      {openable ? (
         <button type="button" className={styles.rowMain} onClick={() => onOpen(entry)}>
           {content}
         </button>

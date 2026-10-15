@@ -11,6 +11,8 @@ export type AppEvents = {
   'demo.counterChanged': { count: number };
   'project.opened': ProjectInfo;
   'project.closed': ProjectInfo;
+  'file.opened': { path: string };
+  'file.saved': { path: string };
 };
 
 export interface Services {
