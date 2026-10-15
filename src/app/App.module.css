@@ -182,3 +182,9 @@
 .paletteEmpty {
   padding: var(--space-4) 0;
 }
+
+/* While typing in the editor, keep only the editor and its keys on screen */
+.app[data-focus-mode] .header,
+.app[data-focus-mode] .nav {
+  display: none;
+}

@@ -20,6 +20,8 @@ interface CodeEditorProps {
   initialDoc: string;
   /** Called on every edit with the new document. */
   onChange: (doc: Text) => void;
+  /** Receives the view once created, and null when it is destroyed. */
+  onReady?: (view: EditorView | null) => void;
   className?: string;
 }
 
@@ -28,11 +30,11 @@ interface CodeEditorProps {
  * (with a `key`) to open another file. The grammar for [fileName] is loaded
  * after the first paint so big language packages never delay opening a file.
  */
-export function CodeEditor({ fileName, initialDoc, onChange, className }: CodeEditorProps) {
+export function CodeEditor({ fileName, initialDoc, onChange, onReady, className }: CodeEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const callbacks = useRef({ onChange });
+  const callbacks = useRef({ onChange, onReady });
   useEffect(() => {
-    callbacks.current = { onChange };
+    callbacks.current = { onChange, onReady };
   });
 
   useEffect(() => {
@@ -67,6 +69,7 @@ export function CodeEditor({ fileName, initialDoc, onChange, className }: CodeEd
       }),
     });
 
+    callbacks.current.onReady?.(view);
     let active = true;
     languageFor(fileName)
       ?.load()
@@ -77,6 +80,7 @@ export function CodeEditor({ fileName, initialDoc, onChange, className }: CodeEd
 
     return () => {
       active = false;
+      callbacks.current.onReady?.(null);
       view.destroy();
     };
     // The view owns its document after creation; changing props must not rebuild it.

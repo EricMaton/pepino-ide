@@ -12,6 +12,7 @@ import { Button } from '../ui/components';
 import { cx } from '../ui/cx';
 import { BranchIcon, FolderIcon, PromptIcon, SlidersIcon } from '../ui/icons';
 import { PepinoMark } from '../ui/Logo';
+import { useKeyboardVisible } from '../ui/keyboard';
 import { useSnackbar } from '../ui/useSnackbar';
 import styles from './App.module.css';
 import { CommandPalette } from './CommandPalette';
@@ -42,6 +43,9 @@ export function App() {
   const [space, setSpace] = useState<SpaceState>('creating');
   const [project, setProject] = useState<ProjectInfo | null>(null);
   const [openFile, setOpenFile] = useState<OpenFile | null>(null);
+  const keyboardOpen = useKeyboardVisible();
+  // Typing in the editor gets the whole screen: header and bottom nav step aside.
+  const focusMode = keyboardOpen && openFile !== null && destination === 'projects';
 
   const openProject = useCallback(
     (path: string) => {
@@ -123,7 +127,7 @@ export function App() {
   };
 
   return (
-    <div className={styles.app}>
+    <div className={styles.app} data-focus-mode={focusMode || undefined}>
       <header className={styles.header}>
         <PepinoMark size={44} />
         <div className={styles.brand}>

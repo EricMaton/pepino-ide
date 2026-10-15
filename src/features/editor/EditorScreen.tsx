@@ -1,4 +1,5 @@
 import { Text } from '@codemirror/state';
+import type { EditorView } from '@codemirror/view';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useServices } from '../../app/services';
 import { useBackHandler } from '../../ui/back';
@@ -11,7 +12,9 @@ import { fileBadge } from '../projects/files';
 import { basename } from '../projects/paths';
 import { CodeEditor } from './CodeEditor';
 import styles from './EditorScreen.module.css';
+import { EditorToolbar } from './EditorToolbar';
 import { languageFor } from './languages';
+import { DEFAULT_TOOLBAR } from './toolbar';
 
 type Loaded = { kind: 'text'; text: string } | { kind: 'binary' } | { kind: 'error'; message: string };
 
@@ -26,11 +29,12 @@ interface EditorScreenProps {
 
 /** Full-height editor for one file, laid over the explorer so closing it returns to the same folder. */
 export default function EditorScreen({ path, visible, folderLabel, onClose }: EditorScreenProps) {
-  const { projectSpace, registry, events } = useServices();
+  const { projectSpace, registry, dispatcher, events } = useServices();
   const showSnackbar = useSnackbar();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [dirty, setDirty] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
+  const [view, setView] = useState<EditorView | null>(null);
   const doc = useRef<Text | null>(null);
   const savedDoc = useRef<Text | null>(null);
   const name = basename(path);
@@ -102,6 +106,18 @@ export default function EditorScreen({ path, visible, folderLabel, onClose }: Ed
     return () => disposers.forEach((dispose) => dispose());
   }, [registry, visible, name, save, requestClose]);
 
+  // Toolbar keys are commands, registered while this editor is the one showing.
+  useEffect(() => {
+    if (!visible || !view) return;
+    const disposers = DEFAULT_TOOLBAR.map((key) =>
+      registry.register({ id: key.id, title: key.title, hidden: key.hidden, run: () => key.run(view) }),
+    );
+    return () => disposers.forEach((dispose) => dispose());
+  }, [registry, visible, view]);
+
+  const runKey = (id: string) =>
+    dispatcher.execute(id).catch((error: unknown) => showSnackbar(`Error: ${errorMessage(error)}`));
+
   const onChange = (next: Text) => {
     doc.current = next;
     setDirty(savedDoc.current === null || !next.eq(savedDoc.current));
@@ -132,7 +148,17 @@ export default function EditorScreen({ path, visible, folderLabel, onClose }: Ed
       {loaded === null ? (
         <p className={cx('label', 'cursor', styles.message)}>Opening</p>
       ) : loaded.kind === 'text' ? (
-        <CodeEditor key={path} className={styles.editor} fileName={name} initialDoc={loaded.text} onChange={onChange} />
+        <>
+          <CodeEditor
+            key={path}
+            className={styles.editor}
+            fileName={name}
+            initialDoc={loaded.text}
+            onChange={onChange}
+            onReady={setView}
+          />
+          <EditorToolbar keys={DEFAULT_TOOLBAR} onRun={runKey} />
+        </>
       ) : (
         <div className={styles.message}>
           <p className="title">{loaded.kind === 'binary' ? 'Binary file' : "Can't open file"}</p>
