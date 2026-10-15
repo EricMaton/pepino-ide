@@ -1,6 +1,7 @@
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
-import { useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { folderLabelFor } from '../features/editor/labels';
 import { errorMessage } from '../features/projects/errors';
 import { FileExplorer } from '../features/projects/FileExplorer';
 import { ProjectBar } from '../features/projects/ProjectBar';
@@ -19,6 +20,14 @@ import { useServices } from './services';
 
 type SpaceState = 'creating' | 'ready' | 'error';
 
+// The editor and its grammars load on first use, keeping them out of the start-up bundle.
+const EditorScreen = lazy(() => import('../features/editor/EditorScreen'));
+
+interface OpenFile {
+  path: string;
+  folderLabel: string;
+}
+
 const NAV_ICONS: Record<AppDestination, typeof FolderIcon> = {
   projects: FolderIcon,
   git: BranchIcon,
@@ -32,6 +41,7 @@ export function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [space, setSpace] = useState<SpaceState>('creating');
   const [project, setProject] = useState<ProjectInfo | null>(null);
+  const [openFile, setOpenFile] = useState<OpenFile | null>(null);
 
   const openProject = useCallback(
     (path: string) => {
@@ -88,9 +98,10 @@ export function App() {
   }, [registry, events, showSnackbar]);
 
   useEffect(() => {
-    if (!project) return;
+    // While a file is open the editor owns closing (it may have unsaved changes).
+    if (!project || openFile) return;
     return registry.register({ id: 'project.close', title: `Close project ${project.name}`, run: closeProject });
-  }, [registry, project, closeProject]);
+  }, [registry, project, openFile, closeProject]);
 
   // Back: innermost handler first (dialogs, explorer UP), then home tab, then leave the app.
   useBackHandler(destination !== HOME, () => setDestination(HOME));
@@ -127,12 +138,33 @@ export function App() {
         {current.teaser ? (
           <ComingSoon label={current.label} {...current.teaser} />
         ) : (
-          <ProjectsScreen state={space} project={project} onOpenProject={openProject} onCloseProject={closeProject} />
+          <ProjectsScreen
+            state={space}
+            project={project}
+            onOpenProject={openProject}
+            onCloseProject={closeProject}
+            onOpenFile={(path, rootPath, rootName) =>
+              setOpenFile({ path, folderLabel: folderLabelFor(path, rootPath, rootName) })
+            }
+          />
         )}
-        <Button variant="filled" className={styles.fab} onClick={() => setPaletteOpen(true)}>
-          <PromptIcon size={20} />
-          Commands
-        </Button>
+        {openFile && (
+          <Suspense fallback={null}>
+            <EditorScreen
+              key={openFile.path}
+              path={openFile.path}
+              folderLabel={openFile.folderLabel}
+              visible={destination === 'projects'}
+              onClose={() => setOpenFile(null)}
+            />
+          </Suspense>
+        )}
+        {!(openFile && destination === 'projects') && (
+          <Button variant="filled" className={styles.fab} onClick={() => setPaletteOpen(true)}>
+            <PromptIcon size={20} />
+            Commands
+          </Button>
+        )}
       </main>
       <nav className={styles.nav}>
         {DESTINATIONS.map(({ id, label }) => {
@@ -161,9 +193,10 @@ interface ProjectsScreenProps {
   project: ProjectInfo | null;
   onOpenProject: (path: string) => void;
   onCloseProject: () => void;
+  onOpenFile: (path: string, rootPath: string, rootName: string) => void;
 }
 
-function ProjectsScreen({ state, project, onOpenProject, onCloseProject }: ProjectsScreenProps) {
+function ProjectsScreen({ state, project, onOpenProject, onCloseProject, onOpenFile }: ProjectsScreenProps) {
   const { projectSpace, recentProjects } = useServices();
   if (state === 'ready' && project) {
     return (
@@ -176,6 +209,7 @@ function ProjectsScreen({ state, project, onOpenProject, onCloseProject }: Proje
           rootLabel={project.name}
           rootName={project.name}
           onExitRoot={onCloseProject}
+          onOpenFile={(path) => onOpenFile(path, project.path, project.name)}
         />
       </>
     );
@@ -193,6 +227,7 @@ function ProjectsScreen({ state, project, onOpenProject, onCloseProject }: Proje
         }
         rootName="~/projects"
         onOpenProject={onOpenProject}
+        onOpenFile={(path) => onOpenFile(path, '', '~/projects')}
         rootHeader={<RecentProjects store={recentProjects} onOpen={onOpenProject} />}
       />
     );
