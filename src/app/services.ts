@@ -5,7 +5,9 @@ import { EventBus } from '../core/events';
 import { createCapacitorBackend } from '../features/projects/capacitorBackend';
 import type { ProjectInfo } from '../features/projects/projects';
 import { createProjectSpace, type ProjectSpace } from '../features/projects/projectSpace';
-import { createRecentProjects, type KeyValueStore, type RecentProjects } from '../features/projects/recents';
+import type { KeyValueStore } from '../core/storage';
+import { createRecentProjects, type RecentProjects } from '../features/projects/recents';
+import { createSessionStore, type SessionStore } from './session';
 
 export type AppEvents = {
   'demo.counterChanged': { count: number };
@@ -21,6 +23,7 @@ export interface Services {
   events: EventBus<AppEvents>;
   projectSpace: ProjectSpace;
   recentProjects: RecentProjects;
+  session: SessionStore;
 }
 
 /** Capacitor Preferences: SharedPreferences on Android, UserDefaults on iOS, localStorage on the web. */
@@ -40,7 +43,14 @@ export function createServices(): Services {
     recentProjects.record(project.path).catch((error: unknown) => console.error('Cannot record recent project', error));
   });
 
-  return { registry, dispatcher: new CommandDispatcher(registry), events, projectSpace, recentProjects };
+  return {
+    registry,
+    dispatcher: new CommandDispatcher(registry),
+    events,
+    projectSpace,
+    recentProjects,
+    session: createSessionStore(preferences),
+  };
 }
 
 export const ServicesContext = createContext<Services | null>(null);

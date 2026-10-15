@@ -9,7 +9,7 @@
 - [ ] Edición táctil: posicionar cursor preciso, selección, gestos de zoom de texto (validar el IME de Gboard/SwiftKey en el WebView)
 - [x] Toolbar configurable encima del teclado: símbolos `{}[]()=;`, tab, undo/redo (botones = comandos del `CommandRegistry`)
 - [x] Autosave con snapshot antes de cada edición (el SO mata apps: nunca perder trabajo; guardar también en el evento `pause` de la app)
-- [ ] Estado del editor restaurado al reabrir (scroll, cursor, archivo abierto)
+- [x] Estado del editor restaurado al reabrir (scroll, cursor, archivo abierto)
 - [ ] Soportar archivos de al menos 5k líneas sin tirones visibles
 
 ## Criterios de aceptación

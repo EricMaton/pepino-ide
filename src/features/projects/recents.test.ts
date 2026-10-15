@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { createMemoryBackend } from './memoryBackend';
 import { createProject } from './projects';
 import { createProjectSpace, type ProjectSpace } from './projectSpace';
-import { createRecentProjects, formatAgo, type KeyValueStore, MAX_RECENTS, withOpened } from './recents';
+import type { KeyValueStore } from '../../core/storage';
+import { createRecentProjects, formatAgo, MAX_RECENTS, withOpened } from './recents';
 
 function memoryStore(): KeyValueStore & { data: Map<string, string> } {
   const data = new Map<string, string>();

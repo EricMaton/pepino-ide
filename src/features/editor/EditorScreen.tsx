@@ -2,6 +2,7 @@ import { App as CapacitorApp } from '@capacitor/app';
 import { Text } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { EditorViewState } from '../../app/session';
 import { useServices } from '../../app/services';
 import { useBackHandler } from '../../ui/back';
 import { Button, Dialog } from '../../ui/components';
@@ -32,7 +33,13 @@ interface EditorScreenProps {
   /** Breadcrumb-style folder label shown under the file name. */
   folderLabel: string;
   onClose: () => void;
+  /** Where the cursor and scroll were last time this file was open. */
+  initialViewState?: EditorViewState;
+  /** Cursor/scroll changes, batched (at most every 400 ms) and flushed when leaving. */
+  onViewState?: (state: EditorViewState) => void;
 }
+
+const VIEW_STATE_DELAY_MS = 400;
 
 /**
  * Full-height editor for one file, laid over the explorer so closing it
@@ -40,7 +47,14 @@ interface EditorScreenProps {
  * after typing stops and whenever the app goes to the background, and the
  * file's previous content is snapshotted before it is first overwritten.
  */
-export default function EditorScreen({ path, visible, folderLabel, onClose }: EditorScreenProps) {
+export default function EditorScreen({
+  path,
+  visible,
+  folderLabel,
+  onClose,
+  initialViewState,
+  onViewState,
+}: EditorScreenProps) {
   const { projectSpace, registry, dispatcher, events } = useServices();
   const showSnackbar = useSnackbar();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
@@ -54,6 +68,30 @@ export default function EditorScreen({ path, visible, folderLabel, onClose }: Ed
   const snapshotTaken = useRef(false);
   const saveQueue = useRef<Promise<boolean>>(Promise.resolve(true));
   const name = basename(path);
+  const pendingViewState = useRef<EditorViewState | null>(null);
+  const viewStateTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const reportViewState = useRef(onViewState);
+  useEffect(() => {
+    reportViewState.current = onViewState;
+  });
+
+  const flushViewState = useCallback(() => {
+    clearTimeout(viewStateTimer.current);
+    if (pendingViewState.current) reportViewState.current?.(pendingViewState.current);
+    pendingViewState.current = null;
+  }, []);
+
+  const queueViewState = useCallback(
+    (state: EditorViewState) => {
+      pendingViewState.current = state;
+      clearTimeout(viewStateTimer.current);
+      viewStateTimer.current = setTimeout(flushViewState, VIEW_STATE_DELAY_MS);
+    },
+    [flushViewState],
+  );
+
+  // Never lose the last position when the editor closes.
+  useEffect(() => flushViewState, [flushViewState]);
   const dirty = saveState !== 'saved';
 
   useEffect(() => {
@@ -121,7 +159,10 @@ export default function EditorScreen({ path, visible, folderLabel, onClose }: Ed
 
   // The OS may kill a backgrounded app at any moment: save the instant it leaves the foreground.
   useEffect(() => {
-    const flush = () => void save();
+    const flush = () => {
+      flushViewState();
+      void save();
+    };
     const onVisibility = () => document.visibilityState === 'hidden' && flush();
     const pause = CapacitorApp.addListener('pause', flush);
     document.addEventListener('visibilitychange', onVisibility);
@@ -129,7 +170,7 @@ export default function EditorScreen({ path, visible, folderLabel, onClose }: Ed
       void pause.then((handle) => handle.remove());
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [save]);
+  }, [save, flushViewState]);
 
   const requestClose = useCallback(async () => {
     if (!dirty || (await save())) onClose();
@@ -237,6 +278,8 @@ export default function EditorScreen({ path, visible, folderLabel, onClose }: Ed
             initialDoc={loaded.text}
             onChange={onChange}
             onReady={setView}
+            initialViewState={initialViewState}
+            onViewState={queueViewState}
           />
           <EditorToolbar keys={DEFAULT_TOOLBAR} onRun={runKey} />
         </>

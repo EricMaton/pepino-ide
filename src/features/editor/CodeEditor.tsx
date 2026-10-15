@@ -2,7 +2,7 @@ import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { bracketMatching, indentOnInput, indentUnit, syntaxHighlighting } from '@codemirror/language';
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
-import { Compartment, EditorState, type Text } from '@codemirror/state';
+import { Compartment, EditorSelection, EditorState, type Text } from '@codemirror/state';
 import {
   drawSelection,
   EditorView,
@@ -12,6 +12,7 @@ import {
   lineNumbers,
 } from '@codemirror/view';
 import { useEffect, useRef } from 'react';
+import type { EditorViewState } from '../../app/session';
 import { languageFor } from './languages';
 import { pepinoEditorTheme, pepinoHighlight } from './theme';
 
@@ -22,6 +23,10 @@ interface CodeEditorProps {
   onChange: (doc: Text) => void;
   /** Receives the view once created, and null when it is destroyed. */
   onReady?: (view: EditorView | null) => void;
+  /** Cursor/selection and scroll to start from (clamped to the document). */
+  initialViewState?: EditorViewState;
+  /** Called when the selection moves or the editor scrolls. */
+  onViewState?: (state: EditorViewState) => void;
   className?: string;
 }
 
@@ -30,19 +35,31 @@ interface CodeEditorProps {
  * (with a `key`) to open another file. The grammar for [fileName] is loaded
  * after the first paint so big language packages never delay opening a file.
  */
-export function CodeEditor({ fileName, initialDoc, onChange, onReady, className }: CodeEditorProps) {
+export function CodeEditor({
+  fileName,
+  initialDoc,
+  onChange,
+  onReady,
+  initialViewState,
+  onViewState,
+  className,
+}: CodeEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const callbacks = useRef({ onChange, onReady });
+  const callbacks = useRef({ onChange, onReady, onViewState });
   useEffect(() => {
-    callbacks.current = { onChange, onReady };
+    callbacks.current = { onChange, onReady, onViewState };
   });
 
   useEffect(() => {
     const language = new Compartment();
+    const clamp = (position: number) => Math.max(0, Math.min(position, initialDoc.length));
     const view = new EditorView({
       parent: hostRef.current!,
       state: EditorState.create({
         doc: initialDoc,
+        selection: initialViewState
+          ? EditorSelection.single(clamp(initialViewState.anchor), clamp(initialViewState.head))
+          : undefined,
         extensions: [
           lineNumbers(),
           highlightActiveLineGutter(),
@@ -63,11 +80,23 @@ export function CodeEditor({ fileName, initialDoc, onChange, onReady, className 
           keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) callbacks.current.onChange(update.state.doc);
+            if (update.docChanged || update.selectionSet) reportViewState();
           }),
           language.of([]),
         ],
       }),
     });
+
+    function reportViewState() {
+      const { anchor, head } = view.state.selection.main;
+      callbacks.current.onViewState?.({ anchor, head, scrollTop: view.scrollDOM.scrollTop });
+    }
+    view.scrollDOM.addEventListener('scroll', reportViewState, { passive: true });
+    if (initialViewState?.scrollTop) {
+      // Scroll once CodeMirror has measured its content, or the offset is lost.
+      const top = initialViewState.scrollTop;
+      view.requestMeasure({ read: () => undefined, write: () => void (view.scrollDOM.scrollTop = top) });
+    }
 
     callbacks.current.onReady?.(view);
     let active = true;
@@ -81,6 +110,7 @@ export function CodeEditor({ fileName, initialDoc, onChange, onReady, className 
     return () => {
       active = false;
       callbacks.current.onReady?.(null);
+      view.scrollDOM.removeEventListener('scroll', reportViewState);
       view.destroy();
     };
     // The view owns its document after creation; changing props must not rebuild it.

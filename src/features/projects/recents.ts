@@ -1,11 +1,6 @@
+import type { KeyValueStore } from '../../core/storage';
 import { readProject, type ProjectInfo } from './projects';
 import type { ProjectSpace } from './projectSpace';
-
-/** Minimal persistent string store; Capacitor Preferences in the app, a Map in tests. */
-export interface KeyValueStore {
-  get(key: string): Promise<string | null>;
-  set(key: string, value: string): Promise<void>;
-}
 
 export interface RecentProject extends ProjectInfo {
   openedMillis: number;
