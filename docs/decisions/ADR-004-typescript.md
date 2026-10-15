@@ -61,6 +61,7 @@ explorer), así que el coste de cambiar ahora es bajo y crece con cada sprint.
 - `npm run dev` permite iterar el diseño en el navegador (el filesystem usa
   IndexedDB vía Capacitor en web) y `/#catalog` muestra los componentes.
 - Componentes clave del roadmap pasan a librerías web maduras: CodeMirror 6
-  (editor), xterm.js (terminal), isomorphic-git (git).
+  (editor) y xterm.js (terminal). Git va en un plugin nativo con JGit tras
+  medirlo frente a isomorphic-git (ADR-006).
 - **Riesgos**: rendimiento del WebView con archivos grandes (#20) y la
   terminal, que sigue necesitando un PTY nativo en un plugin propio.
