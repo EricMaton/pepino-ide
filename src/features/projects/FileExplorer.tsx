@@ -1,8 +1,11 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useRef, useState } from 'react';
 import { useBackHandler } from '../../ui/back';
-import { Button, Divider } from '../../ui/components';
+import { Button } from '../../ui/components';
 import { cx } from '../../ui/cx';
+import { BackIcon, FolderIcon, MoreIcon, PlusIcon, SortIcon } from '../../ui/icons';
+import { SliceOutline } from '../../ui/Logo';
+import { Breadcrumb } from './Breadcrumb';
 import { errorMessage } from './errors';
 import {
   CreateEntryDialog,
@@ -15,6 +18,7 @@ import {
 import styles from './FileExplorer.module.css';
 import {
   type FileEntry,
+  fileBadge,
   type FileSortOrder,
   formatModified,
   formatSize,
@@ -22,17 +26,17 @@ import {
   SORT_LABELS,
   sortEntries,
 } from './files';
-import { joinPath } from './paths';
+import { basename, joinPath } from './paths';
 import type { ProjectSpace } from './projectSpace';
 import { useDirectoryListing } from './useDirectoryListing';
 
-const ROW_HEIGHT = 65;
-const FAB_CLEARANCE = 88;
+const ROW_HEIGHT = 68;
+const FAB_CLEARANCE = 96;
 
 /**
  * Touch file explorer anchored to the project space root. Navigation is a
- * stack of paths (ADR-003): opening a folder pushes, UP pops, and UP is
- * disabled at the root, so the UI can never leave the project space.
+ * stack of paths (ADR-003): opening a folder pushes, back pops, a breadcrumb
+ * segment truncates the stack, and the root can never be left.
  */
 export function FileExplorer({ projectSpace }: { projectSpace: ProjectSpace }) {
   const [pathStack, setPathStack] = useState<string[]>(['']);
@@ -58,24 +62,47 @@ export function FileExplorer({ projectSpace }: { projectSpace: ProjectSpace }) {
     );
   };
 
+  const where = ['~/projects', ...pathStack.slice(1).map(basename)].join('/');
+
   return (
     <div className={styles.explorer}>
-      <ExplorerToolbar
-        canGoUp={canGoUp}
-        segments={pathStack.slice(1).map((path) => path.slice(path.lastIndexOf('/') + 1))}
-        sortOrder={sortOrder}
-        onUp={goUp}
-        onCycleSort={() => setSortOrder(nextSortOrder)}
-        onCreate={() => setDialog({ kind: 'create' })}
-      />
-      <Divider />
-      {opError && <p className={cx('label', styles.opError)}>ERROR: {opError.toUpperCase()}</p>}
+      <div className={styles.toolbar}>
+        <div className={styles.pathRow}>
+          <Button square disabled={!canGoUp} onClick={goUp} aria-label="Up one folder">
+            <BackIcon size={20} />
+          </Button>
+          <Breadcrumb stack={pathStack} onJump={(depth) => setPathStack((stack) => stack.slice(0, depth + 1))} />
+        </div>
+        <div className={styles.actionRow}>
+          <span className="caption muted">
+            {listing?.ok ? `${listing.entries.length} ${listing.entries.length === 1 ? 'ITEM' : 'ITEMS'}` : '— ITEMS'}
+          </span>
+          <Button onClick={() => setSortOrder(nextSortOrder)} aria-label={`Sort: ${SORT_LABELS[sortOrder]}`}>
+            <SortIcon size={18} />
+            {SORT_LABELS[sortOrder]}
+          </Button>
+          <Button variant="filled" onClick={() => setDialog({ kind: 'create' })}>
+            <PlusIcon size={18} />
+            New
+          </Button>
+        </div>
+      </div>
+      {opError && (
+        <p className={cx('label', styles.opError)} role="alert">
+          ✕ {opError}
+        </p>
+      )}
       {listing === null ? (
-        <ExplorerMessage text="LOADING…" />
+        <p className={cx('label', 'cursor', styles.loading)}>Reading</p>
       ) : !listing.ok ? (
-        <ExplorerMessage text={`CAN'T READ FOLDER\n${listing.message}`} />
+        <div className={styles.state}>
+          <p className={cx('label', styles.readError)}>
+            ✕ Can&apos;t read folder
+            <span className="caption">{listing.message}</span>
+          </p>
+        </div>
       ) : listing.entries.length === 0 ? (
-        <ExplorerMessage text="EMPTY FOLDER" />
+        <EmptyFolder />
       ) : (
         <EntryList
           key={currentPath}
@@ -87,6 +114,7 @@ export function FileExplorer({ projectSpace }: { projectSpace: ProjectSpace }) {
 
       {dialog?.kind === 'create' && (
         <CreateEntryDialog
+          where={where}
           onClose={() => setDialog(null)}
           onCreate={(asDirectory, name) =>
             runOperation(() => {
@@ -132,35 +160,6 @@ export function FileExplorer({ projectSpace }: { projectSpace: ProjectSpace }) {
   );
 }
 
-interface ToolbarProps {
-  canGoUp: boolean;
-  segments: string[];
-  sortOrder: FileSortOrder;
-  onUp: () => void;
-  onCycleSort: () => void;
-  onCreate: () => void;
-}
-
-function ExplorerToolbar({ canGoUp, segments, sortOrder, onUp, onCycleSort, onCreate }: ToolbarProps) {
-  return (
-    <div className={styles.toolbar}>
-      <Button disabled={!canGoUp} onClick={onUp}>
-        Up
-      </Button>
-      <div className={styles.location}>
-        <span className="label muted">LOCATION</span>
-        <span className={cx('body', 'mono', 'ellipsis', styles.breadcrumb)}>
-          <bdi>{['ROOT', ...segments].join(' / ')}</bdi>
-        </span>
-      </div>
-      <Button onClick={onCreate} aria-label="Create file or folder">
-        +
-      </Button>
-      <Button onClick={onCycleSort}>SORT: {SORT_LABELS[sortOrder]}</Button>
-    </div>
-  );
-}
-
 interface EntryListProps {
   entries: FileEntry[];
   onOpen: (entry: FileEntry) => void;
@@ -183,7 +182,14 @@ function EntryList({ entries, onOpen, onActions }: EntryListProps) {
     <div ref={scrollRef} className={styles.scroller}>
       <div className={styles.rows} style={{ height: virtualizer.getTotalSize() }}>
         {virtualizer.getVirtualItems().map((item) => (
-          <FileRow key={item.key} entry={entries[item.index]} top={item.start} onOpen={onOpen} onActions={onActions} />
+          <FileRow
+            key={item.key}
+            index={item.index}
+            entry={entries[item.index]}
+            top={item.start}
+            onOpen={onOpen}
+            onActions={onActions}
+          />
         ))}
       </div>
     </div>
@@ -191,22 +197,35 @@ function EntryList({ entries, onOpen, onActions }: EntryListProps) {
 }
 
 interface FileRowProps {
+  index: number;
   entry: FileEntry;
   top: number;
   onOpen: (entry: FileEntry) => void;
   onActions: (entry: FileEntry) => void;
 }
 
-function FileRow({ entry, top, onOpen, onActions }: FileRowProps) {
-  const meta = [entry.isDirectory ? 'FOLDER' : formatSize(entry.sizeBytes), formatModified(entry.modifiedMillis)];
+function FileRow({ index, entry, top, onOpen, onActions }: FileRowProps) {
+  const meta = [entry.isDirectory ? 'DIR' : formatSize(entry.sizeBytes), formatModified(entry.modifiedMillis)];
   const content = (
     <>
-      <span className={cx('title', styles.icon, entry.isDirectory ? 'accent' : 'muted')} aria-hidden>
-        {entry.isDirectory ? '/' : '·'}
+      <span className={cx('caption', 'muted', styles.index)} aria-hidden>
+        {String(index + 1).padStart(2, '0')}
       </span>
+      {entry.isDirectory ? (
+        <span className={cx(styles.badge, styles.badgeDir)} aria-hidden>
+          <FolderIcon size={20} />
+        </span>
+      ) : (
+        <span className={cx('caption', styles.badge, styles.badgeFile)} aria-hidden>
+          {fileBadge(entry.name)}
+        </span>
+      )}
       <span className={styles.rowText}>
-        <span className="body ellipsis">{entry.name}</span>
-        <span className="label muted ellipsis">{meta.join('  ·  ')}</span>
+        <span className="body ellipsis">
+          {entry.name}
+          {entry.isDirectory && <span className="muted">/</span>}
+        </span>
+        <span className="caption muted ellipsis">{meta.join('  ·  ')}</span>
       </span>
     </>
   );
@@ -222,16 +241,25 @@ function FileRow({ entry, top, onOpen, onActions }: FileRowProps) {
       )}
       <Button
         variant="text"
-        className={cx('title', styles.more, 'muted')}
+        square
+        className="muted"
         aria-label={`Actions for ${entry.name}`}
         onClick={() => onActions(entry)}
       >
-        ···
+        <MoreIcon size={18} />
       </Button>
     </div>
   );
 }
 
-function ExplorerMessage({ text }: { text: string }) {
-  return <p className={cx('label', 'muted', styles.message)}>{text}</p>;
+function EmptyFolder() {
+  return (
+    <div className={styles.state}>
+      <SliceOutline size={112} />
+      <p className="title">Empty folder</p>
+      <p className="caption muted">
+        Tap <span className="accent">+ NEW</span> to create a file or folder here.
+      </p>
+    </div>
+  );
 }

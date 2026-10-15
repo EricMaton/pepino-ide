@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { type FileEntry, formatModified, formatSize, isValidEntryName, nextSortOrder, sortEntries } from './files';
+import {
+  type FileEntry,
+  fileBadge,
+  formatModified,
+  formatSize,
+  isValidEntryName,
+  nextSortOrder,
+  sortEntries,
+} from './files';
 
 const entry = (name: string, isDirectory: boolean, sizeBytes = 0, modifiedMillis = 0): FileEntry => ({
   name,
@@ -75,5 +83,19 @@ describe('formatModified', () => {
 
   it('shows a dash for unknown times', () => {
     expect(formatModified(0)).toBe('—');
+  });
+});
+
+describe('fileBadge', () => {
+  it.each([
+    ['main.ts', 'TS'],
+    ['package.json', 'JSON'],
+    ['archive.tar.gz', 'GZ'],
+    ['notes.markdown', 'MARK'],
+    ['Makefile', '··'],
+    ['.gitignore', '··'],
+    ['trailing.', '··'],
+  ])('tags %j as %j', (name, expected) => {
+    expect(fileBadge(name)).toBe(expected);
   });
 });

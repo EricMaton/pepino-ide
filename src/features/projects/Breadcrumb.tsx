@@ -1,0 +1,45 @@
+import { useEffect, useRef } from 'react';
+import { cx } from '../../ui/cx';
+import styles from './FileExplorer.module.css';
+import { basename } from './paths';
+
+/** `~ / src / ui` — every segment is a jump target; keeps the deepest one in view. */
+export function Breadcrumb({ stack, onJump }: { stack: string[]; onJump: (depth: number) => void }) {
+  const scrollRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (scroller) scroller.scrollLeft = scroller.scrollWidth;
+  }, [stack]);
+
+  return (
+    <nav ref={scrollRef} className={styles.breadcrumb} aria-label="Location">
+      {stack.map((path, depth) => {
+        const last = depth === stack.length - 1;
+        return (
+          <span key={path} className={styles.crumb}>
+            {depth > 0 && (
+              <span className="muted" aria-hidden>
+                /
+              </span>
+            )}
+            <button
+              type="button"
+              className={cx('body', styles.crumbButton, last && styles.crumbCurrent)}
+              aria-current={last ? 'location' : undefined}
+              disabled={last}
+              onClick={() => onJump(depth)}
+            >
+              {depth === 0 ? (
+                <>
+                  <span className="muted">~/</span>projects
+                </>
+              ) : (
+                basename(path)
+              )}
+            </button>
+          </span>
+        );
+      })}
+    </nav>
+  );
+}

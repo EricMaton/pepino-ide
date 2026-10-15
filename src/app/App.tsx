@@ -4,8 +4,10 @@ import { useEffect, useState } from 'react';
 import { errorMessage } from '../features/projects/errors';
 import { FileExplorer } from '../features/projects/FileExplorer';
 import { dispatchBack, useBackHandler } from '../ui/back';
-import { Button, Divider, RedBar } from '../ui/components';
+import { Button } from '../ui/components';
 import { cx } from '../ui/cx';
+import { BranchIcon, FolderIcon, PromptIcon, SlidersIcon } from '../ui/icons';
+import { PepinoMark } from '../ui/Logo';
 import { useSnackbar } from '../ui/useSnackbar';
 import styles from './App.module.css';
 import { CommandPalette } from './CommandPalette';
@@ -13,6 +15,12 @@ import { type AppDestination, DESTINATIONS, HOME } from './destinations';
 import { useServices } from './services';
 
 type SpaceState = 'creating' | 'ready' | 'error';
+
+const NAV_ICONS: Record<AppDestination, typeof FolderIcon> = {
+  projects: FolderIcon,
+  git: BranchIcon,
+  settings: SlidersIcon,
+};
 
 export function App() {
   const { registry, dispatcher, events, projectSpace } = useServices();
@@ -68,6 +76,8 @@ export function App() {
     };
   }, []);
 
+  const current = DESTINATIONS.find((d) => d.id === destination)!;
+
   const runCommand = (id: string) => {
     setPaletteOpen(false);
     dispatcher.execute(id).catch((error: unknown) => showSnackbar(`Error: ${errorMessage(error)}`));
@@ -75,34 +85,39 @@ export function App() {
 
   return (
     <div className={styles.app}>
-      <RedBar />
       <header className={styles.header}>
-        <h1 className="headline">PEPINO</h1>
-        <span className="label accent">MOBILE IDE</span>
+        <PepinoMark size={44} />
+        <div className={styles.brand}>
+          <h1 className="display">Pepino</h1>
+          <span className="label">
+            <span className="accent">//</span> Mobile IDE
+          </span>
+        </div>
+        <span className={cx('caption', 'muted', styles.version)}>v{__APP_VERSION__}</span>
       </header>
-      <Divider />
       <main className={styles.content}>
-        {destination === 'projects' ? (
-          <ProjectsScreen state={space} />
-        ) : (
-          <ComingSoon label={DESTINATIONS.find((d) => d.id === destination)!.label} />
-        )}
+        {current.teaser ? <ComingSoon label={current.label} {...current.teaser} /> : <ProjectsScreen state={space} />}
         <Button variant="filled" className={styles.fab} onClick={() => setPaletteOpen(true)}>
+          <PromptIcon size={20} />
           Commands
         </Button>
       </main>
       <nav className={styles.nav}>
-        {DESTINATIONS.map(({ id, label }) => (
-          <button
-            key={id}
-            type="button"
-            className={cx('label', styles.navItem)}
-            aria-current={id === destination ? 'page' : undefined}
-            onClick={() => setDestination(id)}
-          >
-            {label}
-          </button>
-        ))}
+        {DESTINATIONS.map(({ id, label }) => {
+          const NavIcon = NAV_ICONS[id];
+          return (
+            <button
+              key={id}
+              type="button"
+              className={styles.navItem}
+              aria-current={id === destination ? 'page' : undefined}
+              onClick={() => setDestination(id)}
+            >
+              <NavIcon size={22} />
+              <span className="label">{label}</span>
+            </button>
+          );
+        })}
       </nav>
       {paletteOpen && <CommandPalette onClose={() => setPaletteOpen(false)} onRun={runCommand} />}
     </div>
@@ -112,18 +127,23 @@ export function App() {
 function ProjectsScreen({ state }: { state: SpaceState }) {
   const { projectSpace } = useServices();
   if (state === 'ready') return <FileExplorer projectSpace={projectSpace} />;
+  if (state === 'creating') return <p className={cx('label', 'cursor', styles.status)}>Mounting project space</p>;
   return (
-    <p className={cx('label', styles.status, state === 'error' ? 'accent' : 'muted')}>
-      {state === 'creating' ? 'CREATING PROJECT SPACE…' : '● PROJECT SPACE ERROR'}
-    </p>
+    <p className={cx('label', styles.status, styles.statusError)}>✕ Project space error — storage is not writable</p>
   );
 }
 
-function ComingSoon({ label }: { label: string }) {
+function ComingSoon({ label, sprint, description }: { label: string; sprint: string; description: string }) {
   return (
     <div className={styles.comingSoon}>
-      <span className="headline">{label}</span>
-      <span className="label accent">COMING SOON</span>
+      <div className={styles.tape} aria-hidden />
+      <div className={styles.comingBody}>
+        <span className="label accent">// {sprint}</span>
+        <h2 className={cx('display', styles.outlineText)}>{label}</h2>
+        <p className="body muted">{description}</p>
+        <span className="label cursor">Under construction</span>
+      </div>
+      <div className={styles.tape} aria-hidden />
     </div>
   );
 }

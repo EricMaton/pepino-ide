@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useBackHandler } from '../../ui/back';
 import { Button, Dialog, TextField } from '../../ui/components';
 import { cx } from '../../ui/cx';
+import { BackIcon, FolderIcon } from '../../ui/icons';
+import { Breadcrumb } from './Breadcrumb';
 import styles from './FileExplorer.module.css';
 import { type FileEntry, isValidEntryName, sortEntries } from './files';
 import type { ProjectSpace } from './projectSpace';
@@ -14,7 +16,8 @@ export type ExplorerDialog =
   | { kind: 'delete'; entry: FileEntry }
   | { kind: 'transfer'; entry: FileEntry; move: boolean };
 
-const nameError = (name: string) => (name !== '' && !isValidEntryName(name) ? 'INVALID NAME' : null);
+const nameError = (name: string) => (name !== '' && !isValidEntryName(name) ? 'Invalid name' : null);
+const kindOf = (entry: FileEntry) => (entry.isDirectory ? 'DIR' : 'FILE');
 
 function CancelButton({ onClick }: { onClick: () => void }) {
   return (
@@ -25,9 +28,12 @@ function CancelButton({ onClick }: { onClick: () => void }) {
 }
 
 export function CreateEntryDialog({
+  where,
   onClose,
   onCreate,
 }: {
+  /** Display path of the folder the entry goes into, e.g. "~/src". */
+  where: string;
   onClose: () => void;
   onCreate: (asDirectory: boolean, name: string) => void;
 }) {
@@ -37,12 +43,13 @@ export function CreateEntryDialog({
 
   return (
     <Dialog
-      title="CREATE"
+      title="New"
+      eyebrow={`IN ${where}`}
       onClose={onClose}
       actions={
         <>
-          <CancelButton onClick={onClose} />
-          <Button variant="text" disabled={!valid} onClick={() => create(true)}>
+          <Button disabled={!valid} onClick={() => create(true)}>
+            <FolderIcon size={18} />
             Folder
           </Button>
           <Button variant="filled" disabled={!valid} onClick={() => create(false)}>
@@ -52,7 +59,8 @@ export function CreateEntryDialog({
       }
     >
       <TextField
-        label="NAME"
+        label="Name"
+        placeholder="main.ts"
         value={name}
         onChange={setName}
         error={nameError(name)}
@@ -78,7 +86,8 @@ export function RenameEntryDialog({
 
   return (
     <Dialog
-      title="RENAME"
+      title="Rename"
+      eyebrow={`${kindOf(entry)} · ${entry.name}`}
       onClose={onClose}
       actions={
         <>
@@ -89,7 +98,7 @@ export function RenameEntryDialog({
         </>
       }
     >
-      <TextField label="NAME" value={name} onChange={setName} error={nameError(name)} autoFocus onSubmit={rename} />
+      <TextField label="New name" value={name} onChange={setName} error={nameError(name)} autoFocus onSubmit={rename} />
     </Dialog>
   );
 }
@@ -105,19 +114,28 @@ export function DeleteEntryDialog({
 }) {
   return (
     <Dialog
-      title="DELETE?"
+      title="Delete?"
+      eyebrow={`${kindOf(entry)} · ${entry.name}`}
       onClose={onClose}
       actions={
         <>
           <CancelButton onClick={onClose} />
-          <Button variant="text" tone="danger" onClick={onConfirm}>
+          <Button variant="filled" onClick={onConfirm}>
             Delete
           </Button>
         </>
       }
     >
       <p className={cx('body', styles.deleteText)}>
-        {entry.isDirectory ? `${entry.name} IS A FOLDER.\nEVERYTHING INSIDE IT WILL BE DELETED.` : entry.name}
+        {entry.isDirectory ? (
+          <>
+            <strong>{entry.name}/</strong> is a folder. Everything inside it will be deleted.
+          </>
+        ) : (
+          <>
+            <strong>{entry.name}</strong> will be deleted.
+          </>
+        )}
       </p>
     </Dialog>
   );
@@ -132,27 +150,36 @@ export function EntryActionsDialog({
   onClose: () => void;
   onAction: (next: ExplorerDialog) => void;
 }) {
+  const actions: Array<{ label: string; next: ExplorerDialog; danger?: boolean }> = [
+    { label: 'Rename', next: { kind: 'rename', entry } },
+    { label: 'Move to…', next: { kind: 'transfer', entry, move: true } },
+    { label: 'Copy to…', next: { kind: 'transfer', entry, move: false } },
+    { label: 'Delete', next: { kind: 'delete', entry }, danger: true },
+  ];
+
   return (
-    <Dialog title={entry.name} onClose={onClose} actions={<CancelButton onClick={onClose} />}>
+    <Dialog title={entry.name} eyebrow={kindOf(entry)} onClose={onClose}>
       <div className={styles.actionList}>
-        <Button variant="text" listItem onClick={() => onAction({ kind: 'rename', entry })}>
-          Rename
-        </Button>
-        <Button variant="text" listItem onClick={() => onAction({ kind: 'transfer', entry, move: true })}>
-          Move
-        </Button>
-        <Button variant="text" listItem onClick={() => onAction({ kind: 'transfer', entry, move: false })}>
-          Copy
-        </Button>
-        <Button variant="text" tone="danger" listItem onClick={() => onAction({ kind: 'delete', entry })}>
-          Delete
-        </Button>
+        {actions.map(({ label, next, danger }) => (
+          <Button
+            key={label}
+            variant="text"
+            tone={danger ? 'danger' : 'default'}
+            listItem
+            onClick={() => onAction(next)}
+          >
+            <span className="accent" aria-hidden>
+              ›
+            </span>
+            {label}
+          </Button>
+        ))}
       </div>
     </Dialog>
   );
 }
 
-/** Folder picker with its own path stack; back/UP climb it before closing the dialog. */
+/** Folder picker with its own path stack; back climbs it before closing the dialog. */
 export function TransferDialog({
   entry,
   move,
@@ -179,12 +206,12 @@ export function TransferDialog({
         'name',
       )
     : [];
-  const segments = pickStack.slice(1).map((path) => path.slice(path.lastIndexOf('/') + 1));
-  const verb = move ? 'MOVE' : 'COPY';
+  const verb = move ? 'Move' : 'Copy';
 
   return (
     <Dialog
-      title={`${verb} — ${entry.name}`}
+      title={`${verb} to…`}
+      eyebrow={`${kindOf(entry)} · ${entry.name}`}
       onClose={onClose}
       actions={
         <>
@@ -196,19 +223,17 @@ export function TransferDialog({
       }
     >
       <div className={styles.pickerBar}>
-        <Button disabled={!canGoUp} onClick={goUp}>
-          Up
+        <Button square disabled={!canGoUp} onClick={goUp} aria-label="Up one folder">
+          <BackIcon size={20} />
         </Button>
-        <span className={cx('body', 'mono', 'ellipsis', styles.breadcrumb)}>
-          <bdi>{['ROOT', ...segments].join(' / ')}</bdi>
-        </span>
+        <Breadcrumb stack={pickStack} onJump={(depth) => setPickStack((stack) => stack.slice(0, depth + 1))} />
       </div>
       {listing === null ? (
-        <p className={cx('label', 'muted', styles.pickerMessage)}>LOADING…</p>
+        <p className={cx('label', 'cursor', styles.pickerMessage)}>Reading</p>
       ) : !listing.ok ? (
-        <p className={cx('label', 'accent', styles.pickerMessage)}>CAN&apos;T READ FOLDER</p>
+        <p className={cx('label', 'accent', styles.pickerMessage)}>✕ Can&apos;t read folder</p>
       ) : folders.length === 0 ? (
-        <p className={cx('label', 'muted', styles.pickerMessage)}>NO SUBFOLDERS</p>
+        <p className={cx('label', 'muted', styles.pickerMessage)}>No subfolders</p>
       ) : (
         <div className={styles.pickerList}>
           {folders.map((folder) => (
@@ -219,9 +244,7 @@ export function TransferDialog({
               className={cx('body', styles.pickerFolder)}
               onClick={() => setPickStack((stack) => [...stack, folder.path])}
             >
-              <span className="title accent" aria-hidden>
-                /
-              </span>
+              <FolderIcon size={20} />
               <span className="ellipsis">{folder.name}</span>
             </Button>
           ))}

@@ -2,25 +2,35 @@ import { type ButtonHTMLAttributes, type ReactNode, useEffect, useId, useRef } f
 import { useBackHandler } from './back';
 import styles from './components.module.css';
 import { cx } from './cx';
+import { CloseIcon } from './icons';
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: 'outlined' | 'text' | 'filled';
   tone?: 'default' | 'danger';
   /** Full-width, left-aligned row in a list (implies the text variant look). */
   listItem?: boolean;
+  /** 48×48 icon button; pass an aria-label. */
+  square?: boolean;
 };
 
-export function Button({ variant = 'outlined', tone = 'default', listItem = false, className, ...props }: ButtonProps) {
+export function Button({
+  variant = 'outlined',
+  tone = 'default',
+  listItem = false,
+  square = false,
+  className,
+  ...props
+}: ButtonProps) {
   return (
     <button
       type="button"
       className={cx(
         'label',
         styles.button,
-        variant === 'outlined' && styles.outlined,
-        variant === 'filled' && styles.filled,
+        styles[variant],
         tone === 'danger' && styles.danger,
         listItem && styles.listItem,
+        square && styles.square,
         className,
       )}
       {...props}
@@ -38,6 +48,8 @@ export function RedBar() {
 
 interface DialogProps {
   title: string;
+  /** Small context line above the title, e.g. where an action applies. */
+  eyebrow?: string;
   onClose: () => void;
   children?: ReactNode;
   actions?: ReactNode;
@@ -45,9 +57,9 @@ interface DialogProps {
 
 /**
  * Modal dialog, open while mounted. Built on <dialog> so focus is trapped and
- * Escape closes it; the Android back button and backdrop taps close it too.
+ * Escape closes it; the Android back button, the × and backdrop taps close it too.
  */
-export function Dialog({ title, onClose, children, actions }: DialogProps) {
+export function Dialog({ title, eyebrow, onClose, children, actions }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
 
@@ -76,9 +88,17 @@ export function Dialog({ title, onClose, children, actions }: DialogProps) {
       }}
     >
       <div className={styles.dialogPanel}>
-        <h2 id={titleId} className={cx('title', 'ellipsis', styles.dialogTitle)}>
-          {title}
-        </h2>
+        <header className={styles.dialogHeader}>
+          <div className={styles.dialogHeading}>
+            {eyebrow && <span className="caption muted ellipsis">{eyebrow}</span>}
+            <h2 id={titleId} className="title ellipsis">
+              {title}
+            </h2>
+          </div>
+          <Button variant="text" square aria-label="Close" onClick={onClose}>
+            <CloseIcon />
+          </Button>
+        </header>
         {children !== undefined && <div className={styles.dialogContent}>{children}</div>}
         {actions !== undefined && <div className={styles.dialogActions}>{actions}</div>}
       </div>
@@ -96,37 +116,46 @@ interface TextFieldProps {
   /** Called on Enter. */
   onSubmit?: () => void;
   placeholder?: string;
+  /** Prompt glyph shown before the input, e.g. '>'. */
+  prefix?: string;
 }
 
-export function TextField({ label, value, onChange, error, autoFocus, onSubmit, placeholder }: TextFieldProps) {
+export function TextField({ label, value, onChange, error, autoFocus, onSubmit, placeholder, prefix }: TextFieldProps) {
   const id = useId();
   return (
     <div className={styles.field}>
       <label htmlFor={id} className="label muted">
         {label}
       </label>
-      <input
-        id={id}
-        className={cx('body', 'mono', styles.input, error && styles.invalid)}
-        value={value}
-        placeholder={placeholder}
-        onChange={(event) => onChange(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' && onSubmit) {
-            event.preventDefault();
-            onSubmit();
-          }
-        }}
-        autoFocus={autoFocus}
-        data-autofocus={autoFocus || undefined}
-        autoCapitalize="off"
-        autoCorrect="off"
-        autoComplete="off"
-        spellCheck={false}
-        enterKeyHint="done"
-        aria-invalid={Boolean(error)}
-      />
-      {error && <span className={cx('label', styles.fieldError)}>{error}</span>}
+      <div className={cx(styles.inputBox, error && styles.invalid)}>
+        {prefix && (
+          <span className={cx('body', styles.prefix)} aria-hidden>
+            {prefix}
+          </span>
+        )}
+        <input
+          id={id}
+          className={cx('body', styles.input)}
+          value={value}
+          placeholder={placeholder}
+          onChange={(event) => onChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && onSubmit) {
+              event.preventDefault();
+              onSubmit();
+            }
+          }}
+          autoFocus={autoFocus}
+          data-autofocus={autoFocus || undefined}
+          autoCapitalize="off"
+          autoCorrect="off"
+          autoComplete="off"
+          spellCheck={false}
+          enterKeyHint="done"
+          aria-invalid={Boolean(error)}
+        />
+      </div>
+      {error && <span className={cx('label', styles.fieldError)}>✕ {error}</span>}
     </div>
   );
 }

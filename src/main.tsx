@@ -1,4 +1,4 @@
-import '@fontsource-variable/inter';
+import '@fontsource-variable/archivo/wdth.css';
 import '@fontsource-variable/jetbrains-mono';
 import './ui/tokens.css';
 import './ui/global.css';

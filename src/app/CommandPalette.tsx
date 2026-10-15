@@ -12,25 +12,29 @@ export function CommandPalette({ onClose, onRun }: { onClose: () => void; onRun:
   );
 
   return (
-    <Dialog
-      title="COMMAND PALETTE"
-      onClose={onClose}
-      actions={
-        <Button variant="text" onClick={onClose}>
-          Close
-        </Button>
-      }
-    >
+    <Dialog title="Commands" eyebrow={`${registry.all.length} registered`} onClose={onClose}>
       <TextField
-        label="FILTER"
+        label="Run"
+        prefix=">"
+        placeholder="type to filter"
         value={query}
         onChange={setQuery}
         onSubmit={() => commands[0] && onRun(commands[0].id)}
       />
       <div className={styles.paletteList}>
         {commands.map((command) => (
-          <Button key={command.id} variant="text" listItem onClick={() => onRun(command.id)}>
-            {command.title}
+          <Button
+            key={command.id}
+            variant="text"
+            listItem
+            className={styles.paletteItem}
+            onClick={() => onRun(command.id)}
+          >
+            <span className="accent" aria-hidden>
+              ›
+            </span>
+            <span>{command.title}</span>
+            <span className="caption muted">{command.id}</span>
           </Button>
         ))}
         {commands.length === 0 && <span className={`label muted ${styles.paletteEmpty}`}>NO MATCHING COMMANDS</span>}

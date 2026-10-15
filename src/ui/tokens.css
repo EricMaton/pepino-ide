@@ -1,6 +1,10 @@
 /*
- * Pepino brutalist design tokens. Components only read the semantic layer
- * (--bg, --fg, --primary…), so a theme (#44) only has to redefine that layer.
+ * Pepino design tokens — "terminal brutalism": a monospace UI voice, an
+ * extra-wide black display face for names, hard offset shadows instead of
+ * blur, and a faint dot grid like engineering paper.
+ *
+ * Components only read the semantic layer (--bg, --fg, --primary…), so a
+ * theme (#44) only has to redefine that layer.
  */
 :root {
   /* Palette */
@@ -19,38 +23,55 @@
   --on-primary: var(--pepino-white);
   --error: var(--pepino-red);
   --outline: var(--pepino-grey);
-  --scrim: rgb(0 0 0 / 0.72);
+  --hairline: color-mix(in srgb, var(--fg) 14%, transparent);
+  --grid-dot: color-mix(in srgb, var(--fg) 9%, transparent);
+  --scrim: rgb(0 0 0 / 0.78);
 
-  /* Typography */
-  --font-sans: 'Inter Variable', system-ui, sans-serif;
+  /* Typography: mono carries the UI, Archivo Expanded carries names */
+  --font-display: 'Archivo Variable', 'Arial Black', sans-serif;
   --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
 
-  --headline-size: 32px;
-  --headline-weight: 900;
-  --headline-tracking: -0.5px;
-  --title-size: 20px;
+  --display-size: 30px;
+  --display-weight: 900;
+  --display-stretch: 125%;
+  --title-size: 19px;
   --title-weight: 800;
-  --title-tracking: 1px;
-  --label-size: 14px;
+  --title-stretch: 112%;
+  --label-size: 12px;
   --label-weight: 700;
-  --label-tracking: 1.5px;
+  --label-tracking: 0.12em;
   --body-size: 14px;
   --body-weight: 400;
-  --body-tracking: 0.25px;
+  --caption-size: 12px;
 
-  /* Shape & sizing */
+  /* Shape & depth: no radius, no blur — shadows are solid offsets */
   --radius: 0;
-  --border: 1px solid var(--outline);
+  --stroke: 2px;
+  --border: var(--stroke) solid var(--fg);
+  --shadow-offset: 4px;
+  --shadow-primary: var(--shadow-offset) var(--shadow-offset) 0 var(--primary);
+  --shadow-fg: var(--shadow-offset) var(--shadow-offset) 0 var(--fg);
+  --shadow-dialog: 8px 8px 0 var(--primary);
+  --press-duration: 70ms;
+
+  /* Sizing */
   --touch-target: 48px;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
+  --space-5: 20px;
   --space-6: 24px;
 
+  /* Surfaces */
+  --dot-grid: radial-gradient(var(--grid-dot) 1px, transparent 1.2px) 0 0 / 16px 16px;
+  --hazard: repeating-linear-gradient(-45deg, var(--primary) 0 14px, var(--bg) 14px 28px);
+
   /* App chrome */
-  --nav-height: 56px;
-  --snackbar-offset: calc(var(--nav-height) + 1px);
+  --nav-height: 60px;
+  --fab-height: 56px;
+  /* Snackbars float above the bottom nav and the COMMANDS button */
+  --snackbar-offset: calc(var(--nav-height) + var(--stroke) + var(--fab-height) + var(--space-4));
 
   /* Safe areas: Capacitor injects --safe-area-inset-* on Android WebViews where env() reports 0 */
   --inset-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));

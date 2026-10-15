@@ -62,3 +62,10 @@ export function formatModified(millis: number): string {
   const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
   return `${day} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
+
+/** Short type tag for a file badge: the extension, uppercased and capped at 4 chars ("TS", "JSON"). */
+export function fileBadge(name: string): string {
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0 || dot === name.length - 1) return '··';
+  return name.slice(dot + 1, dot + 5).toUpperCase();
+}
