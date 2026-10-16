@@ -256,6 +256,18 @@
   cursor: default;
 }
 
+/* What a tab shows; the hidden Changes keeps its state */
+.tabPanel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tabPanel[hidden] {
+  display: none;
+}
+
 /* Changes: the list, then the commit box at the bottom */
 .changes {
   position: relative;
@@ -369,18 +381,25 @@
 }
 
 .kind-new {
-  border-color: var(--fg);
-  color: var(--fg);
+  border-color: var(--git-added);
+  color: var(--git-added);
 }
 
 .kind-modified {
-  color: var(--outline);
+  border-color: var(--git-modified);
+  color: var(--git-modified);
 }
 
-.kind-deleted,
+.kind-deleted {
+  border-color: var(--git-removed);
+  color: var(--git-removed);
+}
+
+/* Needs a hand: filled, so it never reads as just deleted */
 .kind-conflicted {
-  border-color: var(--primary);
-  color: var(--primary);
+  border-color: var(--git-removed);
+  background: var(--git-removed);
+  color: var(--on-git);
 }
 
 .noChanges {
@@ -645,17 +664,30 @@ button.line {
 
 /* In the commit: the number column fills, like GitHub Desktop's selected gutter */
 .line-added .lineNumber {
-  background: var(--fg);
-  color: var(--bg);
+  background: var(--git-added);
+  color: var(--on-git);
 }
 
 .line-removed .lineNumber {
-  background: var(--primary);
-  color: var(--on-primary);
+  background: var(--git-removed);
+  color: var(--on-git);
+}
+
+.line-added .lineMark {
+  color: var(--git-added);
 }
 
 .line-removed .lineMark {
-  color: var(--primary);
+  color: var(--git-removed);
+}
+
+/* "+3 −1" in a diff's header */
+.countAdded {
+  color: var(--git-added);
+}
+
+.countRemoved {
+  color: var(--git-removed);
 }
 
 /* Left out: no fill, dimmed, struck through so it reads as "not this one" */
@@ -732,4 +764,57 @@ button.line {
   margin: 0;
   padding-top: var(--space-3);
   border-top: var(--border);
+}
+
+/* History: a commit per row, and a commit's files */
+.commitRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 64px;
+  padding: var(--space-2) var(--space-4);
+  border: none;
+  border-bottom: 1px solid var(--hairline);
+  background: none;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.commitRow:active {
+  background: var(--surface-variant);
+}
+
+.commitId {
+  flex: none;
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.commitInfo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-4);
+  border-bottom: var(--border);
+}
+
+.commitInfo p {
+  margin: 0;
+}
+
+.commitInfo .commitDescription {
+  margin-bottom: var(--space-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.commitHash {
+  overflow-wrap: anywhere;
+}
+
+/* A hunk of a commit's diff: nothing to pick */
+.hunkRead {
+  cursor: default;
 }

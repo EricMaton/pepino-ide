@@ -13,6 +13,10 @@
   --pepino-white: #f2f2f2;
   --pepino-red: #e10600;
   --pepino-grey: #8a8a8a;
+  /* Git's own colors, only for changes: bright enough to read on black */
+  --pepino-green: #3fd46b;
+  --pepino-amber: #f2b33d;
+  --pepino-rose: #ff4d4d;
 
   /* Semantic colors */
   --bg: var(--pepino-black);
@@ -26,9 +30,14 @@
   --hairline: color-mix(in srgb, var(--fg) 14%, transparent);
   --grid-dot: color-mix(in srgb, var(--fg) 9%, transparent);
   --scrim: rgb(0 0 0 / 0.78);
-  /* Diffs: added lines lift towards the foreground, removed ones take the red */
-  --diff-added: color-mix(in srgb, var(--fg) 11%, transparent);
-  --diff-removed: color-mix(in srgb, var(--primary) 24%, transparent);
+  /* Git changes, as everywhere else: added green, modified amber, removed red */
+  --git-added: var(--pepino-green);
+  --git-modified: var(--pepino-amber);
+  --git-removed: var(--pepino-rose);
+  /* Text on a filled git color */
+  --on-git: var(--pepino-black);
+  --diff-added: color-mix(in srgb, var(--git-added) 16%, transparent);
+  --diff-removed: color-mix(in srgb, var(--git-removed) 20%, transparent);
 
   /* Typography: mono carries the UI, Archivo Expanded carries names */
   --font-display: 'Archivo Variable', 'Arial Black', sans-serif;

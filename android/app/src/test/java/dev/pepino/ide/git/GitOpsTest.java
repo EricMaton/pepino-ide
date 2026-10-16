@@ -482,6 +482,76 @@ public class GitOpsTest {
         assertEquals("main", committed(app, "a.txt"));
     }
 
+    @Test
+    public void logListsTheCommitsNewestFirstInPages() throws Exception {
+        File app = project("app");
+        GitOps.init(app);
+        assertEquals(Collections.emptyList(), GitOps.log(app, 0, 50));
+        write(app, "a.txt", "1");
+        GitOps.commit(app, "First", Collections.singletonList("a.txt"), ME);
+        write(app, "a.txt", "2");
+        GitOps.commit(app, "Second\n\nWhy it changed.\nIn two lines.", Collections.singletonList("a.txt"), ME);
+        write(app, "a.txt", "3");
+        GitOps.commit(app, "Third", Collections.singletonList("a.txt"), ME);
+
+        List<GitOps.LogEntry> log = GitOps.log(app, 0, 50);
+
+        assertEquals(3, log.size());
+        assertEquals("Third", log.get(0).summary());
+        GitOps.LogEntry second = log.get(1);
+        assertEquals("Second", second.summary());
+        assertEquals("Why it changed.\nIn two lines.", second.description());
+        assertEquals("", log.get(2).description());
+        assertEquals("Pepino", second.author());
+        assertEquals("me@pepino.dev", second.email());
+        assertEquals(40, second.id().length());
+        assertTrue(Math.abs(System.currentTimeMillis() - second.time()) < 60_000);
+
+        List<GitOps.LogEntry> page = GitOps.log(app, 1, 1);
+        assertEquals(1, page.size());
+        assertEquals(second.id(), page.get(0).id());
+        assertEquals(Collections.emptyList(), GitOps.log(app, 3, 50));
+    }
+
+    @Test
+    public void commitChangesAndDiffAreAgainstTheFirstParent() throws Exception {
+        File app = project("app");
+        GitOps.init(app);
+        write(app, "keep.txt", "one\ntwo\n");
+        write(app, "gone.txt", "bye\n");
+        GitOps.commit(app, "First", Arrays.asList("keep.txt", "gone.txt"), ME);
+        write(app, "keep.txt", "one\n2\n");
+        assertTrue(new File(app, "gone.txt").delete());
+        write(app, "src/new.txt", "hi\n");
+        GitOps.commit(app, "Second", Arrays.asList("keep.txt", "gone.txt", "src/new.txt"), ME);
+        List<GitOps.LogEntry> log = GitOps.log(app, 0, 50);
+        String second = log.get(0).id();
+        String first = log.get(1).id();
+
+        assertEquals(changes("gone.txt", "new", "keep.txt", "new"), GitOps.commitChanges(app, first));
+        assertEquals(
+            changes("gone.txt", "deleted", "keep.txt", "modified", "src/new.txt", "new"),
+            GitOps.commitChanges(app, second)
+        );
+        // a short id works too
+        assertEquals(3, GitOps.commitChanges(app, second.substring(0, 7)).size());
+
+        List<GitOps.DiffLine> lines = GitOps.commitDiff(app, second, "keep.txt").hunks().get(0).lines();
+        assertEquals("one", lines.get(0).text());
+        assertEquals("context", lines.get(0).kind());
+        assertEquals("two", lines.get(1).text());
+        assertEquals("removed", lines.get(1).kind());
+        assertEquals("2", lines.get(2).text());
+        assertEquals("added", lines.get(2).kind());
+        GitOps.FileDiff gone = GitOps.commitDiff(app, second, "gone.txt");
+        assertEquals("removed", gone.hunks().get(0).lines().get(0).kind());
+        GitOps.FileDiff created = GitOps.commitDiff(app, first, "keep.txt");
+        assertEquals(2, created.hunks().get(0).lines().size());
+        assertEquals("added", created.hunks().get(0).lines().get(1).kind());
+
+        assertThrows(IllegalArgumentException.class, () -> GitOps.commitChanges(app, "0000000000"));
+    }
+
     private static int countCommits(Git git) throws Exception {
         int count = 0;
         for (Object ignored : git.log().call()) count++;

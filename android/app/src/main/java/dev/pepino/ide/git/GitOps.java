@@ -21,6 +21,7 @@ import org.eclipse.jgit.api.errors.EmptyCommitException;
 import org.eclipse.jgit.api.errors.NotMergedException;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.diff.DiffAlgorithm;
+import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.diff.Edit;
 import org.eclipse.jgit.diff.EditList;
 import org.eclipse.jgit.diff.RawText;
@@ -39,8 +40,12 @@ import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.RepositoryCache;
 import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevTree;
+import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileBasedConfig;
+import org.eclipse.jgit.treewalk.EmptyTreeIterator;
 import org.eclipse.jgit.treewalk.TreeWalk;
+import org.eclipse.jgit.treewalk.filter.TreeFilter;
 import org.eclipse.jgit.util.FS;
 import org.eclipse.jgit.util.RawParseUtils;
 
@@ -69,6 +74,12 @@ public final class GitOps {
 
     /** A commit just made: its short id and first line. */
     public record CommitResult(String id, String summary) {}
+
+    /**
+     * A commit in the history: its full id, the message's first line and the
+     * rest of it, and who wrote it when ([time] in millis since the epoch).
+     */
+    public record LogEntry(String id, String summary, String description, String author, String email, long time) {}
 
     /** A local branch; [current] is the one HEAD is on. */
     public record Branch(String name, boolean current) {}
@@ -568,6 +579,93 @@ public final class GitOps {
     }
 
     /** The local branches by name. A repository with no commits yet has just its unborn current branch. */
+    /**
+     * The commits reachable from HEAD, newest first: [limit] of them after
+     * the first [skip]. None before the first commit.
+     */
+    public static List<LogEntry> log(File folder, int skip, int limit) throws IOException, GitAPIException {
+        try (Git git = Git.open(folder)) {
+            if (git.getRepository().resolve(Constants.HEAD) == null) return Collections.emptyList();
+            List<LogEntry> entries = new ArrayList<>();
+            for (RevCommit commit : git.log().setSkip(Math.max(0, skip)).setMaxCount(Math.max(1, limit)).call()) {
+                String message = commit.getFullMessage().trim();
+                int end = message.indexOf('\n');
+                PersonIdent author = commit.getAuthorIdent();
+                entries.add(new LogEntry(
+                    commit.getName(),
+                    (end < 0 ? message : message.substring(0, end)).trim(),
+                    end < 0 ? "" : message.substring(end + 1).trim(),
+                    author.getName(),
+                    author.getEmailAddress(),
+                    author.getWhen().getTime()
+                ));
+            }
+            return entries;
+        }
+    }
+
+    private static RevCommit parseCommit(Repository repository, RevWalk walk, String id) throws IOException {
+        ObjectId objectId = id == null ? null : repository.resolve(id + "^{commit}");
+        if (objectId == null) throw new IllegalArgumentException("No commit " + id);
+        return walk.parseCommit(objectId);
+    }
+
+    /** The files [id] changed against its first parent (all new in a first commit), by path. */
+    public static List<FileChange> commitChanges(File folder, String id) throws IOException {
+        try (Git git = Git.open(folder); RevWalk walk = new RevWalk(git.getRepository()); TreeWalk trees = new TreeWalk(git.getRepository())) {
+            Repository repository = git.getRepository();
+            RevCommit commit = parseCommit(repository, walk, id);
+            if (commit.getParentCount() > 0) trees.addTree(walk.parseCommit(commit.getParent(0)).getTree());
+            else trees.addTree(new EmptyTreeIterator());
+            trees.addTree(commit.getTree());
+            trees.setRecursive(true);
+            trees.setFilter(TreeFilter.ANY_DIFF);
+            List<FileChange> changes = new ArrayList<>();
+            for (DiffEntry entry : DiffEntry.scan(trees)) {
+                switch (entry.getChangeType()) {
+                    case ADD -> changes.add(new FileChange(entry.getNewPath(), "new"));
+                    case DELETE -> changes.add(new FileChange(entry.getOldPath(), "deleted"));
+                    default -> changes.add(new FileChange(entry.getNewPath(), "modified"));
+                }
+            }
+            changes.sort((a, b) -> a.path().compareTo(b.path()));
+            return changes;
+        }
+    }
+
+    /** A file as a commit has it: nothing when it is not there; not text when it is a link or a submodule. */
+    private record Blob(byte[] bytes, boolean text, boolean tooLarge) {
+        static final Blob NONE = new Blob(new byte[0], true, false);
+    }
+
+    private static Blob blob(Repository repository, RevTree tree, String path) throws IOException {
+        try (TreeWalk walk = TreeWalk.forPath(repository, path, tree)) {
+            if (walk == null) return Blob.NONE;
+            FileMode mode = walk.getFileMode(0);
+            if (mode != FileMode.REGULAR_FILE && mode != FileMode.EXECUTABLE_FILE) return new Blob(new byte[0], false, false);
+            ObjectLoader loader = repository.open(walk.getObjectId(0), Constants.OBJ_BLOB);
+            if (loader.getSize() > DIFF_MAX_BYTES) return new Blob(new byte[0], true, true);
+            return new Blob(loader.getCachedBytes(DIFF_MAX_BYTES), true, false);
+        }
+    }
+
+    /** How [path] (repo-relative) changed in [id]: its first parent's version against the commit's. */
+    public static FileDiff commitDiff(File folder, String id, String path) throws IOException {
+        try (Git git = Git.open(folder); RevWalk walk = new RevWalk(git.getRepository())) {
+            Repository repository = git.getRepository();
+            RevCommit commit = parseCommit(repository, walk, id);
+            Blob before = commit.getParentCount() > 0
+                ? blob(repository, walk.parseCommit(commit.getParent(0)).getTree(), path)
+                : Blob.NONE;
+            Blob after = blob(repository, commit.getTree(), path);
+            if (before.tooLarge() || after.tooLarge()) return new FileDiff("", false, true, Collections.emptyList());
+            if (!before.text() || !after.text() || RawText.isBinary(before.bytes()) || RawText.isBinary(after.bytes())) {
+                return new FileDiff("", true, false, Collections.emptyList());
+            }
+            return new FileDiff("", false, false, hunks(Changes.of(before.bytes(), after.bytes())));
+        }
+    }
+
     public static List<Branch> branches(File folder) throws IOException, GitAPIException {
         try (Git git = Git.open(folder)) {
             String current = git.getRepository().getBranch();
