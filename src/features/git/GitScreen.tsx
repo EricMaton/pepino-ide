@@ -17,6 +17,7 @@ import { BranchesDialog } from './BranchesDialog';
 import { ChangesView } from './ChangesView';
 import type { RepoInfo } from './engine';
 import styles from './GitScreen.module.css';
+import { HistoryView } from './HistoryView';
 
 /*
  * GIT works like GitHub Desktop on the one active project, which the editor
@@ -534,6 +535,7 @@ function GitProject({ project, onOpen }: { project: ProjectInfo; onOpen: (path: 
   // creating, initializing or adding another repository
   const [more, setMore] = useState<RepositoryDialog | null>(null);
   const [branching, setBranching] = useState(false);
+  const [tab, setTab] = useState<'changes' | 'history'>('changes');
   const [initializing, setInitializing] = useState(false);
   const [tick, setTick] = useState(0);
   // undefined while reading; null when the project is not a repository
@@ -619,19 +621,34 @@ function GitProject({ project, onOpen }: { project: ProjectInfo; onOpen: (path: 
       ) : repo ? (
         <>
           <div className={styles.tabs} role="tablist" aria-label="Repository">
-            <button type="button" role="tab" aria-selected className={cx('label', styles.tab)}>
-              Changes
-            </button>
-            <button type="button" role="tab" aria-selected={false} className={cx('label', styles.tab)} disabled>
-              History <span className={cx('caption', styles.soon)}>SOON</span>
-            </button>
+            {(['changes', 'history'] as const).map((name) => (
+              <button
+                key={name}
+                type="button"
+                role="tab"
+                aria-selected={tab === name}
+                className={cx('label', styles.tab)}
+                onClick={() => setTab(name)}
+              >
+                {name === 'changes' ? 'Changes' : 'History'}
+              </button>
+            ))}
           </div>
-          <ChangesView
-            key={repo.branch}
-            path={project.path}
-            branch={repo.branch}
-            onCommitted={() => setTick((value) => value + 1)}
-          />
+          {/* Changes stays while History shows: the message and the picked lines are kept */}
+          <div className={styles.tabPanel} role="tabpanel" hidden={tab !== 'changes'}>
+            <ChangesView
+              key={repo.branch}
+              path={project.path}
+              branch={repo.branch}
+              visible={tab === 'changes'}
+              onCommitted={() => setTick((value) => value + 1)}
+            />
+          </div>
+          {tab === 'history' && (
+            <div className={styles.tabPanel} role="tabpanel">
+              <HistoryView key={repo.branch} path={project.path} />
+            </div>
+          )}
         </>
       ) : (
         <div className={styles.notRepo}>

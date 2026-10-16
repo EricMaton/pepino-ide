@@ -164,3 +164,56 @@ describe('memory git engine: branches', () => {
     expect(await git.branches('app')).toEqual([{ name: 'main', current: true }]);
   });
 });
+
+describe('memory git engine: history', () => {
+  beforeEach(async () => {
+    await git.init('app');
+    await git.setIdentity({ name: 'Pepino', email: 'me@pepino.dev' });
+  });
+
+  it('lists the commits newest first, in pages, per branch', async () => {
+    expect(await git.log('app')).toEqual([]);
+    await space.writeTextFile('app/a.txt', '1\n');
+    const first = await git.commit('app', { message: 'First', paths: ['a.txt'] });
+    await space.writeTextFile('app/a.txt', '2\n');
+    await git.commit('app', { message: 'Second\n\nWhy.\nIn two lines.', paths: ['a.txt'] });
+
+    const log = await git.log('app');
+    expect(log.map((entry) => entry.summary)).toEqual(['Second', 'First']);
+    expect(log[0]).toMatchObject({ description: 'Why.\nIn two lines.', author: 'Pepino', email: 'me@pepino.dev' });
+    expect(log[0].id).toHaveLength(40);
+    expect(log[1].id.startsWith(first.id)).toBe(true);
+    expect((await git.log('app', { skip: 1, limit: 1 })).map((entry) => entry.summary)).toEqual(['First']);
+
+    await git.createBranch('app', 'feature');
+    await space.writeTextFile('app/a.txt', '3\n');
+    await git.commit('app', { message: 'On feature', paths: ['a.txt'] });
+    expect((await git.log('app')).map((entry) => entry.summary)).toEqual(['On feature', 'Second', 'First']);
+    await git.checkout('app', 'main');
+    expect((await git.log('app')).map((entry) => entry.summary)).toEqual(['Second', 'First']);
+  });
+
+  it('shows what a commit changed against its parent', async () => {
+    await space.writeTextFile('app/keep.txt', 'one\ntwo\n');
+    await space.writeTextFile('app/gone.txt', 'bye\n');
+    await git.commit('app', { message: 'First', paths: ['keep.txt', 'gone.txt'] });
+    await space.writeTextFile('app/keep.txt', 'one\n2\n');
+    await space.delete('app/gone.txt');
+    await space.writeTextFile('app/new.txt', 'hi\n');
+    await git.commit('app', { message: 'Second', paths: ['keep.txt', 'gone.txt', 'new.txt'] });
+    const [second, first] = await git.log('app');
+
+    expect(await git.commitChanges('app', first.id)).toEqual([
+      { path: 'gone.txt', kind: 'new' },
+      { path: 'keep.txt', kind: 'new' },
+    ]);
+    expect(await git.commitChanges('app', second.id.slice(0, 7))).toEqual([
+      { path: 'gone.txt', kind: 'deleted' },
+      { path: 'keep.txt', kind: 'modified' },
+      { path: 'new.txt', kind: 'new' },
+    ]);
+    const lines = (await git.commitDiff('app', second.id, 'keep.txt')).hunks[0].lines;
+    expect(lines.map((line) => `${line.kind}:${line.text}`)).toEqual(['context:one', 'removed:two', 'added:2']);
+    await expect(git.commitChanges('app', 'nope')).rejects.toThrow('No commit');
+  });
+});

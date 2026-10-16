@@ -43,6 +43,26 @@ export interface CommitResult {
   summary: string;
 }
 
+/** A commit in the history. */
+export interface LogEntry {
+  /** The full id; [shortId] shows. */
+  id: string;
+  /** The message's first line. */
+  summary: string;
+  /** The rest of the message, maybe empty. */
+  description: string;
+  author: string;
+  email: string;
+  /** When it was written, in millis since the epoch. */
+  time: number;
+}
+
+/** How many commits the history reads at a time. */
+export const LOG_PAGE = 50;
+
+/** "3f2a91c": how a commit is named on screen. */
+export const shortId = (id: string): string => id.slice(0, 7);
+
 export interface Branch {
   name: string;
   /** The branch HEAD is on. */
@@ -85,6 +105,12 @@ export interface GitEngine {
     path: string,
     commit: { message: string; paths: readonly string[]; excluded?: Readonly<Record<string, LineExclusion>> },
   ): Promise<CommitResult>;
+  /** The commits reachable from HEAD, newest first: [limit] after skipping [skip]. None before the first commit. */
+  log(path: string, page?: { skip?: number; limit?: number }): Promise<LogEntry[]>;
+  /** The files [commit] changed against its first parent (all new in a first commit), sorted by path. */
+  commitChanges(path: string, commit: string): Promise<FileChange[]>;
+  /** How [file] changed in [commit]: its first parent's version against the commit's. */
+  commitDiff(path: string, commit: string, file: string): Promise<FileDiff>;
   /** The identity commits are made with, or null until it is set. */
   identity(): Promise<Identity | null>;
   setIdentity(identity: Identity): Promise<void>;
@@ -114,6 +140,9 @@ interface GitPlugin {
     paths: string[];
     excluded: Record<string, LineExclusion>;
   }): Promise<CommitResult>;
+  log(options: { path: string; skip: number; limit: number }): Promise<{ commits: LogEntry[] }>;
+  commitChanges(options: { path: string; commit: string }): Promise<{ changes: FileChange[] }>;
+  commitDiff(options: { path: string; commit: string; file: string }): Promise<FileDiff>;
   identity(): Promise<{ identity: Identity | null }>;
   setIdentity(options: Identity): Promise<void>;
   branches(options: { path: string }): Promise<{ branches: Branch[] }>;
@@ -175,6 +204,15 @@ export function createNativeGitEngine(announce: Announce): GitEngine {
         .catch((error: unknown) => {
           throw gitError(error);
         });
+    },
+    async log(path, { skip = 0, limit = LOG_PAGE } = {}) {
+      return (await git.log({ path: project(path), skip, limit })).commits;
+    },
+    async commitChanges(path, commit) {
+      return (await git.commitChanges({ path: project(path), commit })).changes;
+    },
+    commitDiff(path, commit, file) {
+      return git.commitDiff({ path: project(path), commit, file });
     },
     async identity() {
       return (await git.identity()).identity;
@@ -241,6 +279,24 @@ export function createMemoryGitEngine(space: ProjectSpace): GitEngine {
   };
   const writeRefs = (folder: string, refs: Record<string, Snapshot>) =>
     space.writeTextFile(gitPath(folder, 'pepino-refs.json'), JSON.stringify(refs));
+
+  /** Each branch's commits, newest first, with the files as each one left them. */
+  type Log = Record<string, (LogEntry & { files: Snapshot })[]>;
+  const readLog = async (folder: string): Promise<Log> => {
+    const raw = await space.readTextFile(gitPath(folder, 'pepino-log.json')).catch(() => '{}');
+    return JSON.parse(raw) as Log;
+  };
+  const writeLog = (folder: string, log: Log) =>
+    space.writeTextFile(gitPath(folder, 'pepino-log.json'), JSON.stringify(log));
+
+  /** The commit [id] (or a prefix of it) on any branch, and the files of its parent. */
+  const findCommit = async (folder: string, id: string) => {
+    for (const commits of Object.values(await readLog(folder))) {
+      const at = commits.findIndex((commit) => id.length >= 4 && commit.id.startsWith(id));
+      if (at >= 0) return { files: commits[at].files, parent: commits[at + 1]?.files ?? {} };
+    }
+    throw new Error(`No commit ${id}`);
+  };
 
   const currentBranch = async (folder: string): Promise<string> => {
     const head = (await space.readTextFile(gitPath(folder, 'HEAD')).catch(() => '')).trim();
@@ -363,7 +419,42 @@ export function createMemoryGitEngine(space: ProjectSpace): GitEngine {
       }
       await writeRefs(folder, { ...refs, [branch]: next });
       commits += 1;
-      return { id: (0x1000000 + commits * 7919).toString(16).slice(-7), summary };
+      const time = Date.now();
+      const id = [0, 1, 2, 3, 4]
+        .map((part) => hashOf(`${part}:${folder}:${branch}:${commits}:${time}:${message}`).padStart(8, '0'))
+        .join('');
+      const log = await readLog(folder);
+      const description = message.trim().split('\n').slice(1).join('\n').trim();
+      const entry = { id, summary, description, author: identity.name, email: identity.email, time, files: next };
+      await writeLog(folder, { ...log, [branch]: [entry, ...(log[branch] ?? [])] });
+      return { id: shortId(id), summary };
+    },
+
+    async log(path, { skip = 0, limit = LOG_PAGE } = {}) {
+      const folder = await repository(path);
+      const [log, branch] = await Promise.all([readLog(folder), currentBranch(folder)]);
+      return (log[branch] ?? []).slice(skip, skip + limit).map(({ files: _files, ...entry }) => entry);
+    },
+
+    async commitChanges(path, commit) {
+      const { files, parent } = await findCommit(await repository(path), commit);
+      const changes: FileChange[] = [];
+      for (const [file, text] of Object.entries(files)) {
+        if (!(file in parent)) changes.push({ path: file, kind: 'new' });
+        else if (parent[file] !== text) changes.push({ path: file, kind: 'modified' });
+      }
+      for (const file of Object.keys(parent)) if (!(file in files)) changes.push({ path: file, kind: 'deleted' });
+      return changes.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    },
+
+    async commitDiff(path, commit, file) {
+      const { files, parent } = await findCommit(await repository(path), commit);
+      const before = parent[file] ?? '';
+      const after = files[file] ?? '';
+      if (before.length > DIFF_MAX_CHARS || after.length > DIFF_MAX_CHARS) {
+        return { version: '', binary: false, tooLarge: true, hunks: [] };
+      }
+      return { version: '', binary: false, tooLarge: false, hunks: diffTexts(before, after) };
     },
 
     identity: async () => identity,
@@ -390,6 +481,8 @@ export function createMemoryGitEngine(space: ProjectSpace): GitEngine {
       if (!(current in refs)) throw new Error('Make the first commit before creating branches');
       if (name in refs) throw new Error(`There is already a branch named ${name}`);
       await writeRefs(folder, { ...refs, [name]: refs[current] });
+      const log = await readLog(folder);
+      await writeLog(folder, { ...log, [name]: log[current] ?? [] });
       await setCurrentBranch(folder, name);
       return { branch: name, hasCommits: true };
     },
@@ -430,6 +523,9 @@ export function createMemoryGitEngine(space: ProjectSpace): GitEngine {
       const rest = { ...refs };
       delete rest[name];
       await writeRefs(folder, rest);
+      const log = await readLog(folder);
+      delete log[name];
+      await writeLog(folder, log);
     },
   };
   return engine;

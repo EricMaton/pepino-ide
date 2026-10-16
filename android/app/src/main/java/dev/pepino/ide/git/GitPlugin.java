@@ -147,37 +147,79 @@ public class GitPlugin extends Plugin {
 
     @PluginMethod
     public void diff(PluginCall call) {
-        run(call, () -> {
-            GitOps.FileDiff diff = GitOps.diff(folder(call), call.getString("file"));
-            JSArray hunks = new JSArray();
-            for (GitOps.Hunk hunk : diff.hunks()) {
-                JSArray lines = new JSArray();
-                for (GitOps.DiffLine line : hunk.lines()) {
-                    JSObject json = new JSObject();
-                    json.put("kind", line.kind());
-                    json.put("text", line.text());
-                    json.put("oldLine", line.oldLine() > 0 ? line.oldLine() : JSObject.NULL);
-                    json.put("newLine", line.newLine() > 0 ? line.newLine() : JSObject.NULL);
-                    json.put("index", line.index() >= 0 ? line.index() : JSObject.NULL);
-                    if (line.noNewline()) json.put("noNewline", true);
-                    if (line.endOfFile()) json.put("endOfFile", true);
-                    lines.put(json);
-                }
+        run(call, () -> toJson(GitOps.diff(folder(call), call.getString("file"))));
+    }
+
+    private static JSObject toJson(GitOps.FileDiff diff) {
+        JSArray hunks = new JSArray();
+        for (GitOps.Hunk hunk : diff.hunks()) {
+            JSArray lines = new JSArray();
+            for (GitOps.DiffLine line : hunk.lines()) {
                 JSObject json = new JSObject();
-                json.put("oldStart", hunk.oldStart());
-                json.put("oldLines", hunk.oldLines());
-                json.put("newStart", hunk.newStart());
-                json.put("newLines", hunk.newLines());
-                json.put("lines", lines);
-                hunks.put(json);
+                json.put("kind", line.kind());
+                json.put("text", line.text());
+                json.put("oldLine", line.oldLine() > 0 ? line.oldLine() : JSObject.NULL);
+                json.put("newLine", line.newLine() > 0 ? line.newLine() : JSObject.NULL);
+                json.put("index", line.index() >= 0 ? line.index() : JSObject.NULL);
+                if (line.noNewline()) json.put("noNewline", true);
+                if (line.endOfFile()) json.put("endOfFile", true);
+                lines.put(json);
+            }
+            JSObject json = new JSObject();
+            json.put("oldStart", hunk.oldStart());
+            json.put("oldLines", hunk.oldLines());
+            json.put("newStart", hunk.newStart());
+            json.put("newLines", hunk.newLines());
+            json.put("lines", lines);
+            hunks.put(json);
+        }
+        JSObject result = new JSObject();
+        result.put("version", diff.version());
+        result.put("binary", diff.binary());
+        result.put("tooLarge", diff.tooLarge());
+        result.put("hunks", hunks);
+        return result;
+    }
+
+    @PluginMethod
+    public void log(PluginCall call) {
+        run(call, () -> {
+            JSArray commits = new JSArray();
+            for (GitOps.LogEntry entry : GitOps.log(folder(call), call.getInt("skip", 0), call.getInt("limit", 50))) {
+                JSObject json = new JSObject();
+                json.put("id", entry.id());
+                json.put("summary", entry.summary());
+                json.put("description", entry.description());
+                json.put("author", entry.author());
+                json.put("email", entry.email());
+                json.put("time", entry.time());
+                commits.put(json);
             }
             JSObject result = new JSObject();
-            result.put("version", diff.version());
-            result.put("binary", diff.binary());
-            result.put("tooLarge", diff.tooLarge());
-            result.put("hunks", hunks);
+            result.put("commits", commits);
             return result;
         });
+    }
+
+    @PluginMethod
+    public void commitChanges(PluginCall call) {
+        run(call, () -> {
+            JSArray changes = new JSArray();
+            for (GitOps.FileChange change : GitOps.commitChanges(folder(call), call.getString("commit"))) {
+                JSObject json = new JSObject();
+                json.put("path", change.path());
+                json.put("kind", change.kind());
+                changes.put(json);
+            }
+            JSObject result = new JSObject();
+            result.put("changes", changes);
+            return result;
+        });
+    }
+
+    @PluginMethod
+    public void commitDiff(PluginCall call) {
+        run(call, () -> toJson(GitOps.commitDiff(folder(call), call.getString("commit"), call.getString("file"))));
     }
 
     @PluginMethod

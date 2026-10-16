@@ -8,7 +8,7 @@ import { BackIcon } from '../../ui/icons';
 import { useSnackbar } from '../../ui/useSnackbar';
 import { clampFontSize, DEFAULT_FONT_SIZE, FONT_SIZE_KEY } from '../editor/zoom';
 import { errorMessage } from '../projects/errors';
-import { basename, joinPath } from '../projects/paths';
+import { basename, joinPath, parentPath } from '../projects/paths';
 import { changedLines, type DiffLine, type FileDiff, type Hunk } from './diff';
 import styles from './GitScreen.module.css';
 import { excludedLines, type Selection, toggleLines } from './selection';
@@ -18,13 +18,17 @@ const DIFF_DEBOUNCE_MS = 400;
 
 type Row = { kind: 'hunk'; hunk: Hunk; lines: number[] } | { kind: 'line'; line: DiffLine };
 
-/** [file]'s diff, read again whenever it changes on disk. Null while the first read runs. */
-function useDiff(path: string, file: string): { diff: FileDiff | null; error: string | null } {
+/**
+ * [file]'s diff, read again whenever it changes on disk; in [commit], what
+ * that commit changed (which never changes). Null while the first read runs.
+ */
+function useDiff(path: string, file: string, commit?: string): { diff: FileDiff | null; error: string | null } {
   const { git, events } = useServices();
   const [tick, setTick] = useState(0);
   const [result, setResult] = useState<{ diff: FileDiff | null; error: string | null }>({ diff: null, error: null });
 
   useEffect(() => {
+    if (commit !== undefined) return;
     const target = joinPath(path, file);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const touched = (changed: string) => {
@@ -45,18 +49,18 @@ function useDiff(path: string, file: string): { diff: FileDiff | null; error: st
       clearTimeout(timer);
       disposers.forEach((dispose) => dispose());
     };
-  }, [events, path, file]);
+  }, [events, path, file, commit]);
 
   useEffect(() => {
     let active = true;
-    git.diff(path, file).then(
+    (commit === undefined ? git.diff(path, file) : git.commitDiff(path, commit, file)).then(
       (diff) => active && setResult({ diff, error: null }),
       (error: unknown) => active && setResult((current) => ({ diff: current.diff, error: errorMessage(error) })),
     );
     return () => {
       active = false;
     };
-  }, [git, path, file, tick]);
+  }, [git, path, file, commit, tick]);
 
   return result;
 }
@@ -80,28 +84,38 @@ function useCodeFontSize(): number {
 
 const MARKS: Record<DiffLine['kind'], string> = { added: '+', removed: '−', context: ' ' };
 
+/** Lines picked for the commit being made, and how to change them. */
+interface Picking {
+  selection: Selection;
+  onSelect: (selection: Selection) => void;
+}
+
+/** Nothing to pick in a diff of the history. */
+const NOT_PICKING: Picking = { selection: 'all', onSelect: () => undefined };
+
 /**
  * One changed file, GitHub Desktop's way but for a 6" screen: a unified diff
- * (one column, lines wrapped, never side by side), where tapping a changed
- * line takes it out of the commit or puts it back, and tapping a hunk's
- * header does it for the whole hunk.
+ * (one column, lines wrapped, never side by side). With [picking], tapping a
+ * changed line takes it out of the commit or puts it back, and tapping a
+ * hunk's header does it for the whole hunk. With [commit] instead, it is what
+ * that commit changed, only to read.
  */
 export function DiffView({
   path,
   file,
-  selection,
-  onSelect,
+  picking,
+  commit,
   onClose,
 }: {
   /** The repository (the active project). */
   path: string;
   /** Relative to the repository. */
   file: string;
-  selection: Selection;
-  onSelect: (selection: Selection) => void;
   onClose: () => void;
-}) {
-  const { diff, error } = useDiff(path, file);
+} & ({ picking: Picking; commit?: never } | { commit: string; picking?: never })) {
+  const { selection, onSelect } = picking ?? NOT_PICKING;
+  const readOnly = picking === undefined;
+  const { diff, error } = useDiff(path, file, commit);
   const fontSize = useCodeFontSize();
   const showSnackbar = useSnackbar();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -110,11 +124,11 @@ export function DiffView({
   // Lines picked on what the file was before it changed again no longer mean the same lines.
   const version = diff?.version;
   useEffect(() => {
-    if (version !== undefined && typeof selection === 'object' && selection.version !== version) {
+    if (!readOnly && version !== undefined && typeof selection === 'object' && selection.version !== version) {
       onSelect('all');
       showSnackbar(`${basename(file)} changed: all its lines are in the commit again`);
     }
-  }, [version, selection, onSelect, showSnackbar, file]);
+  }, [readOnly, version, selection, onSelect, showSnackbar, file]);
 
   const rows = useMemo<Row[]>(
     () =>
@@ -145,35 +159,47 @@ export function DiffView({
     overscan: 20,
   });
 
+  const counts = `+${added} −${changed.length - added}`;
   const lineText =
     diff && !diff.binary && !diff.tooLarge && changed.length > 0
-      ? `+${added} −${changed.length - added} · committing ${changed.length - excluded.size} of ${changed.length}`
-      : selection === 'none'
-        ? 'Not in the commit'
-        : 'In the commit';
+      ? readOnly
+        ? counts
+        : `${counts} · committing ${changed.length - excluded.size} of ${changed.length}`
+      : readOnly
+        ? parentPath(file) || 'In this commit'
+        : selection === 'none'
+          ? 'Not in the commit'
+          : 'In the commit';
 
   return (
     <div className={styles.diff}>
       <div className={styles.diffHead}>
-        <Button variant="text" square aria-label="Back to the changes" onClick={onClose}>
+        <Button
+          variant="text"
+          square
+          aria-label={readOnly ? 'Back to the commit' : 'Back to the changes'}
+          onClick={onClose}
+        >
           <BackIcon />
         </Button>
         <span className={styles.changeText}>
           <span className="body ellipsis">{basename(file)}</span>
           <span className="caption muted ellipsis">{lineText}</span>
         </span>
-        <label className={styles.diffTick}>
-          <input
-            type="checkbox"
-            className={styles.check}
-            aria-label={`Commit ${file}`}
-            checked={selection !== 'none'}
-            ref={(input) => {
-              if (input) input.indeterminate = typeof selection === 'object';
-            }}
-            onChange={() => onSelect(selection === 'all' ? 'none' : 'all')}
-          />
-        </label>
+        {!readOnly && (
+          <label className={styles.diffTick}>
+            <input
+              type="checkbox"
+              className={styles.check}
+              aria-label={`Commit ${file}`}
+              checked={selection !== 'none'}
+              ref={(input) => {
+                if (input) input.indeterminate = typeof selection === 'object';
+              }}
+              onChange={() => onSelect(selection === 'all' ? 'none' : 'all')}
+            />
+          </label>
+        )}
       </div>
 
       {diff === null ? (
@@ -190,9 +216,11 @@ export function DiffView({
             {diff.binary ? 'Binary file' : diff.tooLarge ? 'Too large to show' : 'No changes to the text'}
           </p>
           <p className="caption muted">
-            {diff.binary || diff.tooLarge
-              ? 'It goes into the commit whole, or not at all: use the tick above.'
-              : 'Only how the file is stored changed (its mode, or it is empty).'}
+            {!(diff.binary || diff.tooLarge)
+              ? 'Only how the file is stored changed (its mode, or it is empty).'
+              : readOnly
+                ? 'Its lines are not shown.'
+                : 'It goes into the commit whole, or not at all: use the tick above.'}
           </p>
         </div>
       ) : (
@@ -215,9 +243,14 @@ export function DiffView({
                   style={{ transform: `translateY(${item.start}px)` }}
                 >
                   {row.kind === 'hunk' ? (
-                    <HunkHeader hunk={row.hunk} lines={row.lines} excluded={excluded} onToggle={toggle} />
+                    <HunkHeader
+                      hunk={row.hunk}
+                      lines={row.lines}
+                      excluded={excluded}
+                      onToggle={readOnly ? undefined : toggle}
+                    />
                   ) : (
-                    <LineRow line={row.line} excluded={excluded} onToggle={toggle} />
+                    <LineRow line={row.line} excluded={excluded} onToggle={readOnly ? undefined : toggle} />
                   )}
                 </div>
               );
@@ -238,10 +271,17 @@ function HunkHeader({
   hunk: Hunk;
   lines: number[];
   excluded: ReadonlySet<number>;
-  onToggle: (lines: readonly number[]) => void;
+  /** None in a read-only diff. */
+  onToggle?: (lines: readonly number[]) => void;
 }) {
   const out = lines.filter((line) => excluded.has(line)).length;
   const state = out === 0 ? 'true' : out === lines.length ? 'false' : 'mixed';
+  const range = (
+    <span className="ellipsis">
+      @@ -{hunk.oldStart},{hunk.oldLines} +{hunk.newStart},{hunk.newLines} @@
+    </span>
+  );
+  if (!onToggle) return <div className={cx('caption', styles.hunk, styles.hunkRead)}>{range}</div>;
   return (
     <button
       type="button"
@@ -251,9 +291,7 @@ function HunkHeader({
       onClick={() => onToggle(lines)}
     >
       <span className={cx(styles.box, styles[`box-${state}`])} aria-hidden />
-      <span className="ellipsis">
-        @@ -{hunk.oldStart},{hunk.oldLines} +{hunk.newStart},{hunk.newLines} @@
-      </span>
+      {range}
     </button>
   );
 }
@@ -265,7 +303,8 @@ function LineRow({
 }: {
   line: DiffLine;
   excluded: ReadonlySet<number>;
-  onToggle: (lines: readonly number[]) => void;
+  /** None in a read-only diff. */
+  onToggle?: (lines: readonly number[]) => void;
 }) {
   const content = (
     <>
@@ -282,6 +321,7 @@ function LineRow({
     </>
   );
   if (line.index === null) return <div className={cx(styles.line, styles['line-context'])}>{content}</div>;
+  if (!onToggle) return <div className={cx(styles.line, styles[`line-${line.kind}`])}>{content}</div>;
   const index = line.index;
   const included = !excluded.has(index);
   const verb = line.kind === 'added' ? 'Added' : 'Removed';

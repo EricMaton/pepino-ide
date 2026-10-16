@@ -8,19 +8,13 @@ import { errorMessage } from '../projects/errors';
 import { basename, isWithin, parentPath } from '../projects/paths';
 import type { LineExclusion } from './diff';
 import { DiffView } from './DiffView';
-import { type ChangeKind, type CommitResult, type FileChange, GitError, type Identity } from './engine';
+import { KIND_MARKS } from './changeKinds';
+import { type CommitResult, type FileChange, GitError, type Identity } from './engine';
 import styles from './GitScreen.module.css';
 import type { Selection } from './selection';
 
 /** Files written in a burst (autosave, a plugin) re-read the status once. */
 const STATUS_DEBOUNCE_MS = 400;
-
-const KIND_MARKS: Record<ChangeKind, { mark: string; label: string }> = {
-  new: { mark: '+', label: 'New' },
-  modified: { mark: '•', label: 'Modified' },
-  deleted: { mark: '−', label: 'Deleted' },
-  conflicted: { mark: '!', label: 'Conflicted' },
-};
 
 /** The repository's changes, re-read whenever files inside it change. Null while the first read runs. */
 function useChanges(path: string): { changes: FileChange[] | null; refresh: () => void } {
@@ -79,11 +73,14 @@ function useChanges(path: string): { changes: FileChange[] | null; refresh: () =
 export function ChangesView({
   path,
   branch,
+  visible,
   onCommitted,
 }: {
   /** The repository (the active project). */
   path: string;
   branch: string;
+  /** False while History shows: an open diff waits, and leaves back alone, until Changes shows again. */
+  visible: boolean;
   onCommitted: () => void;
 }) {
   const { git } = useServices();
@@ -294,8 +291,13 @@ export function ChangesView({
         </button>
       </form>
 
-      {opened !== null && (
-        <DiffView path={path} file={opened} selection={selectionOf(opened)} onSelect={onSelectOpened} onClose={close} />
+      {opened !== null && visible && (
+        <DiffView
+          path={path}
+          file={opened}
+          picking={{ selection: selectionOf(opened), onSelect: onSelectOpened }}
+          onClose={close}
+        />
       )}
 
       {askingIdentity && (

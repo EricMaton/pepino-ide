@@ -256,6 +256,18 @@
   cursor: default;
 }
 
+/* What a tab shows; the hidden Changes keeps its state */
+.tabPanel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tabPanel[hidden] {
+  display: none;
+}
+
 /* Changes: the list, then the commit box at the bottom */
 .changes {
   position: relative;
@@ -732,4 +744,57 @@ button.line {
   margin: 0;
   padding-top: var(--space-3);
   border-top: var(--border);
+}
+
+/* History: a commit per row, and a commit's files */
+.commitRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 64px;
+  padding: var(--space-2) var(--space-4);
+  border: none;
+  border-bottom: 1px solid var(--hairline);
+  background: none;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.commitRow:active {
+  background: var(--surface-variant);
+}
+
+.commitId {
+  flex: none;
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.commitInfo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-4);
+  border-bottom: var(--border);
+}
+
+.commitInfo p {
+  margin: 0;
+}
+
+.commitInfo .commitDescription {
+  margin-bottom: var(--space-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.commitHash {
+  overflow-wrap: anywhere;
+}
+
+/* A hunk of a commit's diff: nothing to pick */
+.hunkRead {
+  cursor: default;
 }
