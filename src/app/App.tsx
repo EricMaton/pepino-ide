@@ -77,8 +77,6 @@ export function App() {
   const keyboardOpen = useKeyboardVisible();
   const inWorkspace = destination === 'projects' && showProject && project !== null;
   const inExplorer = destination === 'projects' && !showProject;
-  // Typing in the editor gets the whole screen: the bottom nav steps aside.
-  const focusMode = keyboardOpen && ((openFile !== null && inWorkspace) || (looseFile !== null && inExplorer));
   // Session (#19): restored once the space is ready, then kept up to date.
   const [restored, setRestored] = useState(false);
   const [initialStacks, setInitialStacks] = useState<Record<string, string[]>>({});
@@ -421,7 +419,7 @@ export function App() {
   return (
     <NavigationContext value={navigation}>
       <TopBarSlotsContext value={slots}>
-        <div className={styles.app} data-focus-mode={focusMode || undefined}>
+        <div className={styles.app} data-keyboard-open={keyboardOpen || undefined}>
           <TopBarFrame onScreenSlot={onScreenSlot} onOverlaySlot={onOverlaySlot} />
           <main className={styles.content}>
             {destination === 'git' && state === 'ready' ? (

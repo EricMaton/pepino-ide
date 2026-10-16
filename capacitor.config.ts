@@ -9,10 +9,8 @@ const config: CapacitorConfig = {
     backgroundColor: '#0a0a0a',
   },
   plugins: {
-    Keyboard: {
-      // Edge-to-edge (forced from Android 15) stops the WebView from resizing for the keyboard otherwise.
-      resizeOnFullScreen: true,
-    },
+    // No Keyboard.resizeOnFullScreen: SystemBars already resizes the WebView for the keyboard
+    // edge-to-edge, and Capacitor warns that both together lead to unexpected behavior.
     SystemBars: {
       // Light icons on the brutalist black background
       style: 'DARK',
