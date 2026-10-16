@@ -1,0 +1,162 @@
+.screen {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: var(--space-6);
+}
+
+.intro {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-4);
+}
+
+.heading {
+  margin: 0;
+  padding: var(--space-6) var(--space-4) var(--space-2);
+}
+
+.note {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+}
+
+/* Clone / create: cards, switched off until the git engine lands */
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: 0 var(--space-4);
+}
+
+.action {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 64px;
+  padding: var(--space-2) var(--space-3);
+  border: var(--border);
+  background: var(--surface-variant);
+  color: var(--fg);
+  text-align: left;
+}
+
+.action:disabled {
+  border-style: dashed;
+  color: var(--outline);
+  cursor: not-allowed;
+}
+
+.action:disabled .actionIcon {
+  color: var(--outline);
+}
+
+.actionIcon {
+  flex: none;
+  display: flex;
+  color: var(--primary);
+}
+
+.actionText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.soon {
+  flex: none;
+  padding: 2px 6px;
+  border: 1px solid var(--outline);
+  color: var(--outline);
+  font-weight: 700;
+}
+
+/* Repositories */
+.list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--hairline);
+}
+
+.repo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 60px;
+  padding: var(--space-2) var(--space-4);
+  border: none;
+  border-bottom: 1px solid var(--hairline);
+  background: none;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.repo:active,
+.repoActive {
+  background: var(--surface-variant);
+  box-shadow: inset 4px 0 0 var(--primary);
+}
+
+.repoIcon {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.repoName {
+  font-weight: 700;
+}
+
+/* Current repository, like GitHub Desktop's toolbar */
+.current {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 56px;
+  padding: var(--space-2) var(--space-4);
+  border: none;
+  border-bottom: var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.current svg {
+  flex: none;
+  color: var(--primary);
+}
+
+.current:active {
+  background: var(--surface-variant);
+}
+
+.notRepo {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-4);
+}
+
+.notRepo p {
+  margin: 0;
+}

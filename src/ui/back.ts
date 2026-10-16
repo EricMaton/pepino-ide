@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react';
 /*
  * Back navigation as a stack: the most recently registered handler wins.
  * Dialogs register while open, the explorer while it can go up, so the
- * Android back button always undoes the innermost thing first.
+ * Android back button and the explorer's ← always undo the innermost thing first.
  */
 const handlers: Array<() => void> = [];
 

@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createMemoryBackend } from '../features/projects/memoryBackend';
-import { createProject } from '../features/projects/projects';
 import { createProjectSpace, type ProjectSpace } from '../features/projects/projectSpace';
 import { restoreSession } from './restoreSession';
 import { EMPTY_SESSION, type Session } from './session';
@@ -10,64 +9,56 @@ let space: ProjectSpace;
 beforeEach(async () => {
   space = createProjectSpace(createMemoryBackend(() => 1));
   await space.ensureCreated();
-  await createProject(space, 'app', () => 5);
+  await space.createDirectory('app');
   await space.createDirectory('app/src');
   await space.writeTextFile('app/src/main.ts', 'x');
+  await space.writeTextFile('notes.md', '');
 });
 
 const session = (patch: Partial<Session>): Session => ({ ...EMPTY_SESSION, ...patch });
 
 describe('restoreSession', () => {
-  it('restores project, folder, file and editor positions that still exist', async () => {
+  it('restores the project, the explorer folder and editor positions', async () => {
     const restored = await restoreSession(
       space,
       session({
-        project: 'app',
-        explorer: { app: ['app', 'app/src'] },
-        openFile: 'app/src/main.ts',
+        project: 'app/src',
+        inWorkspace: true,
+        explorer: { '': ['', 'app'] },
         editors: { 'app/src/main.ts': { anchor: 1, head: 1, scrollTop: 40, savedMillis: 9 } },
       }),
     );
     expect(restored).toEqual({
-      project: { path: 'app', name: 'app', createdMillis: 5 },
-      stack: ['app', 'app/src'],
-      openFile: 'app/src/main.ts',
+      project: { path: 'app/src', name: 'src' },
+      inWorkspace: true,
+      stack: ['', 'app'],
+      looseFile: null,
       editors: { 'app/src/main.ts': { anchor: 1, head: 1, scrollTop: 40 } },
     });
   });
 
-  it('drops a project that was deleted, and everything inside it', async () => {
+  it('drops a project that was deleted, and goes back to the explorer', async () => {
     await space.delete('app');
-    const restored = await restoreSession(
-      space,
-      session({ project: 'app', explorer: { app: ['app', 'app/src'] }, openFile: 'app/src/main.ts' }),
-    );
-    expect(restored).toMatchObject({ project: null, stack: null, openFile: null });
+    const restored = await restoreSession(space, session({ project: 'app', inWorkspace: true }));
+    expect(restored).toMatchObject({ project: null, inWorkspace: false });
   });
 
   it('falls back to the root when a remembered folder is gone', async () => {
     await space.delete('app/src');
-    const restored = await restoreSession(space, session({ project: 'app', explorer: { app: ['app', 'app/src'] } }));
-    expect(restored.stack).toBeNull();
+    expect((await restoreSession(space, session({ explorer: { '': ['', 'app', 'app/src'] } }))).stack).toBeNull();
   });
 
   it('rejects stacks that do not descend one folder at a time from the root', async () => {
-    await space.createDirectory('other');
-    const restored = await restoreSession(space, session({ project: 'app', explorer: { app: ['other', 'app/src'] } }));
-    expect(restored.stack).toBeNull();
+    expect((await restoreSession(space, session({ explorer: { '': ['', 'app/src'] } }))).stack).toBeNull();
   });
 
-  it('does not reopen a file outside the restored project or one that is now a folder', async () => {
-    await space.writeTextFile('loose.md', '');
-    expect((await restoreSession(space, session({ project: 'app', openFile: 'loose.md' }))).openFile).toBeNull();
-    await space.delete('app/src/main.ts');
-    await space.createDirectory('app/src/main.ts');
-    expect((await restoreSession(space, session({ project: 'app', openFile: 'app/src/main.ts' }))).openFile).toBeNull();
+  it('reopens a loose file over the explorer, keeping the project active', async () => {
+    const restored = await restoreSession(space, session({ project: 'app', inWorkspace: true, looseFile: 'notes.md' }));
+    expect(restored).toMatchObject({ project: { path: 'app' }, inWorkspace: false, looseFile: 'notes.md' });
   });
 
-  it('restores the space view when no project was open', async () => {
-    await space.writeTextFile('loose.md', '');
-    const restored = await restoreSession(space, session({ explorer: { '': [''] }, openFile: 'loose.md' }));
-    expect(restored).toMatchObject({ project: null, stack: [''], openFile: 'loose.md' });
+  it('does not reopen a loose file that is gone or now a folder', async () => {
+    expect((await restoreSession(space, session({ looseFile: 'missing.md' }))).looseFile).toBeNull();
+    expect((await restoreSession(space, session({ looseFile: 'app/src' }))).looseFile).toBeNull();
   });
 });

@@ -1,10 +1,9 @@
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import { useServices } from '../../app/services';
 import { useBackHandler } from '../../ui/back';
 import { Button } from '../../ui/components';
 import { cx } from '../../ui/cx';
-import { CloseIcon, FolderIcon, MoreIcon, PlusIcon } from '../../ui/icons';
-import { PepinoMark } from '../../ui/Logo';
+import { CloseIcon, FolderIcon, MoreIcon, PlusIcon, TreeIcon } from '../../ui/icons';
 import { useSnackbar } from '../../ui/useSnackbar';
 import { errorMessage } from '../projects/errors';
 import {
@@ -15,6 +14,7 @@ import {
   RenameEntryDialog,
   TransferDialog,
 } from '../projects/ExplorerDialogs';
+import { EmptyFolder } from '../projects/FileExplorer';
 import { type FileEntry, fileBadge, sortEntries } from '../projects/files';
 import { basename, joinPath, parentPath } from '../projects/paths';
 import { useDirectoryListing } from '../projects/useDirectoryListing';
@@ -39,21 +39,85 @@ function folderOf(path: string, root: string): string {
   return relative || '/';
 }
 
-/**
- * Side panel laid over the editor: the workspace's open files and its file
- * tree, with the usual file actions (create, rename, move, copy, delete).
- * Changes go through the project space, so the tree, the explorer and the
- * open editor all follow them.
- */
+/** Side panel laid over the editor with the workspace's file tree: the tree is a tap away from any tab. */
 export function WorkspaceDrawer({ onClose, onOpenFile }: { onClose: () => void; onOpenFile: (path: string) => void }) {
-  const { workspace, projectSpace } = useServices();
-  const showSnackbar = useSnackbar();
-  const { root, activeFile, openFiles } = useWorkspaceState(workspace);
-  const [expanded, setExpanded] = useState(() => ancestors(activeFile, root));
-  const [dialog, setDialog] = useState<DrawerDialog | null>(null);
+  const { workspace } = useServices();
+  const { root } = useWorkspaceState(workspace);
   useBackHandler(true, onClose);
 
-  const rootName = root === '' ? '~/projects' : basename(root);
+  return (
+    <>
+      <div className={styles.scrim} onClick={onClose} aria-hidden />
+      <aside className={styles.drawer} aria-label="Project files">
+        <WorkspaceTree
+          onOpenFile={onOpenFile}
+          header={(createAtRoot) => (
+            <header className={styles.header}>
+              <div className={styles.heading}>
+                <span className="caption muted">WORKSPACE</span>
+                <h2 className="title ellipsis">{basename(root)}</h2>
+              </div>
+              <Button variant="text" square aria-label="New file or folder" onClick={createAtRoot}>
+                <PlusIcon size={20} />
+              </Button>
+              <Button variant="text" square aria-label="Close project files" onClick={onClose}>
+                <CloseIcon />
+              </Button>
+            </header>
+          )}
+        />
+      </aside>
+    </>
+  );
+}
+
+/** The workspace with no file open: its tree takes the whole screen (like VS Code's explorer). */
+export function WorkspaceHome({ onOpenFile }: { onOpenFile: (path: string) => void }) {
+  return (
+    <div className={styles.home}>
+      <WorkspaceTree
+        onOpenFile={onOpenFile}
+        empty={<EmptyFolder title="Empty project" />}
+        header={(createAtRoot) => (
+          <div className={styles.homeBar}>
+            <TreeIcon size={20} />
+            <span className="label muted">
+              <span className="accent">//</span> Files
+            </span>
+            <span className={styles.homeSpacer} />
+            <Button square aria-label="New file or folder" onClick={createAtRoot}>
+              <PlusIcon size={22} />
+            </Button>
+          </div>
+        )}
+      />
+    </div>
+  );
+}
+
+/**
+ * The workspace's file tree with the usual file actions (create, rename,
+ * move, copy, delete). Changes go through the project space, so the tree,
+ * the explorer and the open editor all follow them.
+ */
+function WorkspaceTree({
+  onOpenFile,
+  header,
+  empty,
+}: {
+  onOpenFile: (path: string) => void;
+  /** Above the tree; [createAtRoot] starts "new file or folder" at the root. */
+  header: (createAtRoot: () => void) => ReactNode;
+  /** Instead of "empty" when the root has nothing in it. */
+  empty?: ReactNode;
+}) {
+  const { workspace, projectSpace } = useServices();
+  const showSnackbar = useSnackbar();
+  const { root, activeFile } = useWorkspaceState(workspace);
+  const [expanded, setExpanded] = useState(() => ancestors(activeFile, root));
+  const [dialog, setDialog] = useState<DrawerDialog | null>(null);
+
+  const rootName = basename(root);
   const toggle = (folder: string) =>
     setExpanded((current) => {
       const next = new Set(current);
@@ -69,74 +133,25 @@ export function WorkspaceDrawer({ onClose, onOpenFile }: { onClose: () => void; 
 
   return (
     <>
-      <div className={styles.scrim} onClick={onClose} aria-hidden />
-      <aside className={styles.drawer} aria-label="Project files">
-        <header className={styles.header}>
-          <PepinoMark size={28} />
-          <div className={styles.heading}>
-            <span className="caption muted">WORKSPACE</span>
-            <h2 className="title ellipsis">{rootName}</h2>
-          </div>
-          <Button
-            variant="text"
-            square
-            aria-label="New file or folder"
-            onClick={() => setDialog({ kind: 'create', folder: root })}
-          >
-            <PlusIcon size={20} />
-          </Button>
-          <Button variant="text" square aria-label="Close project files" onClick={onClose}>
-            <CloseIcon />
-          </Button>
-        </header>
-        <div className={styles.scroll}>
-          {openFiles.length > 0 && (
-            <section aria-label="Open files">
-              <h3 className={cx('label', 'muted', styles.section)}>
-                <span className="accent">//</span> Open files
-              </h3>
-              {openFiles.map((path) => (
-                <button
-                  key={path}
-                  type="button"
-                  className={cx(styles.item, path === activeFile && styles.active)}
-                  aria-current={path === activeFile ? 'true' : undefined}
-                  onClick={() => onOpenFile(path)}
-                >
-                  <span className={cx('caption', styles.badge)} aria-hidden>
-                    {fileBadge(basename(path))}
-                  </span>
-                  <span className={styles.itemText}>
-                    <span className="body ellipsis">{basename(path)}</span>
-                    <span className="caption muted ellipsis">{folderOf(path, root)}</span>
-                  </span>
-                </button>
-              ))}
-            </section>
-          )}
-          <section aria-label="Files">
-            <h3 className={cx('label', 'muted', styles.section)}>
-              <span className="accent">//</span> Files
-            </h3>
-            <div role="tree">
-              <Folder
-                path={root}
-                depth={0}
-                expanded={expanded}
-                activeFile={activeFile}
-                onToggle={toggle}
-                onOpenFile={onOpenFile}
-                onActions={(entry) => setDialog({ kind: 'actions', entry, project: false })}
-              />
-            </div>
-          </section>
+      {header(() => setDialog({ kind: 'create', folder: root }))}
+      <div className={styles.scroll}>
+        <div role="tree" aria-label="Files">
+          <Folder
+            path={root}
+            depth={0}
+            expanded={expanded}
+            activeFile={activeFile}
+            empty={empty}
+            onToggle={toggle}
+            onOpenFile={onOpenFile}
+            onActions={(entry) => setDialog({ kind: 'actions', entry, project: false })}
+          />
         </div>
-      </aside>
+      </div>
 
       {dialog?.kind === 'create' && (
         <CreateEntryDialog
           where={dialog.folder === root ? rootName : `${rootName}/${folderOf(joinPath(dialog.folder, 'x'), root)}`}
-          allowProject={false}
           onClose={() => setDialog(null)}
           onCreate={(kind, name) => {
             const path = joinPath(dialog.folder, name);
@@ -153,7 +168,6 @@ export function WorkspaceDrawer({ onClose, onOpenFile }: { onClose: () => void; 
         <EntryActionsDialog
           entry={dialog.entry}
           project={false}
-          canOpenAsProject={false}
           extraActions={
             dialog.entry.isDirectory
               ? [
@@ -166,7 +180,6 @@ export function WorkspaceDrawer({ onClose, onOpenFile }: { onClose: () => void; 
           }
           onClose={() => setDialog(null)}
           onAction={(next) => setDialog(next.kind === 'create' ? null : next)}
-          onOpenAsProject={() => setDialog(null)}
         />
       )}
       {dialog?.kind === 'rename' && (
@@ -192,7 +205,7 @@ export function WorkspaceDrawer({ onClose, onOpenFile }: { onClose: () => void; 
           move={dialog.move}
           projectSpace={projectSpace}
           rootPath={root}
-          rootLabel={root === '' ? '~' : '/'}
+          rootLabel="/"
           onClose={() => setDialog(null)}
           onConfirm={(destination) =>
             run(() =>
@@ -212,13 +225,15 @@ interface FolderProps {
   depth: number;
   expanded: ReadonlySet<string>;
   activeFile: string | null;
+  /** Shown instead of "empty" when this folder has nothing in it. */
+  empty?: ReactNode;
   onToggle: (folder: string) => void;
   onOpenFile: (path: string) => void;
   onActions: (entry: FileEntry) => void;
 }
 
 /** Children of an expanded folder; collapsed folders never touch the disk. */
-function Folder({ path, depth, expanded, activeFile, onToggle, onOpenFile, onActions }: FolderProps) {
+function Folder({ path, depth, expanded, activeFile, empty, onToggle, onOpenFile, onActions }: FolderProps) {
   const { projectSpace } = useServices();
   const [tick, setTick] = useState(0);
   useFolderChanges(path, () => setTick((value) => value + 1));
@@ -230,9 +245,15 @@ function Folder({ path, depth, expanded, activeFile, onToggle, onOpenFile, onAct
     </p>
   );
 
-  if (listing === null) return note('…');
+  if (listing === null) {
+    return (
+      <p className={cx('caption', 'muted', styles.note)} style={indent} data-loading>
+        …
+      </p>
+    );
+  }
   if (!listing.ok) return note(`✕ ${listing.message}`, 'accent');
-  if (listing.entries.length === 0) return note('empty');
+  if (listing.entries.length === 0) return empty ?? note('empty');
 
   return (
     <>

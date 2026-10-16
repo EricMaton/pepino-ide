@@ -8,9 +8,11 @@ import { useServices } from '../../app/services';
 import { TopBar } from '../../app/TopBar';
 import { useFileSource } from '../../app/useFileSource';
 import { useBackHandler } from '../../ui/back';
+import { navigate } from '../../ui/motion';
+import { saveSettled, trackSave } from './pendingSaves';
 import { Button, Dialog } from '../../ui/components';
 import { cx } from '../../ui/cx';
-import { BackIcon, FolderIcon } from '../../ui/icons';
+import { BackIcon, CloseIcon, TreeIcon } from '../../ui/icons';
 import { useSnackbar } from '../../ui/useSnackbar';
 import { errorMessage } from '../projects/errors';
 import { fileBadge } from '../projects/files';
@@ -33,12 +35,23 @@ const AUTOSAVE_DELAY_MS = 1000;
 type Loaded = { kind: 'text'; text: string } | { kind: 'binary' } | { kind: 'error'; message: string };
 type SaveState = 'saved' | 'unsaved' | 'saving' | 'failed';
 
+/** The workspace's open files, shown as tabs above the editor (this file is the active one). */
+export interface EditorTabs {
+  files: readonly string[];
+  onSelect: (path: string) => void;
+  /** Closes a tab other than this file's (already saved: only the active file has an editor). */
+  onClose: (path: string) => void;
+}
+
 interface EditorScreenProps {
   path: string;
-  /** False while another tab is showing: the editor stays mounted (keeping edits) but hidden. */
+  /** False while another screen is showing: the editor stays mounted (keeping edits) but hidden. */
   visible: boolean;
   /** Breadcrumb-style folder label shown under the file name. */
   folderLabel: string;
+  /** The workspace's tabs, or null for a loose file (opened from the explorer, outside any workspace). */
+  tabs: EditorTabs | null;
+  /** This file is closed, after saving it (or the user discarding what could not be saved). */
   onClose: () => void;
   /** Where the cursor and scroll were last time this file was open. */
   initialViewState?: EditorViewState;
@@ -49,15 +62,17 @@ interface EditorScreenProps {
 const VIEW_STATE_DELAY_MS = 400;
 
 /**
- * Full-height editor for one file, laid over the explorer so closing it
- * returns to the same folder. Work is never lost: edits autosave shortly
- * after typing stops and whenever the app goes to the background, and the
- * file's previous content is snapshotted before it is first overwritten.
+ * Full-height editor for one file: the workspace's active tab, or a loose
+ * file laid over the explorer so closing it returns to the same folder. Work
+ * is never lost: edits autosave shortly after typing stops and whenever the
+ * app goes to the background, and the file's previous content is
+ * snapshotted before it is first overwritten.
  */
 export default function EditorScreen({
   path,
   visible,
   folderLabel,
+  tabs,
   onClose,
   initialViewState,
   onViewState,
@@ -69,7 +84,9 @@ export default function EditorScreen({
   const [editCount, setEditCount] = useState(0);
   const [confirmClose, setConfirmClose] = useState(false);
   const [view, setView] = useState<EditorView | null>(null);
-  const [filesOpen, setFilesOpen] = useState(false);
+  const [filesOpen, setFilesOpenNow] = useState(false);
+  // The tree slides over the editor and away again (ui/motion.ts).
+  const setFilesOpen = useCallback((open: boolean) => navigate('drawer', () => setFilesOpenNow(open)), []);
   const files = useFileSource();
   const [fontSize, setFontSize] = useState(DEFAULT_FONT_SIZE);
 
@@ -95,6 +112,7 @@ export default function EditorScreen({
     },
     [preferences],
   );
+  const inWorkspace = tabs !== null;
   const doc = useRef<Text | null>(null);
   const savedDoc = useRef<Text | null>(null);
   const opened = useRef<{ text: string; doc: Text; separator: LineSeparator } | null>(null);
@@ -147,24 +165,27 @@ export default function EditorScreen({
   useEffect(() => {
     let active = true;
     const path = openedPath.current;
-    projectSpace.readTextFile(path).then(
-      (text) => {
-        if (!active) return;
-        // A NUL byte means this is not text; editing it would corrupt the file.
-        if (text.includes('\u0000')) {
-          setLoaded({ kind: 'binary' });
-          return;
-        }
-        const openedDoc = Text.of(text.split(/\r\n?|\n/));
-        opened.current = { text, doc: openedDoc, separator: detectLineSeparator(text) };
-        savedDoc.current = openedDoc;
-        setLoaded({ kind: 'text', text });
-        events.publish('file.opened', { path });
-      },
-      (error: unknown) => {
-        if (active) setLoaded({ kind: 'error', message: errorMessage(error) });
-      },
-    );
+    // A save of this file may still be running (its editor just unmounted): read after it.
+    saveSettled(path)
+      .then(() => projectSpace.readTextFile(path))
+      .then(
+        (text) => {
+          if (!active) return;
+          // A NUL byte means this is not text; editing it would corrupt the file.
+          if (text.includes('\u0000')) {
+            setLoaded({ kind: 'binary' });
+            return;
+          }
+          const openedDoc = Text.of(text.split(/\r\n?|\n/));
+          opened.current = { text, doc: openedDoc, separator: detectLineSeparator(text) };
+          savedDoc.current = openedDoc;
+          setLoaded({ kind: 'text', text });
+          events.publish('file.opened', { path });
+        },
+        (error: unknown) => {
+          if (active) setLoaded({ kind: 'error', message: errorMessage(error) });
+        },
+      );
     return () => {
       active = false;
     };
@@ -200,6 +221,7 @@ export default function EditorScreen({
   /** Saves pending edits; saves run one after another, never in parallel. */
   const save = useCallback((): Promise<boolean> => {
     saveQueue.current = saveQueue.current.then(writeNow, writeNow);
+    trackSave(livePath.current, saveQueue.current);
     return saveQueue.current;
   }, [writeNow]);
 
@@ -272,13 +294,26 @@ export default function EditorScreen({
       registry.register({ id: 'editor.save', title: `Save ${name}`, run: () => void save() }),
       registry.register({ id: 'editor.close', title: `Close ${name}`, run: () => void requestClose() }),
       registry.register({ id: 'editor.revert', title: `Revert ${name} to the opened version`, run: revertToOpened }),
-      registry.register({ id: 'editor.files', title: 'Project files', run: () => setFilesOpen(true) }),
+      ...(inWorkspace
+        ? [registry.register({ id: 'editor.files', title: 'Project files', run: () => setFilesOpen(true) })]
+        : []),
       registry.register({ id: 'editor.zoomIn', title: 'Zoom in', run: () => changeFontSize(fontSize + ZOOM_STEP) }),
       registry.register({ id: 'editor.zoomOut', title: 'Zoom out', run: () => changeFontSize(fontSize - ZOOM_STEP) }),
       registry.register({ id: 'editor.zoomReset', title: 'Reset zoom', run: () => changeFontSize(DEFAULT_FONT_SIZE) }),
     ];
     return () => disposers.forEach((dispose) => dispose());
-  }, [registry, visible, name, save, requestClose, revertToOpened, fontSize, changeFontSize]);
+  }, [
+    registry,
+    visible,
+    inWorkspace,
+    name,
+    save,
+    requestClose,
+    revertToOpened,
+    fontSize,
+    changeFontSize,
+    setFilesOpen,
+  ]);
 
   // Toolbar keys are commands, registered while this editor is the one showing.
   useEffect(() => {
@@ -306,11 +341,6 @@ export default function EditorScreen({
       {visible && (
         <TopBar
           layer="overlay"
-          leading={
-            <Button square onClick={() => void requestClose()} aria-label="Close file">
-              <BackIcon size={20} />
-            </Button>
-          }
           title={
             <>
               <span className="ellipsis">{name}</span>
@@ -322,34 +352,50 @@ export default function EditorScreen({
           files={files}
           label={`Search commands · ${name}`}
           trailing={
-            <>
-              <Button variant="text" square aria-label="Project files" onClick={() => setFilesOpen(true)}>
-                <FolderIcon size={20} />
+            saveState === 'failed' ? (
+              <Button variant="filled" onClick={() => void save()}>
+                Retry
               </Button>
-              {saveState === 'failed' ? (
-                <Button variant="filled" onClick={() => void save()}>
-                  Retry
-                </Button>
-              ) : (
-                <span
-                  className={cx(
-                    'label',
-                    styles.saveState,
-                    saveState === 'saving' && 'cursor',
-                    saveState === 'saved' && 'muted',
-                  )}
-                  role="status"
-                >
-                  {saveState === 'saved' ? 'Saved' : saveState === 'saving' ? 'Saving' : 'Unsaved'}
-                </span>
-              )}
-            </>
+            ) : (
+              <span
+                className={cx(
+                  'label',
+                  styles.saveState,
+                  saveState === 'saving' && 'cursor',
+                  saveState === 'saved' && 'muted',
+                )}
+                role="status"
+              >
+                {saveState === 'saved' ? 'Saved' : saveState === 'saving' ? 'Saving' : 'Unsaved'}
+              </span>
+            )
           }
         />
       )}
 
+      {tabs ? (
+        <TabBar
+          tabs={tabs}
+          active={path}
+          dirty={dirty}
+          onTree={() => setFilesOpen(true)}
+          onCloseActive={() => void requestClose()}
+        />
+      ) : (
+        <div className={styles.tabBar}>
+          <Button variant="text" square aria-label="Back" onClick={() => void requestClose()}>
+            <BackIcon size={22} />
+          </Button>
+          <span className={cx('caption', 'muted', 'ellipsis', styles.looseLabel)}>
+            <span className={styles.looseTag}>LOOSE FILE</span> · outside any workspace
+          </span>
+        </div>
+      )}
+
       {loaded === null ? (
-        <p className={cx('label', 'cursor', styles.message)}>Opening</p>
+        <p className={cx('label', 'cursor', styles.message)} data-loading>
+          Opening
+        </p>
       ) : loaded.kind === 'text' ? (
         <>
           {/* No key: the view lives as long as the editing session, across renames. */}
@@ -373,7 +419,9 @@ export default function EditorScreen({
         </div>
       )}
 
-      {visible && filesOpen && <WorkspaceDrawer onClose={() => setFilesOpen(false)} onOpenFile={openOther} />}
+      {visible && inWorkspace && filesOpen && (
+        <WorkspaceDrawer onClose={() => setFilesOpen(false)} onOpenFile={openOther} />
+      )}
 
       {confirmClose && (
         <Dialog
@@ -402,5 +450,61 @@ export default function EditorScreen({
         </Dialog>
       )}
     </section>
+  );
+}
+
+interface TabBarProps {
+  tabs: EditorTabs;
+  active: string;
+  dirty: boolean;
+  onTree: () => void;
+  onCloseActive: () => void;
+}
+
+/** The row under the top bar: the tree button, then one tab per open file (like VS Code). */
+function TabBar({ tabs, active, dirty, onTree, onCloseActive }: TabBarProps) {
+  const activeRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    activeRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }, [active]);
+
+  return (
+    <div className={styles.tabBar}>
+      <Button variant="text" square className={styles.treeButton} aria-label="Project files" onClick={onTree}>
+        <TreeIcon size={20} />
+      </Button>
+      <div className={styles.tabs} role="tablist" aria-label="Open files">
+        {tabs.files.map((file) => {
+          const isActive = file === active;
+          const name = basename(file);
+          return (
+            <div
+              key={file}
+              ref={isActive ? activeRef : undefined}
+              className={cx(styles.tab, isActive && styles.tabActive)}
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                className={cx('caption', styles.tabName)}
+                onClick={() => !isActive && tabs.onSelect(file)}
+              >
+                <span className="ellipsis">{name}</span>
+                {isActive && dirty && <span className={styles.tabDirty} aria-hidden />}
+              </button>
+              <button
+                type="button"
+                className={styles.tabClose}
+                aria-label={`Close ${name}`}
+                onClick={() => (isActive ? onCloseActive() : tabs.onClose(file))}
+              >
+                <CloseIcon size={14} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }

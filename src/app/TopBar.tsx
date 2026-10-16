@@ -1,12 +1,16 @@
 import { type ReactNode, useContext } from 'react';
 import { createPortal } from 'react-dom';
+import { Button } from '../ui/components';
 import { cx } from '../ui/cx';
+import { PepinoMark } from '../ui/Logo';
 import { CommandSearch, type FileSource } from './CommandSearch';
+import { useNavigation } from './navigation';
 import styles from './TopBar.module.css';
 import { type TopBarSlots, TopBarSlotsContext } from './topBarSlots';
 
 /**
- * The app's single top bar: [leading] [command search showing the context] [trailing].
+ * The app's single top bar: [logo] [command search showing the context] [trailing].
+ * The logo leads to the explorer from anywhere; the active project stays active.
  * Screens fill it from wherever they are with <TopBar>, rendered through a
  * portal into one of two layers: `screen` (explorer, coming-soon pages…) and
  * `overlay` (the editor), which hides the screen layer while it has content.
@@ -14,8 +18,6 @@ import { type TopBarSlots, TopBarSlotsContext } from './topBarSlots';
  */
 interface TopBarProps {
   layer?: keyof TopBarSlots;
-  /** Brand mark, or a ← that leaves the current context. */
-  leading?: ReactNode;
   title: ReactNode;
   subtitle?: ReactNode;
   /** Status or actions on the right (save state…). */
@@ -28,12 +30,21 @@ interface TopBarProps {
   files?: FileSource;
 }
 
-export function TopBar({ layer = 'screen', leading, title, subtitle, trailing, prefer, label, files }: TopBarProps) {
+export function TopBar({ layer = 'screen', title, subtitle, trailing, prefer, label, files }: TopBarProps) {
   const slot = useContext(TopBarSlotsContext)[layer];
+  const { atHome, goHome } = useNavigation();
   if (!slot) return null;
   return createPortal(
     <div className={styles.row}>
-      {leading}
+      {atHome ? (
+        <span className={styles.mark}>
+          <PepinoMark size={40} />
+        </span>
+      ) : (
+        <Button variant="text" square className={styles.mark} onClick={goHome} aria-label="Go to projects">
+          <PepinoMark size={40} />
+        </Button>
+      )}
       <CommandSearch label={label} prefer={prefer} files={files}>
         <span className={cx('ellipsis', styles.title)}>{title}</span>
         {subtitle && <span className={cx('caption', 'muted', 'ellipsis')}>{subtitle}</span>}

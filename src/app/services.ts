@@ -48,9 +48,17 @@ export function createServices(): Services {
   const recentProjects = createRecentProjects(preferences, projectSpace);
   const session = createSessionStore(preferences);
   const workspace = createWorkspace(projectSpace, events, {
-    load: async (root) => (await session.load()).openFiles[root] ?? [],
-    save: (root, files) =>
-      session.update((saved) => ({ ...saved, openFiles: { ...saved.openFiles, [root]: [...files] } })),
+    load: async (root) => {
+      const saved = await session.load();
+      return { files: saved.openFiles[root] ?? [], active: saved.activeFiles[root] ?? null };
+    },
+    save: (root, files, active) =>
+      session.update((saved) => {
+        const activeFiles = { ...saved.activeFiles };
+        if (active) activeFiles[root] = active;
+        else delete activeFiles[root];
+        return { ...saved, openFiles: { ...saved.openFiles, [root]: [...files] }, activeFiles };
+      }),
   });
 
   // Recents only listen to the bus: whoever opens a project doesn't need to know about them.

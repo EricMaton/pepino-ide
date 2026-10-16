@@ -23,7 +23,7 @@ const errors = [];
 page.on('pageerror', (error) => errors.push(error.message));
 const button = (name) => page.getByRole('button', { name, exact: true });
 const pause = (ms = 300) => page.waitForTimeout(ms);
-const fileRow = (name) => page.getByRole('button', { name: new RegExp(`^${name.replace('.', '\\.')}`) });
+const fileRow = (name) => page.getByRole('treeitem').getByRole('button', { name, exact: true });
 const source = (lines) =>
   Array.from(
     { length: lines },
@@ -63,19 +63,20 @@ async function frames(action) {
 
 await page.goto(url);
 await page.getByText('No projects yet').waitFor();
-await button('New').click();
+// A project is a folder: create it, then open it as the workspace (on its file tree).
+await button('New file or folder').click();
 await page.getByLabel('Name').fill('perf');
-await page.keyboard.press('Enter');
+await button('Folder').click();
+await button('Open perf as workspace').click();
+await page.getByRole('tree', { name: 'Files' }).waitFor();
 await pause();
 
 const results = [];
 for (const lines of sizes) {
   const name = `perf${lines}.ts`;
-  await button('New').click();
+  await button('New file or folder').click();
   await page.getByLabel('Name').fill(name);
-  await button('File').click();
-  await pause();
-  await fileRow(name).click();
+  await button('File').click(); // a new file opens right away
   await page.locator('.cm-content').waitFor();
   await page.locator('.cm-content').click();
   await paste(source(lines));
@@ -84,7 +85,7 @@ for (const lines of sizes) {
     .getByRole('status')
     .filter({ hasText: /^saved$/i })
     .waitFor({ timeout: 60_000 });
-  await page.getByRole('button', { name: 'Close file' }).click();
+  await button(`Close ${name}`).click(); // its tab: the tree shows again
   await pause(500);
 
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: cpu });
@@ -126,7 +127,7 @@ for (const lines of sizes) {
     'keystroke worst (ms)': latencies[latencies.length - 1],
     'typing: long frames': typing.long,
   });
-  await page.getByRole('button', { name: 'Close file' }).click();
+  await button(`Close ${name}`).click();
   await pause(1500);
 }
 

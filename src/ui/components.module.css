@@ -16,8 +16,8 @@
   cursor: pointer;
   touch-action: manipulation;
   transition:
-    transform var(--press-duration) linear,
-    box-shadow var(--press-duration) linear;
+    transform var(--press-duration) var(--ease-out),
+    box-shadow var(--press-duration) var(--ease-out);
 }
 
 .button:disabled {
@@ -122,6 +122,40 @@
 
 .dialog::backdrop {
   background: var(--scrim);
+}
+
+/* A modal comes forward from where it stands: centred, from just below full size */
+.dialog[open] {
+  transition:
+    opacity var(--motion-enter) var(--ease-out),
+    transform var(--motion-enter) var(--ease-out);
+}
+
+.dialog[open]::backdrop {
+  transition: opacity var(--motion-enter) var(--ease-out);
+}
+
+@starting-style {
+  .dialog[open] {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+
+  .dialog[open]::backdrop {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dialog[open] {
+    transition: opacity var(--motion-exit) ease;
+  }
+
+  @starting-style {
+    .dialog[open] {
+      transform: none;
+    }
+  }
 }
 
 .dialogPanel {
@@ -229,7 +263,7 @@
   background: var(--fg);
   color: var(--bg);
   box-shadow: var(--shadow-primary);
-  animation: snackbar-in 120ms steps(3) both;
+  animation: snackbar-in var(--motion-enter) var(--ease-out) both;
 }
 
 .snackbar::before {
@@ -249,6 +283,12 @@
 
 @media (prefers-reduced-motion: reduce) {
   .snackbar {
-    animation: none;
+    animation-name: fade-in;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
   }
 }

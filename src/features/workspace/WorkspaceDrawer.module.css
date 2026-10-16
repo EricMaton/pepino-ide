@@ -3,6 +3,7 @@
   inset: 0;
   z-index: 3;
   background: var(--scrim);
+  view-transition-name: drawer-scrim;
 }
 
 .drawer {
@@ -17,20 +18,8 @@
   border-right: var(--border);
   background: var(--surface);
   box-shadow: var(--shadow-dialog);
-  animation: drawer-in 140ms steps(4) both;
-}
-
-@keyframes drawer-in {
-  from {
-    transform: translateX(-24px);
-    opacity: 0;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .drawer {
-    animation: none;
-  }
+  /* Slides in and out with the screen changes (ui/motion.ts, global.css) */
+  view-transition-name: drawer;
 }
 
 .header {
@@ -59,12 +48,39 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding-bottom: var(--space-6);
 }
 
-.section {
-  margin: 0;
-  padding: var(--space-4) var(--space-4) var(--space-2);
+/* The workspace with no file open: the tree fills the screen */
+.home {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.home .scroll {
+  padding-top: var(--space-2);
+}
+
+.homeBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) calc(var(--space-3) + var(--shadow-offset)) calc(var(--space-2) + var(--shadow-offset))
+    var(--space-4);
+  border-bottom: var(--border);
+}
+
+.homeBar svg {
+  flex: none;
+  color: var(--primary);
+}
+
+.homeSpacer {
+  flex: 1;
 }
 
 .item {
@@ -93,12 +109,6 @@
 .active {
   background: var(--surface-variant);
   box-shadow: inset 4px 0 0 var(--primary);
-}
-
-.itemText {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
 }
 
 .chevron {

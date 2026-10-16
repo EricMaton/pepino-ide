@@ -2,13 +2,18 @@ import type { KeyValueStore } from '../core/storage';
 
 /** Where the user was, so reopening the app puts them back there (#19). */
 export interface Session {
-  /** Open project path, or null for the project space. */
+  /** The active project's path, or null when there is none. */
   project: string | null;
+  /** True when the workspace was showing, false for the explorer. */
+  inWorkspace: boolean;
   /** Explorer path stack per explorer root ('' = the space). */
   explorer: Record<string, string[]>;
-  openFile: string | null;
-  /** Recently opened files per workspace root, most recent first (#106). */
+  /** File open on its own over the explorer, outside any workspace. */
+  looseFile: string | null;
+  /** The editor's tabs per workspace root, in tab order (#106). */
   openFiles: Record<string, string[]>;
+  /** The active tab per workspace root. */
+  activeFiles: Record<string, string>;
   /** Cursor and scroll per file path, most recently used kept. */
   editors: Record<string, StoredEditorState>;
 }
@@ -26,7 +31,15 @@ interface StoredEditorState extends EditorViewState {
 const STORAGE_KEY = 'pepino.session';
 export const MAX_EDITOR_STATES = 50;
 
-export const EMPTY_SESSION: Session = { project: null, explorer: {}, openFile: null, openFiles: {}, editors: {} };
+export const EMPTY_SESSION: Session = {
+  project: null,
+  inWorkspace: false,
+  explorer: {},
+  looseFile: null,
+  openFiles: {},
+  activeFiles: {},
+  editors: {},
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -56,6 +69,12 @@ export function parseSession(raw: string | null): Session {
       if (Array.isArray(files) && files.every(isString)) openFiles[root] = files;
     }
   }
+  const activeFiles: Session['activeFiles'] = {};
+  if (isRecord(value.activeFiles)) {
+    for (const [root, file] of Object.entries(value.activeFiles)) {
+      if (isString(file)) activeFiles[root] = file;
+    }
+  }
   const editors: Session['editors'] = {};
   if (isRecord(value.editors)) {
     for (const [path, state] of Object.entries(value.editors)) {
@@ -66,9 +85,11 @@ export function parseSession(raw: string | null): Session {
   }
   return {
     project: isString(value.project) ? value.project : null,
+    inWorkspace: value.inWorkspace === true,
     explorer,
-    openFile: isString(value.openFile) ? value.openFile : null,
+    looseFile: isString(value.looseFile) ? value.looseFile : null,
     openFiles,
+    activeFiles,
     editors,
   };
 }

@@ -138,3 +138,199 @@ input {
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+/*
+ * Screen changes (ui/motion.ts). The content moves the way the change goes:
+ * folders and files go deeper to the right, the workspace sinks into the
+ * explorer's bottom strip and rises out of it, the tree drawer slides from
+ * the left. Exits are short and start first, so two screens never read on top
+ * of each other. The top bar only cross-fades and the bottom nav stays put.
+ */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+}
+
+/* Nothing moves outside the content area (over the bottom nav or the top bar) */
+::view-transition-group(screen) {
+  overflow: clip;
+}
+
+/* Groups only hold their snapshots in place; their timing follows the content */
+::view-transition-group(*) {
+  animation-duration: var(--motion-enter);
+}
+
+/* A strip that stays (moving between folders) just stays; it only animates arriving or leaving */
+::view-transition-old(return-strip),
+::view-transition-new(return-strip) {
+  animation: none;
+}
+
+::view-transition-group(topbar),
+::view-transition-old(topbar),
+::view-transition-new(topbar) {
+  animation-duration: var(--motion-exit);
+}
+
+:root[data-nav]::view-transition-old(screen) {
+  animation: var(--motion-exit) var(--ease-out) both var(--nav-out);
+}
+:root[data-nav]::view-transition-new(screen) {
+  animation: var(--motion-enter) var(--ease-out) calc(var(--motion-exit) / 3) both var(--nav-in);
+}
+
+/* Deeper: the new screen comes in from the right, the old one steps aside to the left */
+:root[data-nav='forward'] {
+  --nav-out: nav-out-left;
+  --nav-in: nav-in-right;
+}
+:root[data-nav='back'] {
+  --nav-out: nav-out-right;
+  --nav-in: nav-in-left;
+}
+/* The workspace rises from the strip over the explorer, which steps back */
+:root[data-nav='rise'] {
+  --nav-out: nav-recede;
+  --nav-in: nav-in-up;
+}
+:root[data-nav='rise']::view-transition-new(screen) {
+  animation-duration: 260ms;
+  animation-timing-function: var(--ease-drawer);
+}
+/* The workspace sinks into the strip; the explorer comes forward behind it */
+:root[data-nav='sink'] {
+  --nav-out: nav-out-down;
+  --nav-in: nav-come-forward;
+}
+:root[data-nav='sink']::view-transition-old(screen) {
+  animation-duration: 180ms;
+}
+
+/* The strip takes the workspace a beat after it starts sinking, and lets it go as it rises */
+:root[data-nav]::view-transition-new(return-strip):only-child {
+  animation: var(--motion-enter) var(--ease-out) 60ms both strip-in;
+}
+:root[data-nav]::view-transition-old(return-strip):only-child {
+  animation: var(--motion-exit) var(--ease-out) both strip-out;
+}
+
+/* The tree drawer, or closing the active project: the screen around them stays still */
+:root[data-nav='drawer']::view-transition-old(screen),
+:root[data-nav='drawer']::view-transition-new(screen),
+:root[data-nav='dismiss']::view-transition-old(screen),
+:root[data-nav='dismiss']::view-transition-new(screen) {
+  animation: none;
+}
+/* Closing the project: its strip drops away, a little slower than a plain exit so it reads */
+:root[data-nav='dismiss']::view-transition-old(return-strip):only-child {
+  animation: 180ms var(--ease-out) both strip-out;
+}
+::view-transition-new(drawer):only-child {
+  animation: 260ms var(--ease-drawer) both drawer-in;
+}
+::view-transition-old(drawer):only-child {
+  animation: 180ms var(--ease-out) both drawer-out;
+}
+::view-transition-new(drawer-scrim):only-child {
+  animation: var(--motion-enter) var(--ease-out) both fade-in;
+}
+::view-transition-old(drawer-scrim):only-child {
+  animation: var(--motion-exit) var(--ease-out) both fade-out;
+}
+
+@keyframes nav-out-left {
+  to {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+}
+@keyframes nav-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(32px);
+  }
+}
+@keyframes nav-out-right {
+  to {
+    opacity: 0;
+    transform: translateX(32px);
+  }
+}
+@keyframes nav-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+}
+@keyframes nav-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(40px);
+  }
+}
+@keyframes nav-out-down {
+  to {
+    opacity: 0;
+    transform: translateY(40px);
+  }
+}
+@keyframes nav-recede {
+  to {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+@keyframes nav-come-forward {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+/* Revealed from its bottom edge up, never over the nav */
+@keyframes strip-in {
+  from {
+    clip-path: inset(100% 0 0 0);
+  }
+}
+@keyframes strip-out {
+  to {
+    clip-path: inset(100% 0 0 0);
+  }
+}
+@keyframes drawer-in {
+  from {
+    transform: translateX(-100%);
+  }
+}
+@keyframes drawer-out {
+  to {
+    transform: translateX(-100%);
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+/* Reduced motion: fewer and gentler, not none. Nothing slides; things fade. */
+@media (prefers-reduced-motion: reduce) {
+  :root[data-nav] {
+    --nav-out: fade-out;
+    --nav-in: fade-in;
+  }
+  :root[data-nav]::view-transition-new(return-strip):only-child,
+  ::view-transition-new(drawer):only-child {
+    animation: var(--motion-exit) ease both fade-in;
+  }
+  :root[data-nav]::view-transition-old(return-strip):only-child,
+  ::view-transition-old(drawer):only-child {
+    animation: var(--motion-exit) ease both fade-out;
+  }
+}
