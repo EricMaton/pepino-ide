@@ -31,7 +31,8 @@ decidir cómo se navega entre ellas sin comprometer el futuro.
   archivos sueltos, fuera de cualquier workspace. El workspace es el proyecto
   activo: su árbol y sus archivos abiertos como pestañas. El proyecto activo
   es uno solo para el editor y Git, y sigue activo mientras se ve el
-  explorador; el logo lleva al explorador desde cualquier pantalla.
+  explorador. Al explorador se llega tocando PROJECTS estando ya en PROJECTS
+  (#121); desde otra sección PROJECTS solo navega, y el logo es solo marca.
 - **Back de Android** (`src/ui/back.ts`): una pila de handlers. Cada
   superficie registra el suyo mientras puede "deshacer" algo
   (`useBackHandler(enabled, handler)`): los diálogos mientras están abiertos,
