@@ -186,23 +186,31 @@
 }
 
 /* New repository: folders of ~/projects without git */
-.pick {
+/* Create a new repository: where it goes */
+.location {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+  align-items: center;
+  gap: var(--space-3);
   margin-top: var(--space-4);
+  padding: var(--space-2) 0 var(--space-2) var(--space-3);
+  border: var(--border);
+  background: var(--surface-variant);
 }
 
-.pickList {
+.location > svg {
+  flex: none;
+  color: var(--primary);
+}
+
+/* The switcher's other ways in: create, initialize, add */
+.more {
   display: flex;
   flex-direction: column;
-  max-height: 220px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  border-top: 1px solid var(--hairline);
+  margin-top: var(--space-4);
+  border-top: var(--border);
 }
 
-.pickFolder {
+.moreItem {
   gap: var(--space-3);
   text-transform: none;
   letter-spacing: 0;
@@ -210,7 +218,7 @@
   border-bottom: 1px solid var(--hairline);
 }
 
-.pickFolder svg {
+.moreItem svg {
   flex: none;
   color: var(--primary);
 }
@@ -705,7 +713,7 @@ button.line {
   cursor: pointer;
 }
 
-/* Add an existing repository: tags after a folder's name, and what the open folder is */
+/* Folder pickers (add, initialize, location): tags after a folder's name, and what the open folder is */
 .mark {
   flex: none;
   margin-left: auto;
@@ -720,7 +728,7 @@ button.line {
   color: var(--primary);
 }
 
-.addStatus {
+.pickStatus {
   margin: 0;
   padding-top: var(--space-3);
   border-top: var(--border);

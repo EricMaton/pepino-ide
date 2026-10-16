@@ -6,11 +6,11 @@ import { cx } from '../../ui/cx';
 import { BranchIcon, FolderIcon, PlusIcon, ProjectIcon } from '../../ui/icons';
 import { useSnackbar } from '../../ui/useSnackbar';
 import { errorMessage } from '../projects/errors';
-import { isValidEntryName, sortEntries } from '../projects/files';
+import { type FileEntry, isValidEntryName } from '../projects/files';
 import { FolderPicker } from '../projects/FolderPicker';
-import { basename } from '../projects/paths';
+import { basename, joinPath } from '../projects/paths';
 import { GIT_DIR, hasGitDir, isReservedName, type ProjectInfo } from '../projects/projects';
-import { useDirectoryListing } from '../projects/useDirectoryListing';
+import { type DirectoryListing, useDirectoryListing } from '../projects/useDirectoryListing';
 import { useFolderChanges } from '../projects/useFolderChanges';
 import { useFolderStack } from '../projects/useFolderStack';
 import { BranchesDialog } from './BranchesDialog';
@@ -54,11 +54,33 @@ function useRepositories(): ProjectInfo[] | null {
   return repos;
 }
 
-/** GitHub Desktop's "Let's get started": clone, create, or add a repository already on the device. */
+/** The ways to bring a repository into the list, each a dialog over GIT. */
+type RepositoryDialog = { kind: 'create' } | { kind: 'initialize' } | { kind: 'add'; added: readonly ProjectInfo[] };
+
+/** [dialog], open; [onDone] gets the repository it created, initialized or added. */
+function RepositoryDialogs({
+  dialog,
+  onClose,
+  onDone,
+}: {
+  dialog: RepositoryDialog;
+  onClose: () => void;
+  onDone: (path: string) => void;
+}) {
+  switch (dialog.kind) {
+    case 'create':
+      return <CreateRepositoryDialog onClose={onClose} onCreated={onDone} />;
+    case 'initialize':
+      return <InitializeRepositoryDialog onClose={onClose} onInitialized={onDone} />;
+    case 'add':
+      return <AddRepositoryDialog added={dialog.added} onClose={onClose} onAdded={onDone} />;
+  }
+}
+
+/** GitHub Desktop's "Let's get started": clone, create, initialize, or add a repository already on the device. */
 function GitStart({ onOpen }: { onOpen: (path: string) => void }) {
   const repos = useRepositories();
-  const [creating, setCreating] = useState(false);
-  const [adding, setAdding] = useState(false);
+  const [dialog, setDialog] = useState<RepositoryDialog | null>(null);
   return (
     <div className={styles.screen}>
       <TopBar title="Git" subtitle="NO REPOSITORY" label="Search commands · Git" />
@@ -72,14 +94,20 @@ function GitStart({ onOpen }: { onOpen: (path: string) => void }) {
           <ActionCard
             icon={<PlusIcon size={22} />}
             title="Create a new repository"
-            detail="A new folder, or one of ~/projects"
-            onClick={() => setCreating(true)}
+            detail="A new folder, wherever you choose"
+            onClick={() => setDialog({ kind: 'create' })}
+          />
+          <ActionCard
+            icon={<ProjectIcon size={22} />}
+            title="Initialize a repository"
+            detail="git init in a folder you already have"
+            onClick={() => setDialog({ kind: 'initialize' })}
           />
           <ActionCard
             icon={<FolderIcon size={22} />}
             title="Add an existing repository"
             detail="A folder of ~/projects with git"
-            onClick={() => setAdding(true)}
+            onClick={() => setDialog({ kind: 'add', added: repos ?? [] })}
           />
         </div>
         <h2 className={cx('label', 'muted', styles.heading)}>
@@ -87,21 +115,12 @@ function GitStart({ onOpen }: { onOpen: (path: string) => void }) {
         </h2>
         <RepositoryList repos={repos} activePath={null} onOpen={onOpen} />
       </div>
-      {adding && (
-        <AddRepositoryDialog
-          added={repos ?? []}
-          onClose={() => setAdding(false)}
-          onAdded={(path) => {
-            setAdding(false);
-            onOpen(path);
-          }}
-        />
-      )}
-      {creating && (
-        <CreateRepositoryDialog
-          onClose={() => setCreating(false)}
-          onCreated={(path) => {
-            setCreating(false);
+      {dialog && (
+        <RepositoryDialogs
+          dialog={dialog}
+          onClose={() => setDialog(null)}
+          onDone={(path) => {
+            setDialog(null);
             onOpen(path);
           }}
         />
@@ -144,33 +163,49 @@ function ActionCard({
   );
 }
 
-function nameError(name: string, taken: ReadonlySet<string>): string | null {
+/** `~/projects/…` for a folder of the space. */
+const shown = (path: string) => (path === '' ? '~/projects' : `~/projects/${path}`);
+
+/** Tags the folders of [listing] that are git repositories, in a folder picker. */
+const gitMark = (listing: DirectoryListing | null) => (folder: FileEntry) =>
+  listing?.ok && listing.repos.has(folder.path) ? (
+    <span className={cx('caption', styles.mark, styles.markGit)}>GIT</span>
+  ) : null;
+
+const isGitDir = (folder: FileEntry) => folder.name === GIT_DIR;
+
+function nameError(name: string, taken: ReadonlySet<string>, location: string): string | null {
   const trimmed = name.trim();
   if (trimmed === '') return null;
   if (isReservedName(trimmed)) return 'Reserved name';
   if (!isValidEntryName(trimmed)) return 'Invalid name';
-  return taken.has(trimmed) ? 'Already in ~/projects: pick it below' : null;
+  return taken.has(trimmed) ? `Already in ${shown(location)}` : null;
 }
 
 /**
- * GitHub Desktop's "Create a new repository": a new folder in ~/projects, or
- * one already there without git, becomes a repository and the active project.
+ * GitHub Desktop's "Create a new repository": a new folder, named and put
+ * wherever in ~/projects the user chooses, with git in it. It becomes one of
+ * the repositories and the active project.
  */
 function CreateRepositoryDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (path: string) => void }) {
   const { projectSpace, git, repositories } = useServices();
   const showSnackbar = useSnackbar();
   const [name, setName] = useState('');
+  const [location, setLocation] = useState('');
+  const [choosing, setChoosing] = useState(false);
+  // the name is focused once: coming back from the location, the keyboard stays down
+  const [chose, setChose] = useState(false);
   const [busy, setBusy] = useState(false);
-  const listing = useDirectoryListing(projectSpace, '', 0, true);
-  const folders = listing?.ok ? sortEntries(listing.entries, 'name').filter((entry) => entry.isDirectory) : [];
-  const withoutGit = listing?.ok ? folders.filter((folder) => !listing.repos.has(folder.path)) : [];
-  const error = nameError(name, new Set(folders.map((folder) => folder.name)));
-  const valid = name.trim() !== '' && error === null;
+  const listing = useDirectoryListing(projectSpace, location);
+  const taken = new Set(listing?.ok ? listing.entries.map((entry) => entry.name) : []);
+  const error = nameError(name, taken, location);
+  const valid = name.trim() !== '' && error === null && listing?.ok === true;
 
-  const initialize = async (path: string, create: boolean) => {
+  const create = async () => {
+    const path = joinPath(location, name.trim());
     setBusy(true);
     try {
-      if (create) await projectSpace.createDirectory(path);
+      await projectSpace.createDirectory(path);
       await git.init(path);
       await repositories.add(path);
       onCreated(path);
@@ -180,10 +215,23 @@ function CreateRepositoryDialog({ onClose, onCreated }: { onClose: () => void; o
     }
   };
 
+  if (choosing) {
+    return (
+      <LocationDialog
+        start={location}
+        onClose={() => setChoosing(false)}
+        onChoose={(path) => {
+          setLocation(path);
+          setChoosing(false);
+        }}
+      />
+    );
+  }
+
   return (
     <Dialog
       title="New repository"
-      eyebrow="IN ~/projects"
+      eyebrow="NEW FOLDER · GIT INIT"
       onClose={onClose}
       actions={
         <>
@@ -194,7 +242,7 @@ function CreateRepositoryDialog({ onClose, onCreated }: { onClose: () => void; o
             variant="filled"
             className={cx(busy && 'cursor')}
             disabled={!valid || busy}
-            onClick={() => void initialize(name.trim(), true)}
+            onClick={() => void create()}
           >
             {busy ? 'Creating' : 'Create'}
           </Button>
@@ -207,31 +255,140 @@ function CreateRepositoryDialog({ onClose, onCreated }: { onClose: () => void; o
         value={name}
         onChange={setName}
         error={error}
-        autoFocus
-        onSubmit={() => valid && !busy && void initialize(name.trim(), true)}
+        autoFocus={!chose}
+        onSubmit={() => valid && !busy && void create()}
       />
-      {withoutGit.length > 0 && (
-        <div className={styles.pick}>
-          <span className="label muted">
-            <span className="accent">//</span> Or a folder without git
-          </span>
-          <div className={styles.pickList}>
-            {withoutGit.map((folder) => (
-              <Button
-                key={folder.path}
-                variant="text"
-                listItem
-                className={cx('body', styles.pickFolder)}
-                disabled={busy}
-                onClick={() => void initialize(folder.path, false)}
-              >
-                <FolderIcon size={20} />
-                <span className="ellipsis">{folder.name}</span>
-              </Button>
-            ))}
-          </div>
-        </div>
-      )}
+      <div className={styles.location}>
+        <FolderIcon size={20} />
+        <span className={styles.actionText}>
+          <span className="caption muted">LOCATION</span>
+          <span className="body ellipsis">{shown(location)}</span>
+        </span>
+        <Button
+          variant="text"
+          disabled={busy}
+          onClick={() => {
+            setChose(true);
+            setChoosing(true);
+          }}
+        >
+          Change
+        </Button>
+      </div>
+    </Dialog>
+  );
+}
+
+/** Where a new repository goes: any folder of ~/projects, starting at [start]. */
+function LocationDialog({
+  start,
+  onClose,
+  onChoose,
+}: {
+  start: string;
+  onClose: () => void;
+  onChoose: (path: string) => void;
+}) {
+  const { projectSpace } = useServices();
+  const folders = useFolderStack('', start);
+  const listing = useDirectoryListing(projectSpace, folders.path, 0, true);
+  return (
+    <Dialog
+      title="Location"
+      eyebrow="NEW REPOSITORY IN…"
+      onClose={onClose}
+      actions={
+        <>
+          <Button variant="text" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="filled" disabled={listing?.ok !== true} onClick={() => onChoose(folders.path)}>
+            Use this folder
+          </Button>
+        </>
+      }
+    >
+      <FolderPicker
+        folders={folders}
+        listing={listing}
+        rootLabel="~/projects"
+        hide={isGitDir}
+        mark={gitMark(listing)}
+      />
+      <p className={cx('caption', 'muted', styles.pickStatus)}>The repository goes in {shown(folders.path)}.</p>
+    </Dialog>
+  );
+}
+
+/**
+ * GitHub Desktop's "Initialize": a folder of ~/projects without git, at any
+ * depth, gets it. It becomes one of the repositories and the active project.
+ */
+function InitializeRepositoryDialog({
+  onClose,
+  onInitialized,
+}: {
+  onClose: () => void;
+  onInitialized: (path: string) => void;
+}) {
+  const { projectSpace, git, repositories } = useServices();
+  const showSnackbar = useSnackbar();
+  const [busy, setBusy] = useState(false);
+  const folders = useFolderStack('');
+  const listing = useDirectoryListing(projectSpace, folders.path, 0, true);
+  const here = folders.path;
+  const isRepo = listing?.ok === true && hasGitDir(listing.entries);
+  const ready = here !== '' && listing?.ok === true && !isRepo;
+  const status =
+    here === ''
+      ? 'Open the folder to turn into a repository.'
+      : listing === null
+        ? ''
+        : isRepo
+          ? 'Already a git repository: add it instead.'
+          : `git init in ${basename(here)}, on main.`;
+
+  const initialize = async () => {
+    setBusy(true);
+    try {
+      await git.init(here);
+      await repositories.add(here);
+      onInitialized(here);
+    } catch (failure) {
+      showSnackbar(`Error: ${errorMessage(failure)}`);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog
+      title="Initialize repository"
+      eyebrow="GIT INIT IN ~/projects"
+      onClose={onClose}
+      actions={
+        <>
+          <Button variant="text" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="filled"
+            className={cx(busy && 'cursor')}
+            disabled={!ready || busy}
+            onClick={() => void initialize()}
+          >
+            {busy ? 'Initializing' : 'Initialize'}
+          </Button>
+        </>
+      }
+    >
+      <FolderPicker
+        folders={folders}
+        listing={listing}
+        rootLabel="~/projects"
+        hide={isGitDir}
+        mark={gitMark(listing)}
+      />
+      <p className={cx('caption', ready ? 'accent' : 'muted', styles.pickStatus)}>{status}</p>
     </Dialog>
   );
 }
@@ -306,16 +463,16 @@ function AddRepositoryDialog({
         folders={folders}
         listing={listing}
         rootLabel="~/projects"
-        hide={(folder) => folder.name === GIT_DIR}
+        hide={isGitDir}
         mark={(folder) =>
           addedPaths.has(folder.path) ? (
             <span className={cx('caption', styles.mark)}>ADDED</span>
-          ) : listing?.ok && listing.repos.has(folder.path) ? (
-            <span className={cx('caption', styles.mark, styles.markGit)}>GIT</span>
-          ) : null
+          ) : (
+            gitMark(listing)(folder)
+          )
         }
       />
-      <p className={cx('caption', isRepo && !already ? 'accent' : 'muted', styles.addStatus)}>{status}</p>
+      <p className={cx('caption', isRepo && !already ? 'accent' : 'muted', styles.pickStatus)}>{status}</p>
     </Dialog>
   );
 }
@@ -374,8 +531,8 @@ function GitProject({ project, onOpen }: { project: ProjectInfo; onOpen: (path: 
   const { git, repositories } = useServices();
   const showSnackbar = useSnackbar();
   const [choosing, setChoosing] = useState(false);
-  // the repositories already added, while adding another
-  const [adding, setAdding] = useState<readonly ProjectInfo[] | false>(false);
+  // creating, initializing or adding another repository
+  const [more, setMore] = useState<RepositoryDialog | null>(null);
   const [branching, setBranching] = useState(false);
   const [initializing, setInitializing] = useState(false);
   const [tick, setTick] = useState(0);
@@ -511,18 +668,18 @@ function GitProject({ project, onOpen }: { project: ProjectInfo; onOpen: (path: 
             setChoosing(false);
             if (path !== project.path) onOpen(path);
           }}
-          onAdd={(repos) => {
+          onMore={(dialog) => {
             setChoosing(false);
-            setAdding(repos);
+            setMore(dialog);
           }}
         />
       )}
-      {adding && (
-        <AddRepositoryDialog
-          added={adding}
-          onClose={() => setAdding(false)}
-          onAdded={(path) => {
-            setAdding(false);
+      {more && (
+        <RepositoryDialogs
+          dialog={more}
+          onClose={() => setMore(null)}
+          onDone={(path) => {
+            setMore(null);
             if (path !== project.path) onOpen(path);
           }}
         />
@@ -535,27 +692,38 @@ function ChooseRepository({
   activePath,
   onClose,
   onOpen,
-  onAdd,
+  onMore,
 }: {
   activePath: string;
   onClose: () => void;
   onOpen: (path: string) => void;
-  /** "Add an existing repository", given the ones already added. */
-  onAdd: (repos: readonly ProjectInfo[]) => void;
+  /** Create, initialize or add another one, like GitHub Desktop's "Add" menu. */
+  onMore: (dialog: RepositoryDialog) => void;
 }) {
   const repos = useRepositories();
+  const more: [string, ReactNode, RepositoryDialog][] = [
+    ['Create a new repository', <PlusIcon key="icon" size={20} />, { kind: 'create' }],
+    ['Initialize a repository', <ProjectIcon key="icon" size={20} />, { kind: 'initialize' }],
+    ['Add an existing repository', <FolderIcon key="icon" size={20} />, { kind: 'add', added: repos ?? [] }],
+  ];
   return (
-    <Dialog
-      title="Your repositories"
-      eyebrow="SWITCH THE ACTIVE PROJECT"
-      onClose={onClose}
-      actions={
-        <Button variant="text" disabled={repos === null} onClick={() => onAdd(repos ?? [])}>
-          Add existing
-        </Button>
-      }
-    >
+    <Dialog title="Your repositories" eyebrow="SWITCH THE ACTIVE PROJECT" onClose={onClose}>
       <RepositoryList repos={repos} activePath={activePath} onOpen={onOpen} />
+      <div className={styles.more}>
+        {more.map(([label, icon, dialog]) => (
+          <Button
+            key={label}
+            variant="text"
+            listItem
+            className={cx('body', styles.moreItem)}
+            disabled={repos === null}
+            onClick={() => onMore(dialog)}
+          >
+            {icon}
+            <span className="ellipsis">{label}</span>
+          </Button>
+        ))}
+      </div>
     </Dialog>
   );
 }
