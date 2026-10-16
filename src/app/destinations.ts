@@ -14,11 +14,7 @@ export const DESTINATIONS: readonly DestinationInfo[] = [
     label: 'GIT',
     teaser: { sprint: 'SPRINTS 3–4', description: 'Commits, branches, diffs and GitHub sync, all by touch.' },
   },
-  {
-    id: 'settings',
-    label: 'SETTINGS',
-    teaser: { sprint: 'SPRINT 6', description: 'Themes, editor preferences and plugins.' },
-  },
+  { id: 'settings', label: 'SETTINGS' },
 ];
 
 export const HOME: AppDestination = 'projects';
