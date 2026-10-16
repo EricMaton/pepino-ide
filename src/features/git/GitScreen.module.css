@@ -704,3 +704,24 @@ button.line {
   text-align: left;
   cursor: pointer;
 }
+
+/* Add an existing repository: tags after a folder's name, and what the open folder is */
+.mark {
+  flex: none;
+  margin-left: auto;
+  padding: 1px 6px;
+  border: 1px solid var(--outline);
+  color: var(--outline);
+  font-weight: 700;
+}
+
+.markGit {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.addStatus {
+  margin: 0;
+  padding-top: var(--space-3);
+  border-top: var(--border);
+}

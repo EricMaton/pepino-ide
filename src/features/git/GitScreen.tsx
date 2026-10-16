@@ -7,9 +7,12 @@ import { BranchIcon, FolderIcon, PlusIcon, ProjectIcon } from '../../ui/icons';
 import { useSnackbar } from '../../ui/useSnackbar';
 import { errorMessage } from '../projects/errors';
 import { isValidEntryName, sortEntries } from '../projects/files';
-import { findRepositories, isReservedName, type ProjectInfo } from '../projects/projects';
+import { FolderPicker } from '../projects/FolderPicker';
+import { basename } from '../projects/paths';
+import { GIT_DIR, hasGitDir, isReservedName, type ProjectInfo } from '../projects/projects';
 import { useDirectoryListing } from '../projects/useDirectoryListing';
 import { useFolderChanges } from '../projects/useFolderChanges';
+import { useFolderStack } from '../projects/useFolderStack';
 import { BranchesDialog } from './BranchesDialog';
 import { ChangesView } from './ChangesView';
 import type { RepoInfo } from './engine';
@@ -30,22 +33,24 @@ export function GitScreen({ project, onOpen }: GitScreenProps) {
   return project ? <GitProject key={project.path} project={project} onOpen={onOpen} /> : <GitStart onOpen={onOpen} />;
 }
 
-/** The local repositories, re-read whenever the top of the space changes. */
+/** The repositories added to GIT, re-read when the list or the top of the space changes. */
 function useRepositories(): ProjectInfo[] | null {
-  const { projectSpace } = useServices();
+  const { repositories } = useServices();
   const [tick, setTick] = useState(0);
   const [repos, setRepos] = useState<ProjectInfo[] | null>(null);
-  useFolderChanges('', () => setTick((value) => value + 1));
+  const refresh = () => setTick((value) => value + 1);
+  useFolderChanges('', refresh);
+  useEffect(() => repositories.subscribe(refresh), [repositories]);
   useEffect(() => {
     let active = true;
-    findRepositories(projectSpace).then(
+    repositories.load().then(
       (found) => active && setRepos(found),
       () => active && setRepos([]),
     );
     return () => {
       active = false;
     };
-  }, [projectSpace, tick]);
+  }, [repositories, tick]);
   return repos;
 }
 
@@ -53,6 +58,7 @@ function useRepositories(): ProjectInfo[] | null {
 function GitStart({ onOpen }: { onOpen: (path: string) => void }) {
   const repos = useRepositories();
   const [creating, setCreating] = useState(false);
+  const [adding, setAdding] = useState(false);
   return (
     <div className={styles.screen}>
       <TopBar title="Git" subtitle="NO REPOSITORY" label="Search commands · Git" />
@@ -69,12 +75,28 @@ function GitStart({ onOpen }: { onOpen: (path: string) => void }) {
             detail="A new folder, or one of ~/projects"
             onClick={() => setCreating(true)}
           />
+          <ActionCard
+            icon={<FolderIcon size={22} />}
+            title="Add an existing repository"
+            detail="A folder of ~/projects with git"
+            onClick={() => setAdding(true)}
+          />
         </div>
         <h2 className={cx('label', 'muted', styles.heading)}>
-          <span className="accent">//</span> Add an existing repository
+          <span className="accent">//</span> Your repositories
         </h2>
         <RepositoryList repos={repos} activePath={null} onOpen={onOpen} />
       </div>
+      {adding && (
+        <AddRepositoryDialog
+          added={repos ?? []}
+          onClose={() => setAdding(false)}
+          onAdded={(path) => {
+            setAdding(false);
+            onOpen(path);
+          }}
+        />
+      )}
       {creating && (
         <CreateRepositoryDialog
           onClose={() => setCreating(false)}
@@ -135,7 +157,7 @@ function nameError(name: string, taken: ReadonlySet<string>): string | null {
  * one already there without git, becomes a repository and the active project.
  */
 function CreateRepositoryDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (path: string) => void }) {
-  const { projectSpace, git } = useServices();
+  const { projectSpace, git, repositories } = useServices();
   const showSnackbar = useSnackbar();
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
@@ -150,6 +172,7 @@ function CreateRepositoryDialog({ onClose, onCreated }: { onClose: () => void; o
     try {
       if (create) await projectSpace.createDirectory(path);
       await git.init(path);
+      await repositories.add(path);
       onCreated(path);
     } catch (failure) {
       showSnackbar(`Error: ${errorMessage(failure)}`);
@@ -213,6 +236,90 @@ function CreateRepositoryDialog({ onClose, onCreated }: { onClose: () => void; o
   );
 }
 
+/**
+ * GitHub Desktop's "Add an existing repository": walk ~/projects to a folder
+ * with git, at any depth. Repositories already added are marked and can't be
+ * added again.
+ */
+function AddRepositoryDialog({
+  added,
+  onClose,
+  onAdded,
+}: {
+  added: readonly ProjectInfo[];
+  onClose: () => void;
+  onAdded: (path: string) => void;
+}) {
+  const { projectSpace, repositories } = useServices();
+  const showSnackbar = useSnackbar();
+  const [busy, setBusy] = useState(false);
+  const folders = useFolderStack('');
+  const listing = useDirectoryListing(projectSpace, folders.path, 0, true);
+  const addedPaths = new Set(added.map((repo) => repo.path));
+  const here = folders.path;
+  const isRepo = listing?.ok === true && hasGitDir(listing.entries);
+  const already = addedPaths.has(here);
+  const status =
+    here === ''
+      ? 'Open the repository’s folder.'
+      : listing === null
+        ? ''
+        : already
+          ? 'Already in your repositories.'
+          : isRepo
+            ? `${basename(here)} is a git repository.`
+            : 'Not a git repository: it has no .git folder.';
+
+  const add = async () => {
+    setBusy(true);
+    try {
+      await repositories.add(here);
+      onAdded(here);
+    } catch (failure) {
+      showSnackbar(`Error: ${errorMessage(failure)}`);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog
+      title="Add repository"
+      eyebrow="FROM ~/projects"
+      onClose={onClose}
+      actions={
+        <>
+          <Button variant="text" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="filled"
+            className={cx(busy && 'cursor')}
+            disabled={!isRepo || already || busy}
+            onClick={() => void add()}
+          >
+            {busy ? 'Adding' : 'Add'}
+          </Button>
+        </>
+      }
+    >
+      <FolderPicker
+        folders={folders}
+        listing={listing}
+        rootLabel="~/projects"
+        hide={(folder) => folder.name === GIT_DIR}
+        mark={(folder) =>
+          addedPaths.has(folder.path) ? (
+            <span className={cx('caption', styles.mark)}>ADDED</span>
+          ) : listing?.ok && listing.repos.has(folder.path) ? (
+            <span className={cx('caption', styles.mark, styles.markGit)}>GIT</span>
+          ) : null
+        }
+      />
+      <p className={cx('caption', isRepo && !already ? 'accent' : 'muted', styles.addStatus)}>{status}</p>
+    </Dialog>
+  );
+}
+
 function RepositoryList({
   repos,
   activePath,
@@ -230,7 +337,9 @@ function RepositoryList({
     );
   }
   if (repos.length === 0) {
-    return <p className={cx('caption', 'muted', styles.note)}>No git repositories in ~/projects yet.</p>;
+    return (
+      <p className={cx('caption', 'muted', styles.note)}>None yet: add one already on the device, or create one.</p>
+    );
   }
   return (
     <div className={styles.list}>
@@ -262,9 +371,11 @@ function RepositoryList({
 
 /** The active project: the "Current repository" switcher, then git, or the offer to start it. */
 function GitProject({ project, onOpen }: { project: ProjectInfo; onOpen: (path: string) => void }) {
-  const { git } = useServices();
+  const { git, repositories } = useServices();
   const showSnackbar = useSnackbar();
   const [choosing, setChoosing] = useState(false);
+  // the repositories already added, while adding another
+  const [adding, setAdding] = useState<readonly ProjectInfo[] | false>(false);
   const [branching, setBranching] = useState(false);
   const [initializing, setInitializing] = useState(false);
   const [tick, setTick] = useState(0);
@@ -272,6 +383,10 @@ function GitProject({ project, onOpen }: { project: ProjectInfo; onOpen: (path: 
   const [repo, setRepo] = useState<RepoInfo | null | undefined>(undefined);
   // `.git` appearing or going away changes the answer
   useFolderChanges(project.path, () => setTick((value) => value + 1));
+  // The repository on show is always one of yours (initialized here, or older than the list)
+  useEffect(() => {
+    if (repo) repositories.add(project.path).catch((error: unknown) => console.error('Cannot add repository', error));
+  }, [repositories, project.path, repo]);
   useEffect(() => {
     let active = true;
     git.info(project.path).then(
@@ -396,6 +511,20 @@ function GitProject({ project, onOpen }: { project: ProjectInfo; onOpen: (path: 
             setChoosing(false);
             if (path !== project.path) onOpen(path);
           }}
+          onAdd={(repos) => {
+            setChoosing(false);
+            setAdding(repos);
+          }}
+        />
+      )}
+      {adding && (
+        <AddRepositoryDialog
+          added={adding}
+          onClose={() => setAdding(false)}
+          onAdded={(path) => {
+            setAdding(false);
+            if (path !== project.path) onOpen(path);
+          }}
         />
       )}
     </div>
@@ -406,14 +535,26 @@ function ChooseRepository({
   activePath,
   onClose,
   onOpen,
+  onAdd,
 }: {
   activePath: string;
   onClose: () => void;
   onOpen: (path: string) => void;
+  /** "Add an existing repository", given the ones already added. */
+  onAdd: (repos: readonly ProjectInfo[]) => void;
 }) {
   const repos = useRepositories();
   return (
-    <Dialog title="Repositories" eyebrow="SWITCH THE ACTIVE PROJECT" onClose={onClose}>
+    <Dialog
+      title="Your repositories"
+      eyebrow="SWITCH THE ACTIVE PROJECT"
+      onClose={onClose}
+      actions={
+        <Button variant="text" disabled={repos === null} onClick={() => onAdd(repos ?? [])}>
+          Add existing
+        </Button>
+      }
+    >
       <RepositoryList repos={repos} activePath={activePath} onOpen={onOpen} />
     </Dialog>
   );

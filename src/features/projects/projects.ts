@@ -59,29 +59,3 @@ export async function isRepository(space: ProjectSpace, path: string): Promise<b
     return false;
   }
 }
-
-/**
- * The git repositories in the space: top-level folders with `.git`, and the
- * folders one level below the ones that are not repositories themselves.
- * Deeper ones are not searched, so the list stays quick to build.
- */
-export async function findRepositories(space: ProjectSpace): Promise<ProjectInfo[]> {
-  const listFolders = async (path: string) =>
-    (await space.listDirectory(path).catch(() => [])).filter((entry) => entry.isDirectory && entry.name !== MARKER_DIR);
-  const found = await Promise.all(
-    (await listFolders('')).map(async (folder): Promise<ProjectInfo[]> => {
-      const children = await space.listDirectory(folder.path).catch(() => []);
-      if (hasGitDir(children)) return [{ path: folder.path, name: folder.name }];
-      const inside = children.filter(
-        (entry) => entry.isDirectory && entry.name !== GIT_DIR && entry.name !== MARKER_DIR,
-      );
-      const repos = await Promise.all(
-        inside.map(async (child) =>
-          (await isRepository(space, child.path)) ? [{ path: child.path, name: child.name }] : [],
-        ),
-      );
-      return repos.flat();
-    }),
-  );
-  return found.flat().sort((a, b) => a.path.toLowerCase().localeCompare(b.path.toLowerCase()));
-}

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createMemoryBackend } from './memoryBackend';
 import { createProjectSpace, type ProjectSpace } from './projectSpace';
-import { canBeProject, findRepositories, isRepository, isReservedName, readProject } from './projects';
+import { canBeProject, isRepository, isReservedName, readProject } from './projects';
 
 let space: ProjectSpace;
 
@@ -40,10 +40,6 @@ describe('repositories', () => {
     expect(await isRepository(space, 'app')).toBe(true);
     expect(await isRepository(space, 'plain')).toBe(false);
     expect(await isRepository(space, 'missing')).toBe(false);
-  });
-
-  it('finds top-level repositories and the ones one level down, not deeper', async () => {
-    expect((await findRepositories(space)).map((repo) => repo.path)).toEqual(['app', 'group/lib']);
   });
 });
 
