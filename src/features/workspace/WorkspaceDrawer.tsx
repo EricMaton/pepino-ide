@@ -40,11 +40,22 @@ function folderOf(path: string, root: string): string {
   return relative || '/';
 }
 
-/** Side panel laid over the editor with the workspace's file tree: the tree is a tap away from any tab. */
-export function WorkspaceDrawer({ onClose, onOpenFile }: { onClose: () => void; onOpenFile: (path: string) => void }) {
+/**
+ * Side panel laid over the editor with the workspace's file tree: the tree is a tap away from any tab.
+ * Back from it goes up a level ([onBack]: out to the explorer); its close button only hides it.
+ */
+export function WorkspaceDrawer({
+  onClose,
+  onBack,
+  onOpenFile,
+}: {
+  onClose: () => void;
+  onBack: () => void;
+  onOpenFile: (path: string) => void;
+}) {
   const { workspace } = useServices();
   const { root } = useWorkspaceState(workspace);
-  useBackHandler(true, onClose);
+  useBackHandler(true, onBack);
 
   return (
     <>
@@ -76,11 +87,11 @@ export function WorkspaceDrawer({ onClose, onOpenFile }: { onClose: () => void; 
 /**
  * The workspace with no file open. The tree is only ever the panel over the
  * editor, so here it starts open over an empty editor; closed, it leaves a
- * way to open it again. Back closes the panel first, then leaves the workspace.
+ * way to open it again. Back leaves to the explorer, panel open or not.
  */
 export function NoFileOpen({ onOpenFile, onLeave }: { onOpenFile: (path: string) => void; onLeave: () => void }) {
   const [filesOpen, setFilesOpen] = useState(true);
-  // Only while the panel is closed: the panel's own back (closing it) must win, and it registers first.
+  // The panel registers its own back (the same) while it is open.
   useBackHandler(!filesOpen, onLeave);
   const showFiles = (open: boolean) => navigate('drawer', () => setFilesOpen(open));
 
@@ -107,7 +118,7 @@ export function NoFileOpen({ onOpenFile, onLeave }: { onOpenFile: (path: string)
           Project files
         </Button>
       </div>
-      {filesOpen && <WorkspaceDrawer onClose={() => showFiles(false)} onOpenFile={onOpenFile} />}
+      {filesOpen && <WorkspaceDrawer onClose={() => showFiles(false)} onBack={onLeave} onOpenFile={onOpenFile} />}
     </div>
   );
 }

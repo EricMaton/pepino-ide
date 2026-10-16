@@ -39,6 +39,11 @@ export interface EditorTabs {
   onSelect: (path: string) => void;
   /** Closes a tab other than this file's (already saved: only the active file has an editor). */
   onClose: (path: string) => void;
+  /**
+   * Out of the workspace to the explorer, its tabs still open: back with the tree showing.
+   * [alongside] runs in the same screen change (the tree closing, so the file is what comes back).
+   */
+  onLeave: (alongside: () => void) => void;
 }
 
 interface EditorScreenProps {
@@ -282,7 +287,11 @@ export default function EditorScreen({
     view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: original.doc }, userEvent: 'revert' });
   }, [view]);
 
-  useBackHandler(visible && !confirmClose, () => void requestClose());
+  // Back goes up a level: from a workspace file to its tree (the file stays open), from a loose file
+  // back to the explorer (closing it). With the tree showing, the tree's own back takes over.
+  useBackHandler(visible && !confirmClose && !filesOpen, () =>
+    inWorkspace ? setFilesOpen(true) : void requestClose(),
+  );
 
   // Leaving this file any other way than "close" (opening another one from the tree, closing the
   // project) unmounts the editor: pending edits are written then, not lost.
@@ -443,7 +452,11 @@ export default function EditorScreen({
       )}
 
       {visible && inWorkspace && filesOpen && (
-        <WorkspaceDrawer onClose={() => setFilesOpen(false)} onOpenFile={openOther} />
+        <WorkspaceDrawer
+          onClose={() => setFilesOpen(false)}
+          onBack={() => tabs.onLeave(() => setFilesOpenNow(false))}
+          onOpenFile={openOther}
+        />
       )}
 
       {confirmClose && (
