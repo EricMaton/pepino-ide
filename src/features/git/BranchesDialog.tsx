@@ -10,6 +10,8 @@ import styles from './GitScreen.module.css';
 /**
  * GitHub Desktop's "Current branch": every local branch (tap one to switch
  * to it), a new branch from the current commit, and deleting the others.
+ * Below, GitHub's branches not local yet (after a clone, all but the
+ * default one): tapping one makes its local branch and switches to it.
  */
 export function BranchesDialog({
   path,
@@ -58,6 +60,8 @@ export function BranchesDialog({
   };
 
   const taken = new Set(branches?.map((branch) => branch.name));
+  const local = branches?.filter((branch) => !branch.remote) ?? [];
+  const remote = branches?.filter((branch) => branch.remote) ?? [];
   const nameError = name.trim() && taken.has(name.trim()) ? 'There is already a branch with this name' : null;
   const canCreate = repo.hasCommits && name.trim() !== '' && !nameError && !busy;
 
@@ -115,7 +119,7 @@ export function BranchesDialog({
               Reading branches
             </p>
           ) : (
-            [...branches]
+            [...local]
               .sort((a, b) => Number(b.current) - Number(a.current) || a.name.localeCompare(b.name))
               .map((branch) => (
                 <div key={branch.name} className={cx(styles.branchRow, branch.current && styles.repoActive)}>
@@ -146,6 +150,30 @@ export function BranchesDialog({
               ))
           )}
         </div>
+        {remote.length > 0 && (
+          <>
+            <h3 className={cx('label', 'muted', styles.branchHeading)}>
+              <span className="accent">//</span> On GitHub
+            </h3>
+            <div className={styles.list}>
+              {remote.map((branch) => (
+                <div key={branch.name} className={styles.branchRow}>
+                  <button
+                    type="button"
+                    className={styles.branchMain}
+                    aria-label={`Switch to ${branch.name}, from GitHub`}
+                    disabled={busy}
+                    onClick={() => void run(() => git.checkout(path, branch.name))}
+                  >
+                    <BranchIcon size={20} />
+                    <span className={cx('body', 'ellipsis', styles.repoName)}>{branch.name}</span>
+                    <span className="caption muted">ORIGIN</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
       {deleting && (

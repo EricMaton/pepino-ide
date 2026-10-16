@@ -25,6 +25,9 @@ const plugin = vi.hoisted(() => ({
   createBranch: vi.fn(),
   checkout: vi.fn(),
   deleteBranch: vi.fn(),
+  clone: vi.fn(),
+  cancelClone: vi.fn(),
+  addListener: vi.fn(),
 }));
 
 vi.mock('@capacitor/core', () => ({ registerPlugin: () => plugin }));
@@ -38,6 +41,41 @@ beforeEach(() => {
 });
 
 describe('native git engine', () => {
+  it('clones with progress, announces the folder and stops listening after', async () => {
+    const remove = vi.fn();
+    let tell: (progress: unknown) => void = () => undefined;
+    plugin.addListener.mockImplementation(async (_event: string, listener: (progress: unknown) => void) => {
+      tell = listener;
+      return { remove };
+    });
+    plugin.clone.mockImplementation(async () => {
+      tell({ task: 'Receiving objects', done: 5, total: 10 });
+      return { branch: 'main', hasCommits: true };
+    });
+    const onProgress = vi.fn();
+
+    expect(await git.clone('work/hello', 'https://github.com/octocat/hello.git', onProgress)).toEqual({
+      branch: 'main',
+      hasCommits: true,
+    });
+    expect(plugin.addListener).toHaveBeenCalledWith('cloneProgress', onProgress);
+    expect(plugin.clone).toHaveBeenCalledWith({ path: 'work/hello', url: 'https://github.com/octocat/hello.git' });
+    expect(onProgress).toHaveBeenCalledWith({ task: 'Receiving objects', done: 5, total: 10 });
+    expect(announce).toHaveBeenCalledWith('fs.created', { path: 'work/hello' });
+    expect(remove).toHaveBeenCalled();
+  });
+
+  it('turns a failed clone into a GitError, still removing the listener', async () => {
+    const remove = vi.fn();
+    plugin.addListener.mockResolvedValue({ remove });
+    for (const code of ['CANCELLED', 'UNAUTHORIZED', 'NETWORK'] as const) {
+      plugin.clone.mockRejectedValueOnce({ code, message: 'nope' });
+      await expect(git.clone('hello', 'https://github.com/a/hello.git', vi.fn())).rejects.toMatchObject({ code });
+    }
+    expect(remove).toHaveBeenCalledTimes(3);
+    expect(announce).not.toHaveBeenCalled();
+  });
+
   it('sends project paths resolved inside the space, and never the space root', async () => {
     plugin.info.mockResolvedValue({ info: { branch: 'main', hasCommits: true } });
     expect(await git.info('./app/')).toEqual({ branch: 'main', hasCommits: true });

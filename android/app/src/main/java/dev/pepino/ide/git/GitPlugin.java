@@ -6,6 +6,7 @@ import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import dev.pepino.ide.github.GitHubPlugin;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -16,6 +17,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.json.JSONArray;
 
 /**
@@ -28,6 +30,8 @@ import org.json.JSONArray;
 public class GitPlugin extends Plugin {
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    // Set by cancelClone, outside the git thread (the clone holds it)
+    private volatile boolean cloneCancelled;
 
     private interface Work {
         JSObject run() throws Exception;
@@ -56,6 +60,8 @@ public class GitPlugin extends Plugin {
                 call.reject(e.getMessage(), "CONFLICT", e, data);
             } catch (GitOps.NotMergedBranchException e) {
                 call.reject(e.getMessage(), "NOT_MERGED", e);
+            } catch (GitOps.RemoteException e) {
+                call.reject(e.getMessage(), e.code, e);
             } catch (GitOps.StaleSelectionException e) {
                 JSObject data = new JSObject();
                 data.put("paths", new JSArray(e.paths));
@@ -85,6 +91,50 @@ public class GitPlugin extends Plugin {
     @PluginMethod
     public void init(PluginCall call) {
         run(call, () -> toJson(GitOps.init(folder(call))));
+    }
+
+    /**
+     * Clones a GitHub repository (#32) into `path`, with the signed-in user's
+     * token from the Keystore: it never comes from (or goes to) the WebView.
+     * Progress goes out as `cloneProgress` events: { task, done, total }.
+     */
+    @PluginMethod
+    public void clone(PluginCall call) {
+        String url = call.getString("url", "");
+        run(call, () -> {
+            // The token only ever goes to GitHub
+            if (!url.startsWith("https://github.com/")) throw new IllegalArgumentException("Only GitHub repositories can be cloned");
+            String token = GitHubPlugin.token(getContext());
+            cloneCancelled = false;
+            GitOps.RepoInfo info = GitOps.clone(
+                folder(call),
+                url,
+                token == null ? null : new UsernamePasswordCredentialsProvider("x-access-token", token),
+                new GitOps.Progress() {
+                    @Override
+                    public void update(String task, int done, int total) {
+                        JSObject event = new JSObject();
+                        event.put("task", task);
+                        event.put("done", done);
+                        event.put("total", total);
+                        notifyListeners("cloneProgress", event);
+                    }
+
+                    @Override
+                    public boolean cancelled() {
+                        return cloneCancelled;
+                    }
+                }
+            );
+            return toJson(info);
+        });
+    }
+
+    /** Stops the clone in progress; it rejects with CANCELLED, leaving nothing behind. */
+    @PluginMethod
+    public void cancelClone(PluginCall call) {
+        cloneCancelled = true;
+        call.resolve();
     }
 
     @PluginMethod
@@ -291,6 +341,7 @@ public class GitPlugin extends Plugin {
                 JSObject json = new JSObject();
                 json.put("name", branch.name());
                 json.put("current", branch.current());
+                if (branch.remote()) json.put("remote", true);
                 branches.put(json);
             }
             JSObject result = new JSObject();

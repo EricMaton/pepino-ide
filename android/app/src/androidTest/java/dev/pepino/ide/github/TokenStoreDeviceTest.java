@@ -51,8 +51,12 @@ public class TokenStoreDeviceTest {
     public void dropsWhatCannotBeDecrypted() throws Exception {
         store.save(NAME, SECRET);
         String onDisk = raw().getString(NAME, "");
-        // One byte of the ciphertext changed: GCM's tag no longer matches.
-        String broken = onDisk.substring(0, onDisk.length() - 2) + (onDisk.endsWith("A=") ? "B=" : "A=");
+        // One byte of the ciphertext changed: GCM's tag no longer matches. (Changing a base64
+        // character is not enough: the last one before "=" has bits no byte uses.)
+        int split = onDisk.indexOf(':');
+        byte[] sealed = android.util.Base64.decode(onDisk.substring(split + 1), android.util.Base64.NO_WRAP);
+        sealed[0] ^= 1;
+        String broken = onDisk.substring(0, split + 1) + android.util.Base64.encodeToString(sealed, android.util.Base64.NO_WRAP);
         raw().edit().putString(NAME, broken).commit();
 
         assertNull(store.read(NAME));

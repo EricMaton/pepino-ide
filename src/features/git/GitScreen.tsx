@@ -7,11 +7,10 @@ import { BranchIcon, FolderIcon, PlusIcon, ProjectIcon } from '../../ui/icons';
 import { useSnackbar } from '../../ui/useSnackbar';
 import { useGitHubAccount } from '../github/useGitHubAccount';
 import { errorMessage } from '../projects/errors';
-import { type FileEntry, isValidEntryName } from '../projects/files';
 import { FolderPicker } from '../projects/FolderPicker';
 import { basename, joinPath } from '../projects/paths';
-import { GIT_DIR, hasGitDir, isReservedName, type ProjectInfo } from '../projects/projects';
-import { type DirectoryListing, useDirectoryListing } from '../projects/useDirectoryListing';
+import { hasGitDir, type ProjectInfo } from '../projects/projects';
+import { useDirectoryListing } from '../projects/useDirectoryListing';
 import { useFolderChanges } from '../projects/useFolderChanges';
 import { useFolderStack } from '../projects/useFolderStack';
 import { BranchesDialog } from './BranchesDialog';
@@ -20,11 +19,13 @@ import { CloneRepositoryDialog } from './CloneDialog';
 import type { RepoInfo } from './engine';
 import styles from './GitScreen.module.css';
 import { HistoryView } from './HistoryView';
+import { GitMark, LocationDialog } from './LocationDialog';
+import { isGitDir, nameError, shown } from './locations';
 
 /*
  * GIT works like GitHub Desktop on the one active project, which the editor
  * shares: choosing a repository here makes it the active project everywhere.
- * Cloning lists the user's GitHub repositories (#31); cloning one is #32.
+ * Cloning picks one of the user's GitHub repositories (#31, #32).
  */
 interface GitScreenProps {
   project: ProjectInfo | null;
@@ -73,7 +74,7 @@ function RepositoryDialogs({
 }) {
   switch (dialog.kind) {
     case 'clone':
-      return <CloneRepositoryDialog onClose={onClose} />;
+      return <CloneRepositoryDialog onClose={onClose} onCloned={onDone} />;
     case 'create':
       return <CreateRepositoryDialog onClose={onClose} onCreated={onDone} />;
     case 'initialize':
@@ -175,25 +176,6 @@ function ActionCard({
   );
 }
 
-/** `~/projects/…` for a folder of the space. */
-const shown = (path: string) => (path === '' ? '~/projects' : `~/projects/${path}`);
-
-/** Tags the folders of [listing] that are git repositories, in a folder picker. */
-const gitMark = (listing: DirectoryListing | null) => (folder: FileEntry) =>
-  listing?.ok && listing.repos.has(folder.path) ? (
-    <span className={cx('caption', styles.mark, styles.markGit)}>GIT</span>
-  ) : null;
-
-const isGitDir = (folder: FileEntry) => folder.name === GIT_DIR;
-
-function nameError(name: string, taken: ReadonlySet<string>, location: string): string | null {
-  const trimmed = name.trim();
-  if (trimmed === '') return null;
-  if (isReservedName(trimmed)) return 'Reserved name';
-  if (!isValidEntryName(trimmed)) return 'Invalid name';
-  return taken.has(trimmed) ? `Already in ${shown(location)}` : null;
-}
-
 /**
  * GitHub Desktop's "Create a new repository": a new folder, named and put
  * wherever in ~/projects the user chooses, with git in it. It becomes one of
@@ -291,47 +273,6 @@ function CreateRepositoryDialog({ onClose, onCreated }: { onClose: () => void; o
   );
 }
 
-/** Where a new repository goes: any folder of ~/projects, starting at [start]. */
-function LocationDialog({
-  start,
-  onClose,
-  onChoose,
-}: {
-  start: string;
-  onClose: () => void;
-  onChoose: (path: string) => void;
-}) {
-  const { projectSpace } = useServices();
-  const folders = useFolderStack('', start);
-  const listing = useDirectoryListing(projectSpace, folders.path, 0, true);
-  return (
-    <Dialog
-      title="Location"
-      eyebrow="NEW REPOSITORY IN…"
-      onClose={onClose}
-      actions={
-        <>
-          <Button variant="text" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="filled" disabled={listing?.ok !== true} onClick={() => onChoose(folders.path)}>
-            Use this folder
-          </Button>
-        </>
-      }
-    >
-      <FolderPicker
-        folders={folders}
-        listing={listing}
-        rootLabel="~/projects"
-        hide={isGitDir}
-        mark={gitMark(listing)}
-      />
-      <p className={cx('caption', 'muted', styles.pickStatus)}>The repository goes in {shown(folders.path)}.</p>
-    </Dialog>
-  );
-}
-
 /**
  * GitHub Desktop's "Initialize": a folder of ~/projects without git, at any
  * depth, gets it. It becomes one of the repositories and the active project.
@@ -398,7 +339,7 @@ function InitializeRepositoryDialog({
         listing={listing}
         rootLabel="~/projects"
         hide={isGitDir}
-        mark={gitMark(listing)}
+        mark={(folder) => <GitMark listing={listing} folder={folder} />}
       />
       <p className={cx('caption', ready ? 'accent' : 'muted', styles.pickStatus)}>{status}</p>
     </Dialog>
@@ -480,7 +421,7 @@ function AddRepositoryDialog({
           addedPaths.has(folder.path) ? (
             <span className={cx('caption', styles.mark)}>ADDED</span>
           ) : (
-            gitMark(listing)(folder)
+            <GitMark listing={listing} folder={folder} />
           )
         }
       />

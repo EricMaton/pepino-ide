@@ -14,6 +14,46 @@ beforeEach(async () => {
 });
 
 describe('memory git engine', () => {
+  it('clones a made-up repository with progress, into a new or empty folder only', async () => {
+    const quick = createMemoryGitEngine(space, { cloneStepMs: 0 });
+    const tasks = new Set<string>();
+    const info = await quick.clone('hello', 'https://github.com/octocat/hello.git', ({ task }) => tasks.add(task));
+
+    expect(info).toEqual({ branch: 'main', hasCommits: true });
+    expect([...tasks]).toEqual(['Receiving objects', 'Resolving deltas', 'Checking out files']);
+    expect(await space.readTextFile('hello/README.md')).toContain('# hello');
+    expect(await quick.status('hello')).toEqual([]);
+    expect((await quick.log('hello')).map((entry) => entry.author)).toEqual(['octocat']);
+
+    await space.createFile('app/notes.txt');
+    await expect(quick.clone('app', 'https://github.com/octocat/hello.git')).rejects.toThrow(/not empty/);
+  });
+
+  it('lists GitHub’s other branches after a clone, and switching makes the local one', async () => {
+    const quick = createMemoryGitEngine(space, { cloneStepMs: 0 });
+    await quick.clone('hello', 'https://github.com/octocat/hello.git');
+    expect(await quick.branches('hello')).toEqual([
+      { name: 'main', current: true },
+      { name: 'develop', current: false, remote: true },
+    ]);
+
+    expect(await quick.checkout('hello', 'develop')).toEqual({ branch: 'develop', hasCommits: true });
+    expect(await space.readTextFile('hello/CHANGELOG.md')).toContain('Work in progress');
+    expect((await quick.log('hello')).map((entry) => entry.summary)).toEqual(['Start the changelog', 'Initial commit']);
+    expect(await quick.branches('hello')).toEqual([
+      { name: 'develop', current: true },
+      { name: 'main', current: false },
+    ]);
+    expect(await quick.status('hello')).toEqual([]);
+  });
+
+  it('a cancelled clone writes nothing', async () => {
+    const slow = createMemoryGitEngine(space, { cloneStepMs: 5 });
+    const cloning = slow.clone('hello', 'https://github.com/octocat/hello.git', () => void slow.cancelClone());
+    await expect(cloning).rejects.toMatchObject({ code: 'CANCELLED' });
+    expect(await space.listDirectory('').then((entries) => entries.map((entry) => entry.name))).not.toContain('hello');
+  });
+
   it('initializes a folder on main, with no commits', async () => {
     expect(await git.isRepository('app')).toBe(false);
     expect(await git.info('app')).toBeNull();

@@ -1,6 +1,6 @@
-import { registerPlugin } from '@capacitor/core';
+import { type PluginListenerHandle, registerPlugin } from '@capacitor/core';
 import { ProjectSpaceError } from '../projects/errors';
-import { isWithin, joinPath, parentPath, resolveInRoot } from '../projects/paths';
+import { basename, isWithin, joinPath, parentPath, resolveInRoot } from '../projects/paths';
 import { canBeProject, GIT_DIR, isRepository, MARKER_DIR } from '../projects/projects';
 import type { FsEvents } from '../projects/observed';
 import type { ProjectSpace } from '../projects/projectSpace';
@@ -74,16 +74,39 @@ export interface Branch {
   name: string;
   /** The branch HEAD is on. */
   current: boolean;
+  /** Only on GitHub (origin/[name]) so far: switching to it makes the local branch. */
+  remote?: true;
 }
 
 /**
  * A git failure the UI handles: switching branch would overwrite uncommitted
- * changes to [paths], a branch to delete has commits on no other branch, or
- * [paths] changed after their lines were picked for a commit.
+ * changes to [paths] (CONFLICT), a branch to delete has commits on no other
+ * branch (NOT_MERGED), [paths] changed after their lines were picked for a
+ * commit (STALE); or talking to GitHub (#32): the user stopped it
+ * (CANCELLED), GitHub refused the sign-in (UNAUTHORIZED), no connection
+ * (NETWORK).
  */
+export type GitErrorCode = 'CONFLICT' | 'NOT_MERGED' | 'STALE' | 'CANCELLED' | 'UNAUTHORIZED' | 'NETWORK';
+
+const GIT_ERROR_CODES: readonly GitErrorCode[] = [
+  'CONFLICT',
+  'NOT_MERGED',
+  'STALE',
+  'CANCELLED',
+  'UNAUTHORIZED',
+  'NETWORK',
+];
+
+/** How a clone goes: the step git is on ("Receiving objects"…), and how far; [total] is 0 when unknown. */
+export interface CloneProgress {
+  task: string;
+  done: number;
+  total: number;
+}
+
 export class GitError extends Error {
   constructor(
-    readonly code: 'CONFLICT' | 'NOT_MERGED' | 'STALE',
+    readonly code: GitErrorCode,
     message: string,
     readonly paths: readonly string[] = [],
   ) {
@@ -132,18 +155,30 @@ export interface GitEngine {
   /** The identity commits are made with, or null until it is set. */
   identity(): Promise<Identity | null>;
   setIdentity(identity: Identity): Promise<void>;
-  /** The local branches by name (with no commits yet, just the unborn current one). */
+  /**
+   * The local branches by name (with no commits yet, just the unborn current
+   * one), then GitHub's that are not local yet ([Branch.remote]).
+   */
   branches(path: string): Promise<Branch[]>;
   /** Creates [name] at the current commit and switches to it; uncommitted changes come along. */
   createBranch(path: string, name: string): Promise<RepoInfo>;
   /**
-   * Switches to [name], rewriting the files that differ (announced as fs.*
-   * events). Rejects with a CONFLICT [GitError] when uncommitted changes would
-   * be overwritten; nothing changes then.
+   * Switches to [name] (a remote one gets its local branch first), rewriting
+   * the files that differ (announced as fs.* events). Rejects with a CONFLICT
+   * [GitError] when uncommitted changes would be overwritten; nothing changes
+   * then.
    */
   checkout(path: string, name: string): Promise<RepoInfo>;
   /** Deletes [name] (never the current branch); NOT_MERGED unless [force] when its commits are on no other branch. */
   deleteBranch(path: string, name: string, options?: { force?: boolean }): Promise<void>;
+  /**
+   * Clones the GitHub repository at [url] into [path], a new or empty folder,
+   * on its default branch, with the signed-in user's token (which stays
+   * native). [onProgress] follows it. A failed or cancelled clone leaves
+   * nothing behind; [cancelClone] makes it reject with CANCELLED.
+   */
+  clone(path: string, url: string, onProgress?: (progress: CloneProgress) => void): Promise<RepoInfo>;
+  cancelClone(): Promise<void>;
 }
 
 interface GitPlugin {
@@ -170,6 +205,9 @@ interface GitPlugin {
   createBranch(options: { path: string; name: string }): Promise<RepoInfo>;
   checkout(options: { path: string; name: string }): Promise<{ info: RepoInfo; written: string[]; removed: string[] }>;
   deleteBranch(options: { path: string; name: string; force: boolean }): Promise<void>;
+  clone(options: { path: string; url: string }): Promise<RepoInfo>;
+  cancelClone(): Promise<void>;
+  addListener(event: 'cloneProgress', listener: (progress: CloneProgress) => void): Promise<PluginListenerHandle>;
 }
 
 const project = (path: string): string => {
@@ -185,9 +223,8 @@ type Announce = <K extends keyof FsEvents>(topic: K, payload: FsEvents[K]) => vo
 /** A plugin rejection with a code the UI handles, as a [GitError]; anything else as it is. */
 function gitError(error: unknown): unknown {
   const { code, message, data } = (error ?? {}) as { code?: string; message?: string; data?: { paths?: string[] } };
-  if (code === 'CONFLICT' || code === 'NOT_MERGED' || code === 'STALE') {
-    return new GitError(code, message ?? code, data?.paths ?? []);
-  }
+  const known = GIT_ERROR_CODES.find((candidate) => candidate === code);
+  if (known) return new GitError(known, message ?? known, data?.paths ?? []);
   return error;
 }
 
@@ -270,6 +307,22 @@ export function createNativeGitEngine(announce: Announce): GitEngine {
         throw gitError(error);
       });
     },
+    async clone(path, url, onProgress) {
+      const folder = project(path);
+      const listening = onProgress ? await git.addListener('cloneProgress', onProgress) : null;
+      try {
+        const info = await git.clone({ path: folder, url }).catch((error: unknown) => {
+          throw gitError(error);
+        });
+        announce('fs.created', { path: folder });
+        return info;
+      } finally {
+        await listening?.remove();
+      }
+    },
+    cancelClone() {
+      return git.cancelClone();
+    },
   };
 }
 
@@ -298,9 +351,10 @@ const hashOf = (text: string): string => {
  * in `.git/pepino-refs.json`. Enough to try the GIT screens with
  * `npm run dev`; the real thing is JGit, tested in JUnit (ADR-006).
  */
-export function createMemoryGitEngine(space: ProjectSpace): GitEngine {
+export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 } = {}): GitEngine {
   let identity: Identity | null = null;
   let commits = 0;
+  let cloneCancelled = false;
   const gitPath = (folder: string, name: string) => joinPath(joinPath(folder, GIT_DIR), name);
 
   const readRefs = async (folder: string): Promise<Record<string, Snapshot>> => {
@@ -309,6 +363,11 @@ export function createMemoryGitEngine(space: ProjectSpace): GitEngine {
   };
   const writeRefs = (folder: string, refs: Record<string, Snapshot>) =>
     space.writeTextFile(gitPath(folder, 'pepino-refs.json'), JSON.stringify(refs));
+  /** GitHub's branches (origin/…) in a clone, as each one's files. */
+  const readRemotes = async (folder: string): Promise<Record<string, Snapshot>> => {
+    const raw = await space.readTextFile(gitPath(folder, 'pepino-remotes.json')).catch(() => '{}');
+    return JSON.parse(raw) as Record<string, Snapshot>;
+  };
 
   /** Each branch's commits, newest first, with the files as each one left them. */
   type Log = Record<string, (LogEntry & { files: Snapshot })[]>;
@@ -537,9 +596,18 @@ export function createMemoryGitEngine(space: ProjectSpace): GitEngine {
 
     async branches(path) {
       const folder = await repository(path);
-      const [refs, current] = await Promise.all([readRefs(folder), currentBranch(folder)]);
+      const [refs, current, remotes] = await Promise.all([
+        readRefs(folder),
+        currentBranch(folder),
+        readRemotes(folder),
+      ]);
       const names = [...new Set([...Object.keys(refs), current])].sort();
-      return names.map((name) => ({ name, current: name === current }));
+      const local: Branch[] = names.map((name) => ({ name, current: name === current }));
+      const remote: Branch[] = Object.keys(remotes)
+        .filter((name) => !names.includes(name))
+        .sort()
+        .map((name) => ({ name, current: false, remote: true }));
+      return [...local, ...remote];
     },
 
     async createBranch(path, rawName) {
@@ -558,9 +626,14 @@ export function createMemoryGitEngine(space: ProjectSpace): GitEngine {
 
     async checkout(path, name) {
       const folder = await repository(path);
-      const [refs, current, files] = await Promise.all([readRefs(folder), currentBranch(folder), readFiles(folder)]);
+      const [refs, current, files, remotes] = await Promise.all([
+        readRefs(folder),
+        currentBranch(folder),
+        readFiles(folder),
+        readRemotes(folder),
+      ]);
       if (name === current) return { branch: name, hasCommits: name in refs };
-      const target = refs[name];
+      const target = refs[name] ?? remotes[name];
       if (!target) throw new Error(`No branch named ${name}`);
       const source = refs[current] ?? {};
       const differing = [...new Set([...Object.keys(source), ...Object.keys(target)])].filter(
@@ -576,6 +649,12 @@ export function createMemoryGitEngine(space: ProjectSpace): GitEngine {
       for (const file of differing) {
         if (file in target) await writeFile(folder, file, target[file]);
         else await space.delete(joinPath(folder, file));
+      }
+      if (!(name in refs)) {
+        // GitHub's branch gets its local one, with origin's history
+        await writeRefs(folder, { ...refs, [name]: target });
+        const log = await readLog(folder);
+        await writeLog(folder, { ...log, [name]: log[`origin/${name}`] ?? [] });
       }
       await setCurrentBranch(folder, name);
       return { branch: name, hasCommits: true };
@@ -597,6 +676,51 @@ export function createMemoryGitEngine(space: ProjectSpace): GitEngine {
       const log = await readLog(folder);
       delete log[name];
       await writeLog(folder, log);
+    },
+
+    async clone(path, url, onProgress) {
+      const folder = project(path);
+      const existing = await space.listDirectory(folder).catch(() => null);
+      if (existing && existing.length > 0) throw new Error(`Already exists and is not empty: ${basename(folder)}`);
+      // The steps JGit goes through, at a pace to watch; cancelling writes nothing
+      cloneCancelled = false;
+      for (const task of ['Receiving objects', 'Resolving deltas', 'Checking out files']) {
+        for (let done = 0; done <= 100; done += 20) {
+          if (cloneCancelled) throw new GitError('CANCELLED', 'Clone cancelled');
+          onProgress?.({ task, done, total: 100 });
+          await new Promise((resolve) => setTimeout(resolve, cloneStepMs));
+        }
+      }
+      const name = basename(url).replace(/\.git$/, '');
+      const owner = basename(parentPath(new URL(url).pathname));
+      const files: Snapshot = {
+        'README.md': `# ${name}\n\nCloned from ${url}\n`,
+        'src/index.ts': `export const hello = '${name}';\n`,
+      };
+      if (!existing) await space.createDirectory(folder);
+      for (const [file, text] of Object.entries(files)) await writeFile(folder, file, text);
+      await engine.init(folder);
+      await writeRefs(folder, { [DEFAULT_BRANCH]: files });
+      const time = Date.now();
+      const id = hashOf(`${url}:${time}`).padStart(8, '0').repeat(5);
+      const entry = { id, summary: 'Initial commit', description: '', author: owner, email: '', time, files };
+      // and a branch only on GitHub, to switch to
+      const develop: Snapshot = { ...files, 'CHANGELOG.md': '# Changelog\n\n- Work in progress\n' };
+      await space.writeTextFile(gitPath(folder, 'pepino-remotes.json'), JSON.stringify({ develop }));
+      const ahead = {
+        ...entry,
+        id: hashOf(`${url}:develop`).padStart(8, '0').repeat(5),
+        summary: 'Start the changelog',
+      };
+      await writeLog(folder, {
+        [DEFAULT_BRANCH]: [entry],
+        'origin/develop': [{ ...ahead, time: time + 1, files: develop }, entry],
+      });
+      return { branch: DEFAULT_BRANCH, hasCommits: true };
+    },
+
+    async cancelClone() {
+      cloneCancelled = true;
     },
   };
   return engine;

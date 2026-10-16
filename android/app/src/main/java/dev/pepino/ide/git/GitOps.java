@@ -15,12 +15,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import org.eclipse.jgit.api.CheckoutCommand;
+import org.eclipse.jgit.api.CreateBranchCommand;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.Status;
 import org.eclipse.jgit.api.errors.CheckoutConflictException;
 import org.eclipse.jgit.api.errors.EmptyCommitException;
 import org.eclipse.jgit.api.errors.NotMergedException;
 import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.api.errors.TransportException;
 import org.eclipse.jgit.diff.DiffAlgorithm;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.diff.Edit;
@@ -35,11 +37,13 @@ import org.eclipse.jgit.dircache.DirCacheIterator;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.CoreConfig.EolStreamType;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.ObjectLoader;
 import org.eclipse.jgit.lib.PersonIdent;
+import org.eclipse.jgit.lib.ProgressMonitor;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
@@ -48,12 +52,16 @@ import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevTree;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileBasedConfig;
+import org.eclipse.jgit.transport.CredentialsProvider;
 import org.eclipse.jgit.treewalk.EmptyTreeIterator;
 import org.eclipse.jgit.treewalk.FileTreeIterator;
 import org.eclipse.jgit.treewalk.TreeWalk;
+import org.eclipse.jgit.treewalk.WorkingTreeOptions;
 import org.eclipse.jgit.treewalk.filter.NotIgnoredFilter;
+import org.eclipse.jgit.treewalk.filter.PathFilter;
 import org.eclipse.jgit.treewalk.filter.TreeFilter;
 import org.eclipse.jgit.util.FS;
+import org.eclipse.jgit.util.io.EolStreamTypeUtil;
 import org.eclipse.jgit.util.RawParseUtils;
 
 /**
@@ -107,7 +115,15 @@ public final class GitOps {
     public record SnapshotVersion(String id, String reason, long time) {}
 
     /** A local branch; [current] is the one HEAD is on. */
-    public record Branch(String name, boolean current) {}
+    /** A branch; [remote] when it is only on GitHub (origin/[name]), with no local branch yet. */
+    public record Branch(String name, boolean current, boolean remote) {
+        public Branch(String name, boolean current) {
+            this(name, current, false);
+        }
+    }
+
+    /** The remote a clone sets up, whose branches show next to the local ones. */
+    static final String ORIGIN = "origin";
 
     /** After switching branch: where HEAD is now, and the files the switch wrote or removed (repo-relative). */
     public record Switched(RepoInfo info, List<String> written, List<String> removed) {}
@@ -196,6 +212,132 @@ public final class GitOps {
     /** True when [folder] holds a git repository (its own .git, not one of a parent folder). */
     public static boolean isRepository(File folder) {
         return RepositoryCache.FileKey.isGitRepository(new File(folder, Constants.DOT_GIT), FS.DETECTED);
+    }
+
+    /**
+     * Talking to a remote went wrong (#32): "CANCELLED" (the user stopped
+     * it), "UNAUTHORIZED" (the remote refused the credentials), "NETWORK"
+     * (no connection) or "FAILED".
+     */
+    public static final class RemoteException extends IOException {
+        public final String code;
+
+        RemoteException(String code, String message, Throwable cause) {
+            super(message, cause);
+            this.code = code;
+        }
+    }
+
+    /** How a clone goes: [update] as each step advances ([total] 0 when unknown), and whether to stop. */
+    public interface Progress {
+        void update(String task, int done, int total);
+
+        boolean cancelled();
+    }
+
+    /**
+     * Clones [url] into [folder], which must not exist or be empty, checking
+     * out the remote's default branch; every remote branch comes along as
+     * origin/…. JGit 5.13 has no shallow clone (ADR-006): the whole history
+     * comes. A failed or cancelled clone leaves nothing behind.
+     */
+    public static RepoInfo clone(File folder, String url, CredentialsProvider credentials, Progress progress)
+        throws IOException, GitAPIException {
+        String[] existing = folder.list();
+        if (folder.exists() && (existing == null || existing.length > 0)) {
+            throw new IOException("Already exists and is not empty: " + folder.getName());
+        }
+        boolean created = !folder.exists();
+        try (
+            Git git = Git.cloneRepository()
+                .setURI(url)
+                .setDirectory(folder)
+                .setCloneAllBranches(true)
+                .setCredentialsProvider(credentials)
+                .setProgressMonitor(monitor(progress))
+                .call()
+        ) {
+            excludePepino(git.getRepository());
+            return info(git.getRepository());
+        } catch (IOException | GitAPIException | RuntimeException e) {
+            // JGit cleans up after itself too; this also covers a failure after its clone (the exclude)
+            deleteContents(folder);
+            if (created) folder.delete();
+            if (progress.cancelled()) throw new RemoteException("CANCELLED", "Clone cancelled", e);
+            throw remoteFailure(e);
+        }
+    }
+
+    /** JGit's progress as [Progress], at most every 150 ms per step (every object would flood the bridge). */
+    private static ProgressMonitor monitor(Progress progress) {
+        return new ProgressMonitor() {
+            private String task = "";
+            private int total;
+            private int done;
+            private long shown;
+
+            @Override
+            public void start(int totalTasks) {}
+
+            @Override
+            public void beginTask(String title, int totalWork) {
+                task = title;
+                total = totalWork == UNKNOWN ? 0 : totalWork;
+                done = 0;
+                shown = System.currentTimeMillis();
+                progress.update(task, 0, total);
+            }
+
+            @Override
+            public void update(int completed) {
+                done += completed;
+                long now = System.currentTimeMillis();
+                if (now - shown >= 150) {
+                    shown = now;
+                    progress.update(task, done, total);
+                }
+            }
+
+            @Override
+            public void endTask() {
+                progress.update(task, total > 0 ? total : done, total);
+            }
+
+            @Override
+            public boolean isCancelled() {
+                return progress.cancelled();
+            }
+        };
+    }
+
+    /** What a failed fetch or clone was, by what JGit says. */
+    static IOException remoteFailure(Exception e) {
+        if (e instanceof RemoteException) return (RemoteException) e;
+        String message = String.valueOf(e.getMessage());
+        if (e instanceof TransportException) {
+            if (message.contains("not authorized") || message.contains("Authentication is required") || message.contains("401")) {
+                return new RemoteException("UNAUTHORIZED", "GitHub refused the sign-in", e);
+            }
+            for (Throwable cause = e.getCause(); cause != null; cause = cause.getCause()) {
+                if (cause instanceof java.net.UnknownHostException
+                    || cause instanceof java.net.ConnectException
+                    || cause instanceof java.net.SocketTimeoutException
+                    || cause instanceof java.net.NoRouteToHostException) {
+                    return new RemoteException("NETWORK", "Cannot reach GitHub", e);
+                }
+            }
+        }
+        return new RemoteException("FAILED", message, e);
+    }
+
+    /** Deletes what is inside [folder]; a symlink goes, never what it points to. */
+    private static void deleteContents(File folder) {
+        File[] children = folder.listFiles();
+        if (children == null) return;
+        for (File child : children) {
+            if (child.isDirectory() && !Files.isSymbolicLink(child.toPath())) deleteContents(child);
+            child.delete();
+        }
     }
 
     /** Makes [folder] a repository on [DEFAULT_BRANCH]. An existing repository is left as it is. */
@@ -389,8 +531,37 @@ public final class GitOps {
             }
         }
         if (file.length() > DIFF_MAX_BYTES) return new Sides(old, old, mode, text, true);
-        byte[] now = file.isFile() ? Files.readAllBytes(file.toPath()) : new byte[0];
+        byte[] now = file.isFile() ? checkedIn(repository, path, file) : new byte[0];
         return new Sides(old, now, mode, text && !RawText.isBinary(old) && !RawText.isBinary(now), false);
+    }
+
+    /**
+     * [file] as a commit would store it: with .gitattributes' line endings
+     * applied (`*.bat text eol=crlf` is CRLF on disk, LF in git), so a diff
+     * shows what changed, not every line of a CRLF file.
+     */
+    private static byte[] checkedIn(Repository repository, String path, File file) throws IOException {
+        try (TreeWalk walk = new TreeWalk(repository)) {
+            walk.setOperationType(TreeWalk.OperationType.CHECKIN_OP);
+            walk.addTree(new FileTreeIterator(repository));
+            walk.setFilter(PathFilter.create(path));
+            walk.setRecursive(true);
+            while (walk.next()) {
+                if (!walk.getPathString().equals(path)) continue;
+                EolStreamType eol = EolStreamTypeUtil.detectStreamType(
+                    TreeWalk.OperationType.CHECKIN_OP,
+                    repository.getConfig().get(WorkingTreeOptions.KEY),
+                    walk.getAttributes()
+                );
+                try (InputStream in = EolStreamTypeUtil.wrapInputStream(Files.newInputStream(file.toPath()), eol)) {
+                    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+                    byte[] buffer = new byte[8192];
+                    for (int n; (n = in.read(buffer)) != -1; ) bytes.write(buffer, 0, n);
+                    return bytes.toByteArray();
+                }
+            }
+        }
+        return Files.readAllBytes(file.toPath());
     }
 
     /**
@@ -830,6 +1001,12 @@ public final class GitOps {
             names.put(current, true);
             List<Branch> branches = new ArrayList<>();
             names.forEach((name, isCurrent) -> branches.add(new Branch(name, isCurrent)));
+            // GitHub's branches not here yet (after a clone, all but the default one), as GitHub Desktop lists them
+            String prefix = Constants.R_REMOTES + ORIGIN + "/";
+            for (Ref ref : git.getRepository().getRefDatabase().getRefsByPrefix(prefix)) {
+                String name = ref.getName().substring(prefix.length());
+                if (!name.equals(Constants.HEAD) && !names.containsKey(name)) branches.add(new Branch(name, false, true));
+            }
             return branches;
         }
     }
@@ -857,30 +1034,57 @@ public final class GitOps {
     /**
      * Switches to [name]. Uncommitted changes come along when the two branches
      * agree on those files; when they do not, nothing changes and the conflict
-     * names the files (commit them first).
+     * names the files (commit them first). A branch only on GitHub
+     * (origin/[name]) gets its local branch first, tracking it, like
+     * `git checkout name`.
      */
     public static Switched checkout(File folder, String name) throws IOException, GitAPIException {
         try (Git git = Git.open(folder)) {
             Repository repository = git.getRepository();
             clearStaleLocks(repository);
             if (name.equals(repository.getBranch())) return new Switched(info(repository), Collections.emptyList(), Collections.emptyList());
-            if (repository.exactRef(Constants.R_HEADS + name) == null) {
+            boolean local = repository.exactRef(Constants.R_HEADS + name) != null;
+            String remote = Constants.R_REMOTES + ORIGIN + "/" + name;
+            if (!local && repository.exactRef(remote) == null) {
                 throw new IllegalArgumentException("No branch named " + name);
             }
             // The files are about to be rewritten: keep how they are first.
             snapshot(repository, "Before switching to " + name);
             CheckoutCommand checkout = git.checkout().setName(name);
+            if (!local) {
+                checkout.setCreateBranch(true).setStartPoint(remote).setUpstreamMode(CreateBranchCommand.SetupUpstreamMode.TRACK);
+            }
             try {
                 checkout.call();
             } catch (CheckoutConflictException e) {
                 throw new ConflictException(e.getConflictingPaths());
             }
-            return new Switched(
-                info(repository),
-                new ArrayList<>(checkout.getResult().getModifiedList()),
-                new ArrayList<>(checkout.getResult().getRemovedList())
-            );
+            List<String> written = new ArrayList<>(checkout.getResult().getModifiedList());
+            List<String> removed = new ArrayList<>(checkout.getResult().getRemovedList());
+            rewriteWithNewAttributes(git, written, removed);
+            return new Switched(info(repository), written, removed);
         }
+    }
+
+    /**
+     * JGit writes a branch's files with the line endings of the .gitattributes
+     * on disk before the switch, git with the new branch's: going to a branch
+     * without `*.bat eol=crlf` wrote its .bat files CRLF, and they showed as
+     * changed. When a switch changes a .gitattributes, the files it wrote are
+     * written again from the index, now under the new rules. They are the
+     * branch's own, never the user's changes.
+     */
+    private static void rewriteWithNewAttributes(Git git, List<String> written, List<String> removed) throws GitAPIException {
+        boolean attributesChanged = false;
+        for (List<String> paths : List.of(written, removed)) {
+            for (String path : paths) {
+                if (path.equals(Constants.DOT_GIT_ATTRIBUTES) || path.endsWith("/" + Constants.DOT_GIT_ATTRIBUTES)) {
+                    attributesChanged = true;
+                }
+            }
+        }
+        if (!attributesChanged || written.isEmpty()) return;
+        git.checkout().addPaths(written).call();
     }
 
     /** Deletes branch [name], never the current one; with commits on no other branch it needs [force]. */

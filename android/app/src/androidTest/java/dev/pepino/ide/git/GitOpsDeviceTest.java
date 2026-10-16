@@ -100,4 +100,30 @@ public class GitOpsDeviceTest {
         GitOps.setIdentity(config, ME);
         assertEquals(ME, GitOps.identity(config));
     }
+    /**
+     * A real clone from GitHub over HTTPS (#32): JGit's transport and TLS on
+     * ART. Needs the network; octocat/Hello-World is tiny and public.
+     */
+    @Test
+    public void clonesAPublicRepositoryFromGitHub() throws Exception {
+        File hello = new File(space, "Hello-World");
+        List<String> steps = new java.util.ArrayList<>();
+        GitOps.RepoInfo info = GitOps.clone(hello, "https://github.com/octocat/Hello-World.git", null, new GitOps.Progress() {
+            @Override
+            public void update(String task, int done, int total) {
+                if (!steps.contains(task)) steps.add(task);
+            }
+
+            @Override
+            public boolean cancelled() {
+                return false;
+            }
+        });
+
+        assertEquals(new GitOps.RepoInfo("master", true), info);
+        assertTrue(new File(hello, "README").isFile());
+        assertTrue(GitOps.status(hello).isEmpty());
+        assertFalse(GitOps.log(hello, 0, 5).isEmpty());
+        assertTrue(steps.toString(), steps.contains("Receiving objects"));
+    }
 }
