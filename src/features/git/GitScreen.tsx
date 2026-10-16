@@ -1,18 +1,22 @@
 import { type ReactNode, useEffect, useState } from 'react';
 import { useServices } from '../../app/services';
 import { TopBar } from '../../app/TopBar';
-import { Dialog } from '../../ui/components';
+import { Button, Dialog, TextField } from '../../ui/components';
 import { cx } from '../../ui/cx';
-import { BranchIcon, PlusIcon } from '../../ui/icons';
-import { findRepositories, isRepository, type ProjectInfo } from '../projects/projects';
+import { BranchIcon, FolderIcon, PlusIcon } from '../../ui/icons';
+import { useSnackbar } from '../../ui/useSnackbar';
+import { errorMessage } from '../projects/errors';
+import { isValidEntryName, sortEntries } from '../projects/files';
+import { findRepositories, isReservedName, type ProjectInfo } from '../projects/projects';
+import { useDirectoryListing } from '../projects/useDirectoryListing';
 import { useFolderChanges } from '../projects/useFolderChanges';
+import type { RepoInfo } from './engine';
 import styles from './GitScreen.module.css';
 
 /*
  * GIT works like GitHub Desktop on the one active project, which the editor
  * shares: choosing a repository here makes it the active project everywhere.
- * Cloning (#29, #31, #32) and creating repositories (#22) show already, and
- * turn on when the git engine (ADR-006) lands.
+ * Cloning (#29, #31, #32) shows already and turns on with GitHub sign-in.
  */
 interface GitScreenProps {
   project: ProjectInfo | null;
@@ -52,6 +56,7 @@ function useRepositories(): ProjectInfo[] | null {
 /** GitHub Desktop's "Let's get started": clone, create, or add a repository already on the device. */
 function GitStart({ onOpen }: { onOpen: (path: string) => void }) {
   const repos = useRepositories();
+  const [creating, setCreating] = useState(false);
   return (
     <div className={styles.screen}>
       <TopBar title="Git" subtitle="NO REPOSITORY" label="Search commands · Git" />
@@ -61,11 +66,12 @@ function GitStart({ onOpen }: { onOpen: (path: string) => void }) {
           Git works on one repository at a time: the project the editor has open. Pick one to start.
         </p>
         <div className={styles.actions}>
-          <SoonAction icon={<BranchIcon size={22} />} title="Clone a repository" detail="From GitHub · Sign in first" />
-          <SoonAction
+          <ActionCard icon={<BranchIcon size={22} />} title="Clone a repository" detail="From GitHub · Sign in first" />
+          <ActionCard
             icon={<PlusIcon size={22} />}
             title="Create a new repository"
-            detail="In a folder of ~/projects"
+            detail="A new folder, or one of ~/projects"
+            onClick={() => setCreating(true)}
           />
         </div>
         <h2 className={cx('label', 'muted', styles.heading)}>
@@ -73,22 +79,142 @@ function GitStart({ onOpen }: { onOpen: (path: string) => void }) {
         </h2>
         <RepositoryList repos={repos} activePath={null} onOpen={onOpen} />
       </div>
+      {creating && (
+        <CreateRepositoryDialog
+          onClose={() => setCreating(false)}
+          onCreated={(path) => {
+            setCreating(false);
+            onOpen(path);
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function SoonAction({ icon, title, detail }: { icon: ReactNode; title: string; detail: string }) {
+/** A big action; without [onClick] it is still to come ("SOON"). */
+function ActionCard({
+  icon,
+  title,
+  detail,
+  onClick,
+  busy = false,
+}: {
+  icon: ReactNode;
+  title: string;
+  detail: string;
+  onClick?: () => void;
+  busy?: boolean;
+}) {
   return (
-    <button type="button" className={styles.action} disabled>
+    <button type="button" className={styles.action} disabled={!onClick || busy} onClick={onClick}>
       <span className={styles.actionIcon} aria-hidden>
         {icon}
       </span>
       <span className={styles.actionText}>
-        <span className="body">{title}</span>
+        <span className={cx('body', busy && 'cursor')}>{title}</span>
         <span className="caption muted">{detail}</span>
       </span>
-      <span className={cx('caption', styles.soon)}>SOON</span>
+      {onClick ? (
+        <span className={cx('label', 'accent')} aria-hidden>
+          ▸
+        </span>
+      ) : (
+        <span className={cx('caption', styles.soon)}>SOON</span>
+      )}
     </button>
+  );
+}
+
+function nameError(name: string, taken: ReadonlySet<string>): string | null {
+  const trimmed = name.trim();
+  if (trimmed === '') return null;
+  if (isReservedName(trimmed)) return 'Reserved name';
+  if (!isValidEntryName(trimmed)) return 'Invalid name';
+  return taken.has(trimmed) ? 'Already in ~/projects: pick it below' : null;
+}
+
+/**
+ * GitHub Desktop's "Create a new repository": a new folder in ~/projects, or
+ * one already there without git, becomes a repository and the active project.
+ */
+function CreateRepositoryDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (path: string) => void }) {
+  const { projectSpace, git } = useServices();
+  const showSnackbar = useSnackbar();
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const listing = useDirectoryListing(projectSpace, '', 0, true);
+  const folders = listing?.ok ? sortEntries(listing.entries, 'name').filter((entry) => entry.isDirectory) : [];
+  const withoutGit = listing?.ok ? folders.filter((folder) => !listing.repos.has(folder.path)) : [];
+  const error = nameError(name, new Set(folders.map((folder) => folder.name)));
+  const valid = name.trim() !== '' && error === null;
+
+  const initialize = async (path: string, create: boolean) => {
+    setBusy(true);
+    try {
+      if (create) await projectSpace.createDirectory(path);
+      const info = await git.init(path);
+      showSnackbar(`Initialized ${path} on ${info.branch}`);
+      onCreated(path);
+    } catch (failure) {
+      showSnackbar(`Error: ${errorMessage(failure)}`);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog
+      title="New repository"
+      eyebrow="IN ~/projects"
+      onClose={onClose}
+      actions={
+        <>
+          <Button variant="text" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="filled"
+            className={cx(busy && 'cursor')}
+            disabled={!valid || busy}
+            onClick={() => void initialize(name.trim(), true)}
+          >
+            {busy ? 'Creating' : 'Create'}
+          </Button>
+        </>
+      }
+    >
+      <TextField
+        label="Name"
+        placeholder="my-app"
+        value={name}
+        onChange={setName}
+        error={error}
+        autoFocus
+        onSubmit={() => valid && !busy && void initialize(name.trim(), true)}
+      />
+      {withoutGit.length > 0 && (
+        <div className={styles.pick}>
+          <span className="label muted">
+            <span className="accent">//</span> Or a folder without git
+          </span>
+          <div className={styles.pickList}>
+            {withoutGit.map((folder) => (
+              <Button
+                key={folder.path}
+                variant="text"
+                listItem
+                className={cx('body', styles.pickFolder)}
+                disabled={busy}
+                onClick={() => void initialize(folder.path, false)}
+              >
+                <FolderIcon size={20} />
+                <span className="ellipsis">{folder.name}</span>
+              </Button>
+            ))}
+          </div>
+        </div>
+      )}
+    </Dialog>
   );
 }
 
@@ -149,37 +275,66 @@ function GitProject({
   onOpen: (path: string) => void;
   teaser: ReactNode;
 }) {
-  const { projectSpace } = useServices();
+  const { git } = useServices();
+  const showSnackbar = useSnackbar();
   const [choosing, setChoosing] = useState(false);
+  const [initializing, setInitializing] = useState(false);
   const [tick, setTick] = useState(0);
-  const [repo, setRepo] = useState<boolean | null>(null);
+  // undefined while reading; null when the project is not a repository
+  const [repo, setRepo] = useState<RepoInfo | null | undefined>(undefined);
+  // `.git` appearing or going away changes the answer
   useFolderChanges(project.path, () => setTick((value) => value + 1));
   useEffect(() => {
     let active = true;
-    void isRepository(projectSpace, project.path).then((found) => active && setRepo(found));
+    git.info(project.path).then(
+      (info) => active && setRepo(info),
+      (error: unknown) => {
+        console.error('Cannot read the repository', error);
+        if (active) setRepo(null);
+      },
+    );
     return () => {
       active = false;
     };
-  }, [projectSpace, project.path, tick]);
+  }, [git, project.path, tick]);
+
+  const initialize = () => {
+    setInitializing(true);
+    git.init(project.path).then(
+      (info) => {
+        setInitializing(false);
+        setRepo(info);
+        showSnackbar(`Initialized ${project.name} on ${info.branch}`);
+      },
+      (error: unknown) => {
+        setInitializing(false);
+        showSnackbar(`Error: ${errorMessage(error)}`);
+      },
+    );
+  };
 
   return (
     <div className={styles.screen}>
       <TopBar
         title="Git"
-        subtitle={`${project.name} · ${repo === false ? 'NOT A REPOSITORY' : 'REPOSITORY'}`}
+        subtitle={`${project.name} · ${repo === null ? 'NOT A REPOSITORY' : 'REPOSITORY'}`}
         label="Search commands · Git"
       />
       <button type="button" className={styles.current} onClick={() => setChoosing(true)}>
         <BranchIcon size={20} />
         <span className={styles.actionText}>
-          <span className="caption muted">CURRENT REPOSITORY</span>
+          <span className="caption muted">
+            CURRENT REPOSITORY{repo && <span className={styles.branch}> · {repo.branch}</span>}
+          </span>
           <span className={cx('body', 'ellipsis', styles.repoName)}>{project.name}</span>
         </span>
         <span className="muted" aria-hidden>
           ▾
         </span>
       </button>
-      {repo === null ? null : repo ? (
+      {repo === undefined ? (
+        <span hidden data-loading />
+      ) : repo ? (
         teaser
       ) : (
         <div className={styles.notRepo}>
@@ -188,10 +343,12 @@ function GitProject({
           <p className="caption muted">
             Initialize one to track changes in <strong>{project.name}</strong>. Nothing changes until you ask.
           </p>
-          <SoonAction
+          <ActionCard
             icon={<PlusIcon size={22} />}
-            title="Initialize repository"
-            detail={`git init in ${project.name}`}
+            title={initializing ? 'Initializing' : 'Initialize repository'}
+            detail={`git init in ${project.name}, on main`}
+            onClick={initialize}
+            busy={initializing}
           />
         </div>
       )}

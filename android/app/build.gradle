@@ -16,6 +16,10 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    compileOptions {
+        // JGit 6 uses Java 11+ library APIs; desugaring brings them to minSdk 26 (ADR-006)
+        coreLibraryDesugaringEnabled true
+    }
     buildTypes {
         release {
             minifyEnabled false
@@ -36,6 +40,9 @@ dependencies {
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
+    // Git engine (ADR-006)
+    implementation "org.eclipse.jgit:org.eclipse.jgit:$jgitVersion"
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs_nio:$desugarJdkLibsVersion"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

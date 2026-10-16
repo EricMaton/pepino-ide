@@ -1,7 +1,9 @@
+import { Capacitor } from '@capacitor/core';
 import { Preferences } from '@capacitor/preferences';
 import { createContext, useContext } from 'react';
 import { CommandDispatcher, CommandRegistry } from '../core/commands';
 import { EventBus } from '../core/events';
+import { createMemoryGitEngine, createNativeGitEngine, type GitEngine } from '../features/git/engine';
 import { createCapacitorBackend } from '../features/projects/capacitorBackend';
 import { type FsEvents, observeProjectSpace } from '../features/projects/observed';
 import type { ProjectInfo } from '../features/projects/projects';
@@ -28,6 +30,8 @@ export interface Services {
   recentProjects: RecentProjects;
   session: SessionStore;
   workspace: Workspace;
+  /** Git on the projects (ADR-006): JGit on Android, a stand-in on the web. */
+  git: GitEngine;
   /** Small user preferences (editor font size…), persisted across restarts. */
   preferences: KeyValueStore;
 }
@@ -61,6 +65,10 @@ export function createServices(): Services {
       }),
   });
 
+  const git = Capacitor.isNativePlatform()
+    ? createNativeGitEngine((path) => events.publish('fs.created', { path }))
+    : createMemoryGitEngine(projectSpace);
+
   // Recents only listen to the bus: whoever opens a project doesn't need to know about them.
   events.subscribe('project.opened', (project) => {
     recentProjects.record(project.path).catch((error: unknown) => console.error('Cannot record recent project', error));
@@ -74,6 +82,7 @@ export function createServices(): Services {
     recentProjects,
     session,
     workspace,
+    git,
     preferences,
   };
 }
