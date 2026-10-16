@@ -1,28 +1,21 @@
-import { useEffect, useState } from 'react';
 import { cx } from '../../ui/cx';
-import { PepinoMark } from '../../ui/Logo';
+import { ProjectIcon } from '../../ui/icons';
 import styles from './FileExplorer.module.css';
-import { formatAgo, type RecentProject, type RecentProjects as RecentStore } from './recents';
+import { formatAgo } from './recents';
+import type { LoadedRecents } from './useRecentProjects';
 
-/** Horizontal strip of the last opened projects; hidden until there is at least one. */
-export function RecentProjects({ store, onOpen }: { store: RecentStore; onOpen: (path: string) => void }) {
-  // "5M AGO" is relative to when the list was loaded, which keeps rendering pure.
-  const [loaded, setLoaded] = useState<{ recents: RecentProject[]; at: number } | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    store.load().then(
-      (recents) => {
-        if (active) setLoaded({ recents, at: Date.now() });
-      },
-      (error: unknown) => console.error('Cannot load recent projects', error),
-    );
-    return () => {
-      active = false;
-    };
-  }, [store]);
-
-  if (!loaded?.recents.length) return null;
+/** Horizontal strip of the other recently opened projects (the active one has the bottom strip); hidden when empty. */
+export function RecentProjects({
+  loaded,
+  activePath,
+  onOpen,
+}: {
+  loaded: LoadedRecents | null;
+  activePath: string | null;
+  onOpen: (path: string) => void;
+}) {
+  const recents = loaded?.recents.filter((project) => project.path !== activePath) ?? [];
+  if (!loaded || recents.length === 0) return null;
 
   return (
     <section className={styles.recents} aria-label="Recent projects">
@@ -30,9 +23,11 @@ export function RecentProjects({ store, onOpen }: { store: RecentStore; onOpen: 
         <span className="accent">//</span> Recent
       </h2>
       <div className={styles.recentStrip}>
-        {loaded.recents.map((project) => (
+        {recents.map((project) => (
           <button key={project.path} type="button" className={styles.recentCard} onClick={() => onOpen(project.path)}>
-            <PepinoMark size={28} />
+            <span className={styles.recentIcon} aria-hidden>
+              <ProjectIcon size={22} />
+            </span>
             <span className={cx('body', 'ellipsis', styles.recentName)}>{project.name}</span>
             <span className="caption muted">{formatAgo(project.openedMillis, loaded.at)}</span>
           </button>

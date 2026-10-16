@@ -10,7 +10,7 @@ import { isReservedName } from './projects';
 import type { ProjectSpace } from './projectSpace';
 import { useDirectoryListing } from './useDirectoryListing';
 
-/** [project] marks entries that are projects, which changes wording and the available actions. */
+/** [project] marks folders that are workspaces, which changes the wording. */
 export type ExplorerDialog =
   | { kind: 'create' }
   | { kind: 'actions'; entry: FileEntry; project: boolean }
@@ -18,7 +18,7 @@ export type ExplorerDialog =
   | { kind: 'delete'; entry: FileEntry; project: boolean }
   | { kind: 'transfer'; entry: FileEntry; project: boolean; move: boolean };
 
-export type CreateKind = 'project' | 'folder' | 'file';
+export type CreateKind = 'folder' | 'file';
 
 function nameError(name: string): string | null {
   if (name === '') return null;
@@ -39,21 +39,17 @@ function CancelButton({ onClick }: { onClick: () => void }) {
 
 export function CreateEntryDialog({
   where,
-  allowProject,
   onClose,
   onCreate,
 }: {
   /** Display path of the folder the entry goes into, e.g. "~/projects/src". */
   where: string;
-  /** Offer "Project" (only at the top level of the space). It becomes the default. */
-  allowProject: boolean;
   onClose: () => void;
   onCreate: (kind: CreateKind, name: string) => void;
 }) {
   const [name, setName] = useState('');
   const valid = isUsableName(name);
   const create = (kind: CreateKind) => valid && onCreate(kind, name.trim());
-  const primary: CreateKind = allowProject ? 'project' : 'file';
 
   return (
     <Dialog
@@ -66,25 +62,20 @@ export function CreateEntryDialog({
             <FolderIcon size={18} />
             Folder
           </Button>
-          <Button variant={allowProject ? 'outlined' : 'filled'} disabled={!valid} onClick={() => create('file')}>
+          <Button variant="filled" disabled={!valid} onClick={() => create('file')}>
             File
           </Button>
-          {allowProject && (
-            <Button variant="filled" disabled={!valid} onClick={() => create('project')}>
-              Project
-            </Button>
-          )}
         </>
       }
     >
       <TextField
         label="Name"
-        placeholder={allowProject ? 'my-app' : 'main.ts'}
+        placeholder="main.ts"
         value={name}
         onChange={setName}
         error={nameError(name)}
         autoFocus
-        onSubmit={() => create(primary)}
+        onSubmit={() => create('file')}
       />
     </Dialog>
   );
@@ -167,25 +158,19 @@ export function DeleteEntryDialog({
 export function EntryActionsDialog({
   entry,
   project,
-  canOpenAsProject,
   onClose,
   onAction,
-  onOpenAsProject,
   extraActions = [],
 }: {
   entry: FileEntry;
   project: boolean;
-  /** A plain top-level folder that can be turned into a project. */
-  canOpenAsProject: boolean;
   onClose: () => void;
   onAction: (next: ExplorerDialog) => void;
-  onOpenAsProject: () => void;
-  /** Listed first, e.g. "New file or folder here" in the workspace tree. */
+  /** Listed first, e.g. "Open folder" in the explorer or "New file or folder here" in the workspace tree. */
   extraActions?: Array<{ label: string; run: () => void }>;
 }) {
   const actions: Array<{ label: string; run: () => void; danger?: boolean }> = [
     ...extraActions,
-    ...(canOpenAsProject ? [{ label: 'Open as project', run: onOpenAsProject }] : []),
     { label: 'Rename', run: () => onAction({ kind: 'rename', entry, project }) },
     { label: 'Move to…', run: () => onAction({ kind: 'transfer', entry, project, move: true }) },
     { label: 'Copy to…', run: () => onAction({ kind: 'transfer', entry, project, move: false }) },

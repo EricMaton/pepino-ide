@@ -8,7 +8,7 @@ import { fuzzyFind } from './fuzzy';
 
 /*
  * The workspace (#106): the open project as a unit of work — its file tree,
- * the files opened recently and the active one. The UI, plugins (#48) and
+ * the open files (the editor's tabs) and the active one. The UI, plugins (#48) and
  * the AI agent (#58) all work on a project through this one API, and it
  * keeps itself in sync from the `fs.*` events, whoever changed the files.
  */
@@ -16,7 +16,7 @@ export interface WorkspaceState {
   /** Root of the workspace: the open project, or '' for the whole project space. */
   root: string;
   activeFile: string | null;
-  /** Most recently opened first. */
+  /** The editor's tabs, in tab order. */
   openFiles: readonly string[];
 }
 
@@ -36,14 +36,18 @@ export interface TextMatch {
   text: string;
 }
 
-/** Persists the open-files list per root (the session store in the app). */
+export interface SavedOpenFiles {
+  files: string[];
+  active: string | null;
+}
+
+/** Persists the open files and the active one per root (the session store in the app). */
 export interface OpenFilesStore {
-  load(root: string): Promise<string[]>;
-  save(root: string, files: readonly string[]): Promise<void>;
+  load(root: string): Promise<SavedOpenFiles>;
+  save(root: string, files: readonly string[], active: string | null): Promise<void>;
 }
 
 export const IGNORED_DIRS: ReadonlySet<string> = new Set(['.pepino', '.git', 'node_modules']);
-export const MAX_OPEN_FILES = 10;
 export const MAX_FILES = 20_000;
 export const MAX_SEARCH_FILE_BYTES = 1_000_000;
 const MAX_LINE_PREVIEW = 200;
@@ -53,7 +57,10 @@ export interface Workspace {
   /** Calls [listener] after every state change; returns the unsubscribe. */
   subscribe(listener: () => void): () => void;
   setRoot(root: string): Promise<void>;
+  /** Shows [path] in the editor, opening a tab for it (next to the active one) if it has none. */
   setActiveFile(path: string | null): void;
+  /** Closes [path]'s tab; closing the active one activates its neighbour (or nothing). */
+  closeFile(path: string): void;
   /** Every file under the root (ignoring `.pepino`, `.git`, `node_modules`), cached until files change. */
   listFiles(): Promise<FileEntry[]>;
   /** Files whose path fuzzy-matches [query], best first. */
@@ -78,7 +85,11 @@ export function createWorkspace(
 
   const setState = (next: WorkspaceState, persist = false) => {
     state = next;
-    if (persist) store.save(next.root, next.openFiles).catch((error) => console.error('Cannot save open files', error));
+    if (persist) {
+      store
+        .save(next.root, next.openFiles, next.activeFile)
+        .catch((error) => console.error('Cannot save open files', error));
+    }
     listeners.forEach((listener) => listener());
     events.publish('workspace.changed', next);
   };
@@ -98,24 +109,58 @@ export function createWorkspace(
 
   events.subscribe('fs.created', ({ path }) => invalidate(path));
   events.subscribe('fs.written', ({ path }) => invalidate(path));
+  /** [state] without the tabs [closing] matches; a closed active tab hands over to its neighbour. */
+  const withoutTabs = (closing: (file: string) => boolean): WorkspaceState => {
+    const openFiles = state.openFiles.filter((file) => !closing(file));
+    let activeFile = state.activeFile;
+    if (activeFile !== null && closing(activeFile)) {
+      // The first tab still open to the right of the active one, else the last one to its left.
+      const index = state.openFiles.indexOf(activeFile);
+      const after = state.openFiles.slice(index + 1).find((file) => !closing(file));
+      activeFile = after ?? openFiles.filter((file) => state.openFiles.indexOf(file) < index).pop() ?? null;
+    }
+    return { ...state, openFiles, activeFile };
+  };
+
   events.subscribe('fs.deleted', ({ path }) => {
     invalidate(path);
-    const openFiles = state.openFiles.filter((file) => !isWithin(file, path));
-    const activeFile = state.activeFile && isWithin(state.activeFile, path) ? null : state.activeFile;
-    if (openFiles.length !== state.openFiles.length || activeFile !== state.activeFile) {
-      setState({ ...state, openFiles, activeFile }, true);
-    }
+    const next = withoutTabs((file) => isWithin(file, path));
+    if (next.openFiles.length !== state.openFiles.length || next.activeFile !== state.activeFile) setState(next, true);
   });
   events.subscribe('fs.moved', ({ from, to }) => {
     invalidate(from);
     invalidate(to);
     const follow = (file: string) => (isWithin(file, from) ? to + file.slice(from.length) : file);
+    // The project itself can be renamed or moved: the workspace (and its tabs) go with it.
+    const root = state.root === '' ? '' : follow(state.root);
     const openFiles = state.openFiles.map(follow);
     const activeFile = state.activeFile && follow(state.activeFile);
-    if (openFiles.some((file, i) => file !== state.openFiles[i]) || activeFile !== state.activeFile) {
-      setState({ ...state, openFiles, activeFile }, true);
+    if (
+      root !== state.root ||
+      openFiles.some((file, i) => file !== state.openFiles[i]) ||
+      activeFile !== state.activeFile
+    ) {
+      setState({ root, openFiles, activeFile }, true);
     }
   });
+
+  /** The [paths] that are still files, in the same order. */
+  async function stillFiles(paths: readonly string[]): Promise<string[]> {
+    const folders = new Map<string, Promise<Set<string>>>();
+    const filesIn = (folder: string) => {
+      let found = folders.get(folder);
+      if (!found) {
+        found = space.listDirectory(folder).then(
+          (entries) => new Set(entries.filter((entry) => !entry.isDirectory).map((entry) => entry.path)),
+          () => new Set<string>(),
+        );
+        folders.set(folder, found);
+      }
+      return found;
+    };
+    const kept = await Promise.all(paths.map(async (path) => (await filesIn(parentPath(path))).has(path)));
+    return paths.filter((_, i) => kept[i]);
+  }
 
   async function walk(root: string): Promise<FileEntry[]> {
     const found: FileEntry[] = [];
@@ -153,21 +198,39 @@ export function createWorkspace(
       const token = ++rootToken;
       files = null;
       setState({ root, activeFile: null, openFiles: [] });
-      const saved = await store.load(root).catch(() => []);
+      const saved = await store.load(root).catch((): SavedOpenFiles => ({ files: [], active: null }));
+      // Files deleted or moved while the project was closed are forgotten.
+      const kept = await stillFiles(saved.files.filter((file) => isWithin(file, root)));
       if (token !== rootToken) return; // another root was set meanwhile
-      // Files opened while loading (e.g. a restored session) stay in front of the saved ones.
-      const merged = [...state.openFiles, ...saved.filter((file) => isWithin(file, root))];
-      setState({ ...state, openFiles: [...new Set(merged)].slice(0, MAX_OPEN_FILES) });
+      // Files opened while loading (e.g. from the search) stay in front of the saved ones.
+      const openFiles = [...new Set([...state.openFiles, ...kept])];
+      const activeFile = state.activeFile ?? (saved.active && kept.includes(saved.active) ? saved.active : null);
+      setState({ ...state, openFiles, activeFile });
     },
 
     setActiveFile(path) {
       if (path === null) {
-        if (state.activeFile !== null) setState({ ...state, activeFile: null });
+        if (state.activeFile !== null) setState({ ...state, activeFile: null }, true);
         return;
       }
       const file = inside(path);
-      const openFiles = [file, ...state.openFiles.filter((open) => open !== file)].slice(0, MAX_OPEN_FILES);
+      if (file === state.activeFile) return;
+      let openFiles = state.openFiles;
+      if (!openFiles.includes(file)) {
+        // Like VS Code: a new tab opens right after the active one.
+        const at = state.activeFile ? openFiles.indexOf(state.activeFile) + 1 : openFiles.length;
+        openFiles = [...openFiles.slice(0, at), file, ...openFiles.slice(at)];
+      }
       setState({ ...state, activeFile: file, openFiles }, true);
+    },
+
+    closeFile(path) {
+      const file = resolveInRoot(path);
+      if (state.openFiles.includes(file))
+        setState(
+          withoutTabs((open) => open === file),
+          true,
+        );
     },
 
     listFiles() {

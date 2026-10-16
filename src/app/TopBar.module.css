@@ -1,6 +1,7 @@
 .bar {
   /* Anchors the command search results, which drop down over the content. */
   position: relative;
+  view-transition-name: topbar;
   z-index: 5;
   flex: none;
   border-bottom: var(--border);
@@ -23,6 +24,13 @@
   gap: var(--space-2);
   min-height: 64px;
   padding: var(--space-2) var(--space-3);
+}
+
+.mark {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
 }
 
 .title {

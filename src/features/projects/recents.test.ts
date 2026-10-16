@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createMemoryBackend } from './memoryBackend';
-import { createProject } from './projects';
 import { createProjectSpace, type ProjectSpace } from './projectSpace';
 import type { KeyValueStore } from '../../core/storage';
 import { createRecentProjects, formatAgo, MAX_RECENTS, withOpened } from './recents';
@@ -51,28 +50,28 @@ describe('withOpened', () => {
 
 describe('createRecentProjects', () => {
   it('returns projects most recent first, with their info', async () => {
-    await createProject(space, 'alpha', () => 5);
-    await createProject(space, 'beta', () => 6);
+    await space.createDirectory('alpha');
+    await space.createDirectory('beta');
     const list = recents();
     await list.record('alpha');
     clock = 2_000;
     await list.record('beta');
     expect(await list.load()).toEqual([
-      { path: 'beta', name: 'beta', createdMillis: 6, openedMillis: 2_000 },
-      { path: 'alpha', name: 'alpha', createdMillis: 5, openedMillis: 1_000 },
+      { path: 'beta', name: 'beta', openedMillis: 2_000 },
+      { path: 'alpha', name: 'alpha', openedMillis: 1_000 },
     ]);
   });
 
   it('persists across instances (app restarts)', async () => {
-    await createProject(space, 'alpha');
+    await space.createDirectory('alpha');
     await recents().record('alpha');
     expect((await recents().load()).map((p) => p.name)).toEqual(['alpha']);
   });
 
-  it('forgets projects that were deleted, renamed or unmarked', async () => {
-    await createProject(space, 'gone');
-    await createProject(space, 'renamed');
-    await createProject(space, 'kept');
+  it('forgets projects that were deleted or renamed', async () => {
+    await space.createDirectory('gone');
+    await space.createDirectory('renamed');
+    await space.createDirectory('kept');
     const list = recents();
     for (const path of ['gone', 'renamed', 'kept']) await list.record(path);
     await space.delete('gone');
@@ -90,8 +89,8 @@ describe('createRecentProjects', () => {
   });
 
   it('does not lose writes when opens happen back to back', async () => {
-    await createProject(space, 'a');
-    await createProject(space, 'b');
+    await space.createDirectory('a');
+    await space.createDirectory('b');
     const list = recents();
     await Promise.all([list.record('a'), list.record('b')]);
     expect((await list.load()).map((p) => p.name).sort()).toEqual(['a', 'b']);

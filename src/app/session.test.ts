@@ -22,9 +22,11 @@ describe('parseSession', () => {
   it('keeps valid fields and drops malformed ones', () => {
     const raw = JSON.stringify({
       project: 'app',
+      inWorkspace: 'yes',
       explorer: { app: ['app', 'app/src'], bad: [1], empty: [] },
-      openFile: 42,
+      looseFile: 42,
       openFiles: { app: ['app/a.ts', 'app/b.ts'], bad: [1] },
+      activeFiles: { app: 'app/b.ts', bad: 3 },
       editors: {
         'app/a.ts': { anchor: 3, head: 5, scrollTop: 120, savedMillis: 1 },
         'app/b.ts': { anchor: 'x' },
@@ -32,9 +34,11 @@ describe('parseSession', () => {
     });
     expect(parseSession(raw)).toEqual({
       project: 'app',
+      inWorkspace: false,
       explorer: { app: ['app', 'app/src'] },
-      openFile: null,
+      looseFile: null,
       openFiles: { app: ['app/a.ts', 'app/b.ts'] },
+      activeFiles: { app: 'app/b.ts' },
       editors: { 'app/a.ts': { anchor: 3, head: 5, scrollTop: 120, savedMillis: 1 } },
     });
   });
@@ -55,23 +59,22 @@ describe('withEditorState', () => {
 describe('createSessionStore', () => {
   it('persists updates across instances (restarts)', async () => {
     const store = memoryStore();
-    await createSessionStore(store).update((s) => ({ ...s, project: 'app', openFile: 'app/main.ts' }));
-    expect(await createSessionStore(store).load()).toMatchObject({ project: 'app', openFile: 'app/main.ts' });
+    await createSessionStore(store).update((s) => ({ ...s, project: 'app', looseFile: 'notes.md' }));
+    expect(await createSessionStore(store).load()).toMatchObject({ project: 'app', looseFile: 'notes.md' });
   });
 
   it('applies back-to-back updates in order without losing any', async () => {
     const sessions = createSessionStore(memoryStore());
     await Promise.all([
       sessions.update((s) => ({ ...s, project: 'app' })),
-      sessions.update((s) => ({ ...s, openFile: 'app/a.ts' })),
+      sessions.update((s) => ({ ...s, inWorkspace: true })),
       sessions.update((s) => ({ ...s, explorer: { app: ['app', 'app/src'] } })),
     ]);
     expect(await sessions.load()).toEqual({
+      ...EMPTY_SESSION,
       project: 'app',
-      openFile: 'app/a.ts',
+      inWorkspace: true,
       explorer: { app: ['app', 'app/src'] },
-      openFiles: {},
-      editors: {},
     });
   });
 });

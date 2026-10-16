@@ -1,23 +1,28 @@
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { folderLabelFor } from '../features/editor/labels';
+import { GitScreen } from '../features/git/GitScreen';
 import { errorMessage } from '../features/projects/errors';
-import { basename, isWithin } from '../features/projects/paths';
 import { FileExplorer } from '../features/projects/FileExplorer';
-import { RecentProjects } from '../features/projects/RecentProjects';
+import { basename, isWithin } from '../features/projects/paths';
 import { type ProjectInfo, readProject } from '../features/projects/projects';
+import { RecentProjects } from '../features/projects/RecentProjects';
+import { useRecentProjects } from '../features/projects/useRecentProjects';
+import { useWorkspaceState } from '../features/workspace/useWorkspace';
+import { WorkspaceHome } from '../features/workspace/WorkspaceDrawer';
 import { dispatchBack, useBackHandler } from '../ui/back';
-import { Button } from '../ui/components';
 import { cx } from '../ui/cx';
-import { BackIcon, BranchIcon, FolderIcon, SlidersIcon } from '../ui/icons';
-import { PepinoMark } from '../ui/Logo';
+import { Button } from '../ui/components';
+import { BranchIcon, CloseIcon, FolderIcon, ProjectIcon, SlidersIcon } from '../ui/icons';
 import { useKeyboardVisible } from '../ui/keyboard';
+import { navigate } from '../ui/motion';
 import { useSnackbar } from '../ui/useSnackbar';
 import styles from './App.module.css';
 import { restoreSession } from './restoreSession';
 import { type EditorViewState, withEditorState } from './session';
 import { type AppDestination, DESTINATIONS, HOME } from './destinations';
+import { type Navigation, NavigationContext } from './navigation';
 import { useServices } from './services';
 import { TopBar, TopBarFrame } from './TopBar';
 import { type TopBarSlots, TopBarSlotsContext } from './topBarSlots';
@@ -43,16 +48,37 @@ const NAV_ICONS: Record<AppDestination, typeof FolderIcon> = {
   settings: SlidersIcon,
 };
 
+const SPACE_NAME = '~/projects';
+
+/*
+ * PROJECTS has two modes, kept apart on purpose:
+ * - the explorer browses ~/projects: tapping a folder goes into it, and a
+ *   folder is opened as the workspace with its own button; a file opens on
+ *   its own (a "loose" file), outside any workspace;
+ * - the workspace is the active project: its tree, and its open files as tabs.
+ * The active project stays active while the explorer shows; git, the
+ * terminal and the editor work on it.
+ */
 export function App() {
   const { registry, events, projectSpace, session, workspace } = useServices();
   const showSnackbar = useSnackbar();
   const [destination, setDestination] = useState<AppDestination>(HOME);
   const [space, setSpace] = useState<SpaceState>('creating');
   const [project, setProject] = useState<ProjectInfo | null>(null);
+  // PROJECTS shows the active project's workspace, or the explorer.
+  const [showProject, setShowProject] = useState(false);
+  // Reached the explorer with the logo: the system back returns to the workspace.
+  const [homeReturn, setHomeReturn] = useState(false);
+  // The workspace's active tab; the only tab with an editor.
   const [openFile, setOpenFile] = useState<OpenFile | null>(null);
+  // A file opened from the explorer, on its own.
+  const [looseFile, setLooseFile] = useState<OpenFile | null>(null);
+  const { openFiles: tabs } = useWorkspaceState(workspace);
   const keyboardOpen = useKeyboardVisible();
+  const inWorkspace = destination === 'projects' && showProject && project !== null;
+  const inExplorer = destination === 'projects' && !showProject;
   // Typing in the editor gets the whole screen: the bottom nav steps aside.
-  const focusMode = keyboardOpen && openFile !== null && destination === 'projects';
+  const focusMode = keyboardOpen && ((openFile !== null && inWorkspace) || (looseFile !== null && inExplorer));
   // Session (#19): restored once the space is ready, then kept up to date.
   const [restored, setRestored] = useState(false);
   const [initialStacks, setInitialStacks] = useState<Record<string, string[]>>({});
@@ -60,11 +86,15 @@ export function App() {
   const editorStates = useRef<Record<string, EditorViewState>>({});
   const editorSessions = useRef(0);
   const openFileRef = useRef(openFile);
+  const looseFileRef = useRef(looseFile);
+  const projectRef = useRef(project);
   useEffect(() => {
     openFileRef.current = openFile;
+    looseFileRef.current = looseFile;
+    projectRef.current = project;
   });
   /** A new editing session for [path], reopening at its last cursor and scroll. */
-  const openFileAt = useCallback(
+  const editorFor = useCallback(
     (path: string, root: string, rootName: string): OpenFile => ({
       id: ++editorSessions.current,
       path,
@@ -73,13 +103,30 @@ export function App() {
     }),
     [],
   );
+  /** The editor for the workspace's active tab, keeping the current one when it already shows it. */
+  const syncEditor = useCallback(() => {
+    const active = workspace.getState().activeFile;
+    const current = projectRef.current;
+    setOpenFile((open) =>
+      open?.path === active ? open : active && current ? editorFor(active, current.path, current.name) : null,
+    );
+  }, [workspace, editorFor]);
 
+  /** Makes [path] the active project and shows its workspace. Another project's tabs close (saving first). */
   const openProject = useCallback(
     (path: string) => {
       readProject(projectSpace, path)
         .then((info) => {
-          if (!info) throw new Error(`Not a project: ${path}`);
-          setProject(info);
+          if (!info) throw new Error(`Not a folder: ${path || SPACE_NAME}`);
+          // The workspace rises out of where it was opened.
+          navigate('rise', () => {
+            if (info.path !== projectRef.current?.path) {
+              setOpenFile(null);
+              setProject(info);
+            }
+            setShowProject(true);
+            setHomeReturn(false);
+          });
           events.publish('project.opened', info);
         })
         .catch((error: unknown) => showSnackbar(`Error: ${errorMessage(error)}`));
@@ -88,10 +135,78 @@ export function App() {
   );
 
   const closeProject = useCallback(() => {
-    if (!project) return;
+    const current = projectRef.current;
+    if (!current) return;
     setProject(null);
-    events.publish('project.closed', project);
-  }, [events, project]);
+    setOpenFile(null);
+    setShowProject(false);
+    setHomeReturn(false);
+    events.publish('project.closed', current);
+  }, [events]);
+
+  const openLoose = useCallback(
+    (path: string) => navigate('forward', () => setLooseFile(editorFor(path, '', SPACE_NAME))),
+    [editorFor],
+  );
+  const closeLoose = useCallback(() => navigate('back', () => setLooseFile(null)), []);
+
+  /** Shows [path] as the workspace's active tab, sliding in from the side its tab is on. */
+  const activate = useCallback(
+    (path: string) => {
+      const current = projectRef.current;
+      if (!current || !isWithin(path, current.path)) {
+        showSnackbar(`Error: Outside the workspace: ${path}`);
+        return;
+      }
+      if (path === workspace.getState().activeFile && openFileRef.current) return;
+      const change = () => {
+        workspace.setActiveFile(path);
+        syncEditor();
+      };
+      // From the tree a file opens "into" the workspace; between tabs the switch is instant.
+      if (openFileRef.current) change();
+      else navigate('forward', change);
+    },
+    [workspace, syncEditor, showSnackbar],
+  );
+
+  /** The editor closed its file (saved): its tab goes, and the neighbouring tab (or the tree) shows. */
+  const closeActiveTab = useCallback(() => {
+    const current = openFileRef.current;
+    const change = () => {
+      if (current) workspace.closeFile(current.path);
+      syncEditor();
+    };
+    // The neighbouring tab just shows; closing the last one goes back out to the tree.
+    if (workspace.getState().openFiles.length <= 1) navigate('back', change);
+    else change();
+  }, [workspace, syncEditor]);
+
+  /** The logo: the explorer, from anywhere. The active project stays active (and sinks into its strip). */
+  const goHome = useCallback(() => {
+    const fromWorkspace = destination === 'projects' && showProject && project !== null;
+    const change = () => {
+      setHomeReturn(fromWorkspace);
+      setDestination(HOME);
+      setShowProject(false);
+    };
+    if (fromWorkspace) navigate('sink', change);
+    else change();
+  }, [destination, showProject, project]);
+  /** Back into the active project's workspace, rising out of the explorer's strip. */
+  const showWorkspace = useCallback(
+    () =>
+      navigate('rise', () => {
+        setShowProject(true);
+        setHomeReturn(false);
+      }),
+    [],
+  );
+  const leaveWorkspace = useCallback(() => navigate('sink', () => setShowProject(false)), []);
+  const navigation = useMemo<Navigation>(
+    () => ({ atHome: destination === HOME && !showProject, goHome }),
+    [destination, showProject, goHome],
+  );
 
   useEffect(() => {
     let active = true;
@@ -116,15 +231,13 @@ export function App() {
       .then((last) => {
         if (!active) return;
         editorStates.current = last.editors;
-        const root = last.project?.path ?? '';
-        if (last.stack) setInitialStacks({ [root]: last.stack });
+        if (last.stack) setInitialStacks({ '': last.stack });
         if (last.project) {
           setProject(last.project);
+          setShowProject(last.inWorkspace);
           events.publish('project.opened', last.project);
         }
-        if (last.openFile) {
-          setOpenFile(openFileAt(last.openFile, root, last.project?.name ?? '~/projects'));
-        }
+        if (last.looseFile) openLoose(last.looseFile);
       })
       .catch((error: unknown) => console.error('Cannot restore the session', error))
       .finally(() => {
@@ -133,61 +246,98 @@ export function App() {
     return () => {
       active = false;
     };
-  }, [space, session, projectSpace, events, openFileAt]);
+  }, [space, session, projectSpace, events, openLoose]);
 
-  // The workspace (#106) follows the open project and the open file.
+  // The workspace (#106) follows the active project; its saved tabs come back with it.
   useEffect(() => {
-    void workspace.setRoot(project?.path ?? '');
-  }, [workspace, project]);
-
-  useEffect(() => {
-    try {
-      workspace.setActiveFile(openFile?.path ?? null);
-    } catch (error) {
-      console.error('Active file outside the workspace', error);
-    }
-  }, [workspace, openFile]);
+    let active = true;
+    void workspace.setRoot(project?.path ?? '').then(() => {
+      if (!active) return;
+      // Open tabs always show one of them: the saved active one, else the first.
+      const { activeFile, openFiles } = workspace.getState();
+      if (project && !activeFile && openFiles.length > 0) workspace.setActiveFile(openFiles[0]);
+      syncEditor();
+    });
+    return () => {
+      active = false;
+    };
+  }, [workspace, project, syncEditor]);
 
   // The tree, the search, plugins and the agent ask for files through the workspace.
   useEffect(
     () =>
-      events.subscribe('workspace.openRequested', ({ path }) =>
-        setOpenFile(openFileAt(path, project?.path ?? '', project?.name ?? '~/projects')),
-      ),
-    [events, project, openFileAt],
+      events.subscribe('workspace.openRequested', ({ path }) => {
+        if (!projectRef.current) {
+          openLoose(path);
+          return;
+        }
+        activate(path);
+        setDestination('projects');
+        setShowProject(true);
+      }),
+    [events, activate, openLoose],
   );
 
-  // The open file follows renames and moves; if it is deleted the editor closes.
+  // The active project follows renames and moves; deleting it leaves no active project.
   useEffect(() => {
-    const root = project?.path ?? '';
-    const rootName = project?.name ?? '~/projects';
+    if (!project) return;
     const disposers = [
       events.subscribe('fs.moved', ({ from, to }) => {
-        const current = openFileRef.current;
-        if (!current || !isWithin(current.path, from)) return;
-        const path = to + current.path.slice(from.length);
-        setOpenFile({ ...current, path, folderLabel: folderLabelFor(path, root, rootName) });
+        if (!isWithin(project.path, from)) return;
+        readProject(projectSpace, to + project.path.slice(from.length))
+          .then((info) => (info ? setProject(info) : closeProject()))
+          .catch(() => closeProject());
       }),
       events.subscribe('fs.deleted', ({ path }) => {
-        const current = openFileRef.current;
-        if (!current || !isWithin(current.path, path)) return;
-        setOpenFile(null);
-        showSnackbar(`${basename(current.path)} was deleted`);
+        if (isWithin(project.path, path)) closeProject();
       }),
     ];
     return () => disposers.forEach((dispose) => dispose());
-  }, [events, project, showSnackbar]);
+  }, [events, project, projectSpace, closeProject]);
+
+  // Open files follow renames and moves; a deleted one closes (the workspace already dropped its tab).
+  useEffect(() => {
+    const disposers = [
+      events.subscribe('fs.moved', ({ from, to }) => {
+        const follow = (file: OpenFile | null, root: string, rootName: string) => {
+          if (!file || !isWithin(file.path, from)) return file;
+          const path = to + file.path.slice(from.length);
+          return { ...file, path, folderLabel: folderLabelFor(path, root, rootName) };
+        };
+        const current = projectRef.current;
+        if (current) {
+          // The project itself may be what moved.
+          const root = isWithin(current.path, from) ? to + current.path.slice(from.length) : current.path;
+          setOpenFile((file) => follow(file, root, basename(root)));
+        }
+        setLooseFile((file) => follow(file, '', SPACE_NAME));
+      }),
+      events.subscribe('fs.deleted', ({ path }) => {
+        const open = openFileRef.current;
+        if (open && isWithin(open.path, path)) {
+          syncEditor();
+          showSnackbar(`${basename(open.path)} was deleted`);
+        }
+        const loose = looseFileRef.current;
+        if (loose && isWithin(loose.path, path)) {
+          setLooseFile(null);
+          showSnackbar(`${basename(loose.path)} was deleted`);
+        }
+      }),
+    ];
+    return () => disposers.forEach((dispose) => dispose());
+  }, [events, syncEditor, showSnackbar]);
 
   // Persist only after restoring, or the empty start-up state would overwrite the saved one.
   useEffect(() => {
     if (!restored) return;
-    void session.update((saved) => ({ ...saved, project: project?.path ?? null }));
-  }, [restored, session, project]);
+    void session.update((saved) => ({ ...saved, project: project?.path ?? null, inWorkspace: showProject }));
+  }, [restored, session, project, showProject]);
 
   useEffect(() => {
     if (!restored) return;
-    void session.update((saved) => ({ ...saved, openFile: openFile?.path ?? null }));
-  }, [restored, session, openFile]);
+    void session.update((saved) => ({ ...saved, looseFile: looseFile?.path ?? null }));
+  }, [restored, session, looseFile]);
 
   const rememberStack = useCallback(
     (root: string, stack: string[]) => {
@@ -233,8 +383,12 @@ export function App() {
     return registry.register({ id: 'project.close', title: `Close project ${project.name}`, run: closeProject });
   }, [registry, project, openFile, closeProject]);
 
-  // Back: innermost handler first (dialogs, explorer UP), then home tab, then leave the app.
+  // Back: innermost handler first (dialogs, the drawer, the editor closing its file, the explorer
+  // going up), then these: the workspace's tree leaves to the explorer, the explorer returns to the
+  // workspace the logo left, other tabs return to PROJECTS; with nothing left the app closes.
   useBackHandler(destination !== HOME, () => setDestination(HOME));
+  useBackHandler(inExplorer && homeReturn && project !== null && !looseFile, showWorkspace);
+  useBackHandler(inWorkspace && !openFile, leaveWorkspace);
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     const listener = CapacitorApp.addListener('backButton', () => {
@@ -260,141 +414,208 @@ export function App() {
     [],
   );
 
+  const state = space === 'ready' && !restored ? 'creating' : space;
+  // One editor per file: while the same file is open on its own, the workspace's editor steps aside (saving).
+  const tabEditor = openFile && openFile.path !== looseFile?.path ? openFile : null;
+
   return (
-    <TopBarSlotsContext value={slots}>
-      <div className={styles.app} data-focus-mode={focusMode || undefined}>
-        <TopBarFrame onScreenSlot={onScreenSlot} onOverlaySlot={onOverlaySlot} />
-        <main className={styles.content}>
-          {current.teaser ? (
-            <ComingSoon label={current.label} {...current.teaser} />
-          ) : (
-            <ProjectsScreen
-              state={space === 'ready' && !restored ? 'creating' : space}
-              initialStacks={initialStacks}
-              onStackChange={rememberStack}
-              project={project}
-              onOpenProject={openProject}
-              onCloseProject={closeProject}
-              onOpenFile={(path, rootPath, rootName) => setOpenFile(openFileAt(path, rootPath, rootName))}
-            />
-          )}
-          {openFile && (
-            <Suspense fallback={null}>
-              <EditorScreen
-                key={openFile.id}
-                path={openFile.path}
-                folderLabel={openFile.folderLabel}
-                initialViewState={openFile.viewState}
-                onViewState={(state) => rememberViewState(openFile.path, state)}
-                visible={destination === 'projects'}
-                onClose={() => setOpenFile(null)}
+    <NavigationContext value={navigation}>
+      <TopBarSlotsContext value={slots}>
+        <div className={styles.app} data-focus-mode={focusMode || undefined}>
+          <TopBarFrame onScreenSlot={onScreenSlot} onOverlaySlot={onOverlaySlot} />
+          <main className={styles.content}>
+            {destination === 'git' && state === 'ready' ? (
+              <GitScreen
+                project={project}
+                onOpen={openProject}
+                teaser={<Teaser label={current.label} {...current.teaser!} />}
               />
+            ) : current.teaser ? (
+              <ComingSoon label={current.label} {...current.teaser} />
+            ) : state === 'ready' && showProject && project ? (
+              <WorkspaceScreen project={project} hasOpenFile={tabEditor !== null} onOpenFile={activate} />
+            ) : state === 'ready' ? (
+              <ExplorerScreen
+                activeProject={project}
+                activeFile={openFile?.path ?? null}
+                initialStack={initialStacks['']}
+                onStackChange={(stack) => rememberStack('', stack)}
+                onOpenFolder={openProject}
+                onOpenFile={openLoose}
+                onReturn={showWorkspace}
+                onCloseProject={() => navigate('dismiss', closeProject)}
+              />
+            ) : (
+              <SpaceStatus state={state} />
+            )}
+            <Suspense fallback={<span hidden data-loading />}>
+              {tabEditor && (
+                <EditorScreen
+                  key={tabEditor.id}
+                  path={tabEditor.path}
+                  folderLabel={tabEditor.folderLabel}
+                  initialViewState={tabEditor.viewState}
+                  onViewState={(state) => rememberViewState(tabEditor.path, state)}
+                  visible={inWorkspace}
+                  tabs={{ files: tabs, onSelect: activate, onClose: (path) => workspace.closeFile(path) }}
+                  onClose={closeActiveTab}
+                />
+              )}
+              {looseFile && (
+                <EditorScreen
+                  key={looseFile.id}
+                  path={looseFile.path}
+                  folderLabel={looseFile.folderLabel}
+                  initialViewState={looseFile.viewState}
+                  onViewState={(state) => rememberViewState(looseFile.path, state)}
+                  visible={inExplorer}
+                  tabs={null}
+                  onClose={closeLoose}
+                />
+              )}
             </Suspense>
-          )}
-        </main>
-        <nav className={styles.nav}>
-          {DESTINATIONS.map(({ id, label }) => {
-            const NavIcon = NAV_ICONS[id];
-            return (
-              <button
-                key={id}
-                type="button"
-                className={styles.navItem}
-                aria-current={id === destination ? 'page' : undefined}
-                onClick={() => setDestination(id)}
-              >
-                <NavIcon size={22} />
-                <span className="label">{label}</span>
-              </button>
-            );
-          })}
-        </nav>
-      </div>
-    </TopBarSlotsContext>
+          </main>
+          <nav className={styles.nav}>
+            {DESTINATIONS.map(({ id, label }) => {
+              const NavIcon = NAV_ICONS[id];
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  className={styles.navItem}
+                  aria-current={id === destination ? 'page' : undefined}
+                  onClick={() => setDestination(id)}
+                >
+                  <NavIcon size={22} />
+                  <span className="label">{label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+      </TopBarSlotsContext>
+    </NavigationContext>
   );
 }
 
 const BRAND = `PEPINO · MOBILE IDE · v${__APP_VERSION__}`;
 
-/** Top bar for screens outside a project: the brand mark and where you are. */
+/** Top bar for screens outside a workspace: where you are. */
 function HomeTopBar({ title, subtitle = BRAND }: { title: string; subtitle?: string }) {
+  return <TopBar title={title} subtitle={subtitle} label={`Search commands · ${title}`} />;
+}
+
+interface ExplorerScreenProps {
+  activeProject: ProjectInfo | null;
+  /** The active project's active tab, named on the way back to it. */
+  activeFile: string | null;
+  initialStack?: string[];
+  onStackChange: (stack: string[]) => void;
+  onOpenFolder: (path: string) => void;
+  onOpenFile: (path: string) => void;
+  /** Back to the active project's workspace. */
+  onReturn: () => void;
+  /** Leaves no active project (its files are saved). */
+  onCloseProject: () => void;
+}
+
+/** The explorer of ~/projects, with the recent projects on top and the way back to the active one at the bottom. */
+function ExplorerScreen({
+  activeProject,
+  activeFile,
+  initialStack,
+  onStackChange,
+  onOpenFolder,
+  onOpenFile,
+  onReturn,
+  onCloseProject,
+}: ExplorerScreenProps) {
+  const { projectSpace, recentProjects } = useServices();
+  const recents = useRecentProjects(recentProjects);
+  const activePath = activeProject?.path ?? null;
+  const workspaces = useMemo(() => new Set(recents?.recents.map((recent) => recent.path)), [recents]);
   return (
-    <TopBar leading={<PepinoMark size={40} />} title={title} subtitle={subtitle} label={`Search commands · ${title}`} />
+    <>
+      <HomeTopBar title="Projects" />
+      <FileExplorer
+        projectSpace={projectSpace}
+        rootPath=""
+        rootLabel={SPACE_NAME}
+        rootName={SPACE_NAME}
+        onOpenFile={onOpenFile}
+        onOpenFolder={onOpenFolder}
+        activePath={activePath}
+        workspaces={workspaces}
+        rootHeader={<RecentProjects loaded={recents} activePath={activePath} onOpen={onOpenFolder} />}
+        initialStack={initialStack}
+        onStackChange={onStackChange}
+      />
+      {activeProject && (
+        <div className={styles.returnStrip}>
+          <button
+            type="button"
+            className={styles.returnMain}
+            onClick={onReturn}
+            aria-label={`Back to ${activeProject.name}`}
+          >
+            <span className={styles.returnIcon} aria-hidden>
+              <ProjectIcon size={22} />
+            </span>
+            <span className={styles.returnText}>
+              <span className="caption muted">WORKSPACE</span>
+              <span className="body ellipsis">
+                <strong>{activeProject.name}</strong>
+                {activeFile && <span className="muted"> · {basename(activeFile)}</span>}
+              </span>
+            </span>
+            <span className={cx('label', 'accent')} aria-hidden>
+              Open ▸
+            </span>
+          </button>
+          <Button
+            variant="text"
+            square
+            className={styles.returnClose}
+            aria-label={`Close project ${activeProject.name}`}
+            onClick={onCloseProject}
+          >
+            <CloseIcon size={20} />
+          </Button>
+        </div>
+      )}
+    </>
   );
 }
 
-interface ProjectsScreenProps {
-  state: SpaceState;
-  project: ProjectInfo | null;
-  onOpenProject: (path: string) => void;
-  onCloseProject: () => void;
-  onOpenFile: (path: string, rootPath: string, rootName: string) => void;
-  initialStacks: Record<string, string[]>;
-  onStackChange: (root: string, stack: string[]) => void;
-}
-
-function ProjectsScreen({
-  state,
+/** The active project: its tree, until a file opens (the editor lays its tabs over it). */
+function WorkspaceScreen({
   project,
-  onOpenProject,
-  onCloseProject,
+  hasOpenFile,
   onOpenFile,
-  initialStacks,
-  onStackChange,
-}: ProjectsScreenProps) {
-  const { projectSpace, recentProjects } = useServices();
+}: {
+  project: ProjectInfo;
+  hasOpenFile: boolean;
+  onOpenFile: (path: string) => void;
+}) {
   const files = useFileSource();
-  if (state === 'ready' && project) {
-    return (
-      <>
-        <TopBar
-          leading={
-            <Button square onClick={onCloseProject} aria-label="Close project">
-              <BackIcon size={20} />
-            </Button>
-          }
-          title={project.name}
-          subtitle="PROJECT · ~/projects"
-          prefer="project."
-          label={`Search commands · ${project.name}`}
-          files={files}
-        />
-        <FileExplorer
-          key={project.path}
-          projectSpace={projectSpace}
-          rootPath={project.path}
-          rootLabel="/"
-          rootName={project.name}
-          onExitRoot={onCloseProject}
-          onOpenFile={(path) => onOpenFile(path, project.path, project.name)}
-          initialStack={initialStacks[project.path]}
-          onStackChange={(stack) => onStackChange(project.path, stack)}
-        />
-      </>
-    );
-  }
-  if (state === 'ready') {
-    return (
-      <>
-        <HomeTopBar title="~/projects" />
-        <FileExplorer
-          key="space"
-          projectSpace={projectSpace}
-          rootPath=""
-          rootLabel="~"
-          rootName="~/projects"
-          onOpenProject={onOpenProject}
-          onOpenFile={(path) => onOpenFile(path, '', '~/projects')}
-          initialStack={initialStacks['']}
-          onStackChange={(stack) => onStackChange('', stack)}
-          rootHeader={<RecentProjects store={recentProjects} onOpen={onOpenProject} />}
-        />
-      </>
-    );
-  }
   return (
     <>
-      <HomeTopBar title="~/projects" />
+      <TopBar
+        title={project.name}
+        subtitle={`WORKSPACE · ${SPACE_NAME}/${project.path}`}
+        prefer="project."
+        label={`Search commands · ${project.name}`}
+        files={files}
+      />
+      {!hasOpenFile && <WorkspaceHome key={project.path} onOpenFile={onOpenFile} />}
+    </>
+  );
+}
+
+function SpaceStatus({ state }: { state: 'creating' | 'error' }) {
+  return (
+    <>
+      <HomeTopBar title="Projects" />
       {state === 'creating' ? (
         <p className={cx('label', 'cursor', styles.status)}>Mounting project space</p>
       ) : (
@@ -406,10 +627,16 @@ function ProjectsScreen({
   );
 }
 
-function ComingSoon({ label, sprint, description }: { label: string; sprint: string; description: string }) {
+interface TeaserProps {
+  label: string;
+  sprint: string;
+  description: string;
+}
+
+/** What a destination will be, while it is still on the roadmap. */
+function Teaser({ label, sprint, description }: TeaserProps) {
   return (
     <div className={styles.comingSoon}>
-      <HomeTopBar title={label.charAt(0) + label.slice(1).toLowerCase()} subtitle={`${sprint} · ${BRAND}`} />
       <div className={styles.tape} aria-hidden />
       <div className={styles.comingBody}>
         <span className="label accent">// {sprint}</span>
@@ -419,5 +646,17 @@ function ComingSoon({ label, sprint, description }: { label: string; sprint: str
       </div>
       <div className={styles.tape} aria-hidden />
     </div>
+  );
+}
+
+function ComingSoon(props: TeaserProps) {
+  return (
+    <>
+      <HomeTopBar
+        title={props.label.charAt(0) + props.label.slice(1).toLowerCase()}
+        subtitle={`${props.sprint} · ${BRAND}`}
+      />
+      <Teaser {...props} />
+    </>
   );
 }

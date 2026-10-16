@@ -1,13 +1,17 @@
-import { basename, isWithin, parentPath } from '../features/projects/paths';
+import { basename, parentPath } from '../features/projects/paths';
 import { type ProjectInfo, readProject } from '../features/projects/projects';
 import type { ProjectSpace } from '../features/projects/projectSpace';
 import type { EditorViewState, Session } from './session';
 
 export interface RestoredSession {
+  /** The active project; its tabs come back through the workspace. */
   project: ProjectInfo | null;
-  /** Explorer path stack for the restored root, when every folder still exists. */
+  /** Whether to show the project's workspace (rather than the explorer). */
+  inWorkspace: boolean;
+  /** The explorer's path stack, when every folder still exists. */
   stack: string[] | null;
-  openFile: string | null;
+  /** The file open on its own over the explorer. */
+  looseFile: string | null;
   editors: Record<string, EditorViewState>;
 }
 
@@ -39,18 +43,18 @@ async function isUsableStack(space: ProjectSpace, root: string, stack: string[])
 }
 
 /**
- * Checks a saved session against what is on disk now: anything deleted,
- * renamed or no longer a project since last time is dropped, never an error.
+ * Checks a saved session against what is on disk now: anything deleted or
+ * renamed since last time is dropped, never an error.
  */
 export async function restoreSession(space: ProjectSpace, saved: Session): Promise<RestoredSession> {
   const project = saved.project ? await readProject(space, saved.project).catch(() => null) : null;
-  const root = project?.path ?? '';
-  const savedStack = saved.explorer[root];
-  const stack = savedStack && (await isUsableStack(space, root, savedStack)) ? savedStack : null;
-  const openFile =
-    saved.openFile && isWithin(saved.openFile, root) && (await isFile(space, saved.openFile)) ? saved.openFile : null;
+  const savedStack = saved.explorer[''];
+  const stack = savedStack && (await isUsableStack(space, '', savedStack)) ? savedStack : null;
+  const looseFile = saved.looseFile && (await isFile(space, saved.looseFile)) ? saved.looseFile : null;
+  // A loose file belongs to the explorer, so it wins over the workspace.
+  const inWorkspace = project !== null && saved.inWorkspace && looseFile === null;
   const editors = Object.fromEntries(
     Object.entries(saved.editors).map(([path, { anchor, head, scrollTop }]) => [path, { anchor, head, scrollTop }]),
   );
-  return { project, stack, openFile, editors };
+  return { project, inWorkspace, stack, looseFile, editors };
 }

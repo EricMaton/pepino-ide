@@ -25,6 +25,7 @@
   overflow-x: auto;
   scrollbar-width: none;
   white-space: nowrap;
+  mask-image: linear-gradient(to right, transparent, #000 var(--space-4));
 }
 
 .breadcrumb::-webkit-scrollbar {
@@ -148,6 +149,17 @@ button.rowMain:active {
   box-shadow: inset 4px 0 0 var(--primary);
 }
 
+/* The active project: a red edge, like the selected tab */
+.rowActive {
+  background: var(--surface-variant);
+  box-shadow: inset 4px 0 0 var(--primary);
+}
+
+.emptyIcon {
+  display: flex;
+  color: var(--outline);
+}
+
 .index {
   flex: none;
   width: 2.2ch;
@@ -238,28 +250,6 @@ button.rowMain:active {
   font-weight: 700;
 }
 
-/* Open project strip */
-.projectBar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
-  border-bottom: var(--border);
-  background: var(--surface-variant);
-}
-
-.projectBarText {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.projectBarText h2 {
-  margin: 0;
-}
-
 /* Recent projects strip */
 .recents {
   display: flex;
@@ -310,6 +300,11 @@ button.rowMain:active {
 .recentCard:active {
   transform: translate(var(--shadow-offset), var(--shadow-offset));
   box-shadow: 0 0 0 var(--primary);
+}
+
+.recentIcon {
+  display: flex;
+  color: var(--primary);
 }
 
 .recentName {

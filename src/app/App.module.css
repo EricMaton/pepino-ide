@@ -10,6 +10,7 @@
 /* Content */
 .content {
   position: relative;
+  view-transition-name: screen;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -125,4 +126,61 @@
 /* While typing in the editor, the bottom nav steps aside for the editor and its keys */
 .app[data-focus-mode] .nav {
   display: none;
+}
+
+/* The explorer's way back to the active project, always at hand above the nav. The workspace
+   sinks into it when the explorer shows, and rises out of it again (see ui/motion.ts). */
+.returnStrip {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  border-top: var(--border);
+  background: var(--surface-variant);
+  view-transition-name: return-strip;
+}
+
+.returnMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 56px;
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
+  border: none;
+  background: none;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.returnMain:active {
+  background: var(--bg);
+  box-shadow: inset 4px 0 0 var(--primary);
+}
+
+.returnClose {
+  flex: none;
+  align-self: center;
+  margin-right: var(--space-2);
+  color: var(--outline);
+}
+
+.returnIcon {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.returnText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }

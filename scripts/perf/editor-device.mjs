@@ -6,7 +6,7 @@
 //   npm run perf:editor:device                                  (defaults: 10,5000,50000 lines)
 //   npm run perf:editor:device -- --lines 5000 --port 9222
 //
-// The app must be on the editor or the explorer of a debug build. It creates a "perf-device"
+// Works from any screen of a debug build. It creates a "perf-device"
 // project, measures, and deletes the project again.
 const args = Object.fromEntries(
   process.argv
@@ -71,29 +71,24 @@ async function type(text, delay = 50) {
     await sleep(delay);
   }
 }
-const enter = async () => {
-  for (const type of ['keyDown', 'keyUp'])
-    await send('Input.dispatchKeyEvent', { type, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
-};
-/** Creates [name] in the folder the explorer shows; the create dialog focuses its Name field. */
+/** Creates a project (a folder in the explorer, then opened) or a file (in the workspace tree, which opens it). */
 async function create(name, kind) {
   await run(() => click('New file or folder'));
   await run(() => waitFor(() => document.activeElement?.tagName === 'INPUT'));
   await type(name, 10);
-  if (kind) await run((label) => click(label), kind);
-  else await enter();
+  await run((label) => click(label), kind === 'project' ? 'Folder' : 'File');
+  if (kind === 'project') await run((folder) => click(`Open ${folder} as workspace`), name);
   await sleep(600);
 }
-/** Back to the list of projects, from the editor or from inside a project. */
+/** The explorer, from wherever the app is: the logo leads there. */
 async function toProjects() {
   await run(async () => {
-    if (button('Close file')) await click('Close file');
-    await sleep(400);
-    if (button('Close project')) await click('Close project');
-    await sleep(400);
+    if (button('Go to projects')) await click('Go to projects');
+    // The explorer (it has a sort button), at the root of ~/projects (no way up).
+    await waitFor(() => button('Sort', false));
     const crumbs = () => document.querySelectorAll('nav[aria-label="Location"] button');
-    if (crumbs().length > 1) crumbs()[0].click(); // the breadcrumb's root, ~
-    await waitFor(() => button('New file or folder') && crumbs().length === 1);
+    if (crumbs().length > 1) crumbs()[0].click();
+    await waitFor(() => crumbs().length === 1);
     await sleep(400);
   });
 }
@@ -117,14 +112,13 @@ const device = await run(() => ({
 }));
 await toProjects();
 await deleteProject();
-await create(project); // a new project opens right away
-await run(async () => !!(await waitFor(() => button('Close project'))));
+await create(project, 'project'); // a new project opens its workspace, on the file tree
+await run(async () => !!(await waitFor(() => button('New file or folder'))));
 
 const results = [];
 for (const lines of sizes) {
   const name = `perf${lines}.ts`;
-  await create(name, 'File');
-  await run((file) => click(file, false), name);
+  await create(name, 'file'); // a new file opens right away
   await run(async () => !!(await waitFor(() => view())));
 
   // Paste the code as one transaction, as CodeMirror's paste handler does, and wait for the save.
@@ -139,14 +133,17 @@ for (const lines of sizes) {
     view().dispatch({ changes: { from: 0, insert: text }, userEvent: 'input.paste' });
     await frame();
     const pasteMs = performance.now() - start;
-    await waitFor(() => document.querySelector('[role="status"]')?.textContent === 'Saved', 60000);
+    // The status still says "Saved" until React renders the edit: see it go unsaved first.
+    const status = () => document.querySelector('[role="status"]')?.textContent;
+    await waitFor(() => status() !== 'Saved', 5000);
+    await waitFor(() => status() === 'Saved', 60000);
     return { pasteMs, lines: view().state.doc.lines };
   }, lines);
   if (pasted.lines !== lines) throw new Error(`pasted ${pasted.lines} lines, expected ${lines}`);
-  await run(() => click('Close file'));
+  await run((file) => click(`Close ${file}`), name); // its tab: the tree shows again
   await sleep(800);
 
-  // Open: from the tap on the row to the first painted line.
+  // Open: from the tap on the tree row to the first painted line.
   const openMs = await run(async (file) => {
     await waitFor(() => !document.querySelector('.cm-editor'), 30000);
     const row = await waitFor(() => button(file, false));
@@ -228,7 +225,7 @@ for (const lines of sizes) {
     'keystroke worst (ms)': Math.round(typing.worst),
     'typing: long frames': typing.long,
   });
-  await run(() => click('Close file'));
+  await run((file) => click(`Close ${file}`), name);
   await sleep(1500);
 }
 

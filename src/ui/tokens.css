@@ -52,7 +52,13 @@
   --shadow-primary: var(--shadow-offset) var(--shadow-offset) 0 var(--primary);
   --shadow-fg: var(--shadow-offset) var(--shadow-offset) 0 var(--fg);
   --shadow-dialog: 8px 8px 0 var(--primary);
-  --press-duration: 70ms;
+  --press-duration: 100ms;
+
+  /* Motion: strong ease-out for things arriving or leaving; exits are faster than entries */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --motion-exit: 120ms;
+  --motion-enter: 220ms;
 
   /* Sizing */
   --touch-target: 48px;

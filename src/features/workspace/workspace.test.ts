@@ -2,18 +2,23 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventBus } from '../../core/events';
 import { createMemoryBackend } from '../projects/memoryBackend';
 import { type FsEvents, observeProjectSpace } from '../projects/observed';
-import { createProject } from '../projects/projects';
 import { createProjectSpace, type ProjectSpace } from '../projects/projectSpace';
-import { createWorkspace, type OpenFilesStore, type Workspace, type WorkspaceEvents } from './workspace';
+import {
+  createWorkspace,
+  type OpenFilesStore,
+  type SavedOpenFiles,
+  type Workspace,
+  type WorkspaceEvents,
+} from './workspace';
 
 let space: ProjectSpace;
 let events: EventBus<FsEvents & WorkspaceEvents>;
-let saved: Map<string, string[]>;
+let saved: Map<string, SavedOpenFiles>;
 let workspace: Workspace;
 
 const store: OpenFilesStore = {
-  load: async (root) => saved.get(root) ?? [],
-  save: async (root, files) => void saved.set(root, [...files]),
+  load: async (root) => saved.get(root) ?? { files: [], active: null },
+  save: async (root, files, active) => void saved.set(root, { files: [...files], active }),
 };
 
 beforeEach(async () => {
@@ -21,7 +26,7 @@ beforeEach(async () => {
   const raw = createProjectSpace(createMemoryBackend(() => 1));
   await raw.ensureCreated();
   space = observeProjectSpace(raw, (topic, payload) => events.publish(topic, payload as never));
-  await createProject(space, 'app', () => 1);
+  await space.createDirectory('app');
   await space.createDirectory('app/src');
   await space.createDirectory('app/src/ui');
   await space.writeTextFile('app/src/main.ts', 'import { greet } from "./ui/greet";\nconsole.log(greet("Pepino"));\n');
@@ -29,7 +34,7 @@ beforeEach(async () => {
   await space.writeTextFile('app/README.md', '# App\nSay hola to Pepino.\n');
   await space.createDirectory('app/node_modules');
   await space.writeTextFile('app/node_modules/dep.js', 'hola');
-  await createProject(space, 'other', () => 1);
+  await space.createDirectory('other');
   await space.writeTextFile('other/secret.ts', 'hola');
   saved = new Map();
   workspace = createWorkspace(space, events, store);
@@ -95,46 +100,91 @@ describe('read, write and open', () => {
 });
 
 describe('open files', () => {
-  it('keeps the most recent first, without duplicates, and persists them per root', async () => {
+  it('opens tabs next to the active one, without duplicates, and persists them per root', async () => {
     workspace.setActiveFile('app/src/main.ts');
     workspace.setActiveFile('app/README.md');
     workspace.setActiveFile('app/src/main.ts');
+    workspace.setActiveFile('app/src/ui/greet.ts');
     expect(workspace.getState()).toMatchObject({
-      activeFile: 'app/src/main.ts',
-      openFiles: ['app/src/main.ts', 'app/README.md'],
+      activeFile: 'app/src/ui/greet.ts',
+      openFiles: ['app/src/main.ts', 'app/src/ui/greet.ts', 'app/README.md'],
     });
     await Promise.resolve();
-    expect(saved.get('app')).toEqual(['app/src/main.ts', 'app/README.md']);
+    expect(saved.get('app')).toEqual({
+      files: ['app/src/main.ts', 'app/src/ui/greet.ts', 'app/README.md'],
+      active: 'app/src/ui/greet.ts',
+    });
+  });
+
+  it('has no limit on open files', () => {
+    for (let i = 0; i < 30; i++) workspace.setActiveFile(`app/f${i}.ts`);
+    expect(workspace.getState().openFiles).toHaveLength(30);
+  });
+
+  it('closing the active tab activates the one to its right, else the one to its left', () => {
+    for (const file of ['app/a.ts', 'app/b.ts', 'app/c.ts']) workspace.setActiveFile(file);
+    workspace.setActiveFile('app/b.ts');
+    workspace.closeFile('app/b.ts');
+    expect(workspace.getState()).toMatchObject({ activeFile: 'app/c.ts', openFiles: ['app/a.ts', 'app/c.ts'] });
+    workspace.closeFile('app/c.ts');
+    expect(workspace.getState()).toMatchObject({ activeFile: 'app/a.ts', openFiles: ['app/a.ts'] });
+    workspace.closeFile('app/a.ts');
+    expect(workspace.getState()).toMatchObject({ activeFile: null, openFiles: [] });
+  });
+
+  it('closing another tab keeps the active one', () => {
+    workspace.setActiveFile('app/a.ts');
+    workspace.setActiveFile('app/b.ts');
+    workspace.closeFile('app/a.ts');
+    expect(workspace.getState()).toMatchObject({ activeFile: 'app/b.ts', openFiles: ['app/b.ts'] });
   });
 
   it('follows renames and moves, and drops deleted files', async () => {
     workspace.setActiveFile('app/src/ui/greet.ts');
     workspace.setActiveFile('app/README.md');
     await space.rename('app/src/ui', 'components');
-    expect(workspace.getState().openFiles).toEqual(['app/README.md', 'app/src/components/greet.ts']);
+    expect(workspace.getState().openFiles).toEqual(['app/src/components/greet.ts', 'app/README.md']);
     await space.delete('app/README.md');
-    expect(workspace.getState()).toMatchObject({ activeFile: null, openFiles: ['app/src/components/greet.ts'] });
+    expect(workspace.getState()).toMatchObject({
+      activeFile: 'app/src/components/greet.ts',
+      openFiles: ['app/src/components/greet.ts'],
+    });
   });
 
-  it('restores the saved list when the root changes and notifies subscribers', async () => {
+  it('goes with the project when it is renamed, keeping its tabs', async () => {
+    workspace.setActiveFile('app/README.md');
+    await space.rename('app', 'renamed');
+    expect(workspace.getState()).toMatchObject({ root: 'renamed', activeFile: 'renamed/README.md' });
+    await workspace.setRoot('renamed');
+    expect(workspace.getState().openFiles).toEqual(['renamed/README.md']);
+    expect(saved.get('renamed')).toEqual({ files: ['renamed/README.md'], active: 'renamed/README.md' });
+  });
+
+  it('restores the saved tabs and the active one when the root changes, and notifies subscribers', async () => {
     workspace.setActiveFile('app/src/main.ts');
+    workspace.setActiveFile('app/README.md');
     const listener = vi.fn();
     workspace.subscribe(listener);
     await workspace.setRoot('other');
-    expect(workspace.getState()).toMatchObject({ root: 'other', openFiles: [] });
+    expect(workspace.getState()).toMatchObject({ root: 'other', activeFile: null, openFiles: [] });
     await workspace.setRoot('app');
-    expect(workspace.getState().openFiles).toEqual(['app/src/main.ts']);
+    expect(workspace.getState()).toMatchObject({
+      activeFile: 'app/README.md',
+      openFiles: ['app/src/main.ts', 'app/README.md'],
+    });
     expect(listener).toHaveBeenCalled();
   });
 
-  it('keeps a file opened while the saved list was still loading', async () => {
-    saved.set('app', ['app/README.md']);
-    const loading = workspace.setRoot('other').then(() => workspace.setRoot('app'));
-    await Promise.resolve();
-    await loading;
-    workspace.setActiveFile('app/src/main.ts');
-    const restoring = workspace.setRoot('other');
-    await restoring;
+  it('forgets saved tabs whose files are gone', async () => {
+    saved.set('app', { files: ['app/missing.ts', 'app/README.md', 'app/src'], active: 'app/missing.ts' });
+    await workspace.setRoot('other');
+    await workspace.setRoot('app');
+    expect(workspace.getState()).toMatchObject({ activeFile: null, openFiles: ['app/README.md'] });
+  });
+
+  it('keeps a file opened while the saved tabs were still loading', async () => {
+    saved.set('app', { files: ['app/README.md'], active: 'app/README.md' });
+    await workspace.setRoot('other');
     const reopening = workspace.setRoot('app');
     workspace.setActiveFile('app/src/main.ts');
     await reopening;

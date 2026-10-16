@@ -88,3 +88,28 @@ export const SlidersIcon = (props: IconProps) => (
     <rect x="16" y="16" width="4" height="4" />
   </Icon>
 );
+
+/** Open a folder as the workspace: an arrow out of a box. */
+export const OpenIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <path d="M11 4H4v16h16v-7M14 4h6v6M20 4l-9 9" />
+  </Icon>
+);
+
+/** The workspace's file tree. */
+export const TreeIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <rect x="3" y="3" width="7" height="5" />
+    <rect x="14" y="10" width="7" height="4" />
+    <rect x="14" y="17" width="7" height="4" />
+    <path d="M6.5 8v11H14M6.5 12H14" />
+  </Icon>
+);
+
+/** A project (a folder opened as the workspace): a folder holding code. */
+export const ProjectIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <path d="M3 5h7l2 3h9v11H3z" />
+    <path d="M10 11l-2 2.5 2 2.5M14 11l2 2.5-2 2.5" />
+  </Icon>
+);
