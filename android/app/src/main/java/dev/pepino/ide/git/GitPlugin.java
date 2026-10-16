@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import org.eclipse.jgit.transport.CredentialsProvider;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.json.JSONArray;
 
@@ -30,8 +31,8 @@ import org.json.JSONArray;
 public class GitPlugin extends Plugin {
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
-    // Set by cancelClone, outside the git thread (the clone holds it)
-    private volatile boolean cloneCancelled;
+    // Set by cancelRemote, outside the git thread (the clone, fetch, pull or push holds it)
+    private volatile boolean remoteCancelled;
 
     private interface Work {
         JSObject run() throws Exception;
@@ -58,6 +59,10 @@ public class GitPlugin extends Plugin {
                 JSObject data = new JSObject();
                 data.put("paths", new JSArray(e.paths));
                 call.reject(e.getMessage(), "CONFLICT", e, data);
+            } catch (GitOps.MergeConflictException e) {
+                JSObject data = new JSObject();
+                data.put("paths", new JSArray(e.paths));
+                call.reject(e.getMessage(), "MERGE_CONFLICT", e, data);
             } catch (GitOps.NotMergedBranchException e) {
                 call.reject(e.getMessage(), "NOT_MERGED", e);
             } catch (GitOps.RemoteException e) {
@@ -94,47 +99,100 @@ public class GitPlugin extends Plugin {
     }
 
     /**
-     * Clones a GitHub repository (#32) into `path`, with the signed-in user's
-     * token from the Keystore: it never comes from (or goes to) the WebView.
-     * Progress goes out as `cloneProgress` events: { task, done, total }.
+     * The credentials for [url]: the signed-in user's token from the
+     * Keystore, only ever towards GitHub (none elsewhere, nor signed out).
+     * It never comes from, or goes to, the WebView.
      */
+    private CredentialsProvider credentials(String url) {
+        if (url == null || !url.startsWith("https://github.com/")) return null;
+        String token = GitHubPlugin.token(getContext());
+        return token == null ? null : new UsernamePasswordCredentialsProvider("x-access-token", token);
+    }
+
+    /** A remote operation's progress, out as `remoteProgress` events ({ task, done, total }); [cancelRemote] stops it. */
+    private GitOps.Progress remoteProgress() {
+        remoteCancelled = false;
+        return new GitOps.Progress() {
+            @Override
+            public void update(String task, int done, int total) {
+                JSObject event = new JSObject();
+                event.put("task", task);
+                event.put("done", done);
+                event.put("total", total);
+                notifyListeners("remoteProgress", event);
+            }
+
+            @Override
+            public boolean cancelled() {
+                return remoteCancelled;
+            }
+        };
+    }
+
+    /** Clones a GitHub repository (#32) into `path`. */
     @PluginMethod
     public void clone(PluginCall call) {
         String url = call.getString("url", "");
         run(call, () -> {
-            // The token only ever goes to GitHub
             if (!url.startsWith("https://github.com/")) throw new IllegalArgumentException("Only GitHub repositories can be cloned");
-            String token = GitHubPlugin.token(getContext());
-            cloneCancelled = false;
-            GitOps.RepoInfo info = GitOps.clone(
-                folder(call),
-                url,
-                token == null ? null : new UsernamePasswordCredentialsProvider("x-access-token", token),
-                new GitOps.Progress() {
-                    @Override
-                    public void update(String task, int done, int total) {
-                        JSObject event = new JSObject();
-                        event.put("task", task);
-                        event.put("done", done);
-                        event.put("total", total);
-                        notifyListeners("cloneProgress", event);
-                    }
-
-                    @Override
-                    public boolean cancelled() {
-                        return cloneCancelled;
-                    }
-                }
-            );
-            return toJson(info);
+            return toJson(GitOps.clone(folder(call), url, credentials(url), remoteProgress()));
         });
     }
 
-    /** Stops the clone in progress; it rejects with CANCELLED, leaving nothing behind. */
+    /** Stops the clone, fetch, pull or push in progress; it rejects with CANCELLED. */
     @PluginMethod
-    public void cancelClone(PluginCall call) {
-        cloneCancelled = true;
+    public void cancelRemote(PluginCall call) {
+        remoteCancelled = true;
         call.resolve();
+    }
+
+    private static JSObject toJson(GitOps.SyncState state) {
+        JSObject json = new JSObject();
+        json.put("remote", state.remote());
+        json.put("upstream", state.upstream() == null ? JSObject.NULL : state.upstream());
+        json.put("ahead", state.ahead());
+        json.put("behind", state.behind());
+        return json;
+    }
+
+    /** Where the current branch stands against GitHub's (#33), as of the last fetch: no network. */
+    @PluginMethod
+    public void sync(PluginCall call) {
+        run(call, () -> toJson(GitOps.syncState(folder(call))));
+    }
+
+    @PluginMethod
+    public void fetch(PluginCall call) {
+        run(call, () -> {
+            File folder = folder(call);
+            return toJson(GitOps.fetch(folder, credentials(GitOps.originUrl(folder)), remoteProgress()));
+        });
+    }
+
+    @PluginMethod
+    public void pull(PluginCall call) {
+        run(call, () -> {
+            File folder = folder(call);
+            GitOps.Pulled pulled = GitOps.pull(
+                folder,
+                credentials(GitOps.originUrl(folder)),
+                remoteProgress(),
+                GitOps.identity(configFile())
+            );
+            JSObject result = new JSObject();
+            result.put("state", toJson(pulled.state()));
+            result.put("written", new JSArray(pulled.written()));
+            result.put("removed", new JSArray(pulled.removed()));
+            return result;
+        });
+    }
+
+    @PluginMethod
+    public void push(PluginCall call) {
+        run(call, () -> {
+            File folder = folder(call);
+            return toJson(GitOps.push(folder, credentials(GitOps.originUrl(folder)), remoteProgress()));
+        });
     }
 
     @PluginMethod

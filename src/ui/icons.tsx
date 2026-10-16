@@ -121,3 +121,24 @@ export const HistoryIcon = (props: IconProps) => (
     <path d="M12 7v5l3 3" />
   </Icon>
 );
+
+/** Pull: GitHub's commits coming down into the branch. */
+export const PullIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <path d="M12 3v13M6 10l6 6 6-6M4 21h16" />
+  </Icon>
+);
+
+/** Push: the branch's commits going up to GitHub. */
+export const PushIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <path d="M12 21V8M6 14l6-6 6 6M4 3h16" />
+  </Icon>
+);
+
+/** Fetch: asking GitHub what is new, both ways. */
+export const FetchIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <path d="M8 3v15M4 14l4 4 4-4M16 21V6M12 10l4-4 4 4" />
+  </Icon>
+);
