@@ -18,7 +18,7 @@ El código del spike está en la rama
 - isomorphic-git 1.44 con un `fs` sobre Capacitor ya optimizado. Lee con
   `fetch` del servidor del WebView (#20), saca los `stat` de los `readdir` y
   hace HTTP nativo con `CapacitorHttp`.
-- Un plugin con JGit 6.10.
+- Un plugin con JGit 6.10 (en producción va JGit 5.13, ver Consecuencias).
 
 ### Medidas
 
@@ -73,10 +73,17 @@ El código del spike está en la rama
 
 ## Consecuencias
 
-- **JGit 6.x requiere Java 11.** Se compila bien y funciona en Android 15,
-  pero minSdk es 26. En #22 hay que activar `coreLibraryDesugaring` y probar
-  en un emulador con API 26. Si falla, las salidas son JGit 5.13 (Java 8, sin
-  clone superficial) o subir minSdk.
+- **JGit 5.13, no 6.x (#28).** JGit 6 requiere Java 11. Con
+  `coreLibraryDesugaring` compila y funciona en Android 15, pero en Android 8
+  (API 26, el minSdk) falla en la primera operación: llama a
+  `InputStream.readNBytes`, que Android solo tiene desde la API 33, y el
+  desugaring no la cubre. JGit 5.13 (Java 8) pasa los mismos tests en API 26
+  y en API 35 (`GitOpsDeviceTest`). Mezclar versiones no compensa: comparten
+  paquetes (habría que reempaquetar una y llevar dos motores en el APK), y
+  Play no admite código distinto por versión de Android dentro de un AAB.
+  Lo que se pierde es el clone superficial (`setDepth`, desde JGit 6.3), con el
+  que se tomaron las medidas de clone de arriba. Se revisa en el Sprint 4 (#29,
+  #31), y la salida sería subir minSdk a 33 y volver a JGit 6.
 - El APK de depuración pasa de 5,1 a 9,9 MB. En release, R8 recortará la
   parte de JGit que no se use; hay que añadir reglas `-keep` para lo que se
   carga por reflexión.

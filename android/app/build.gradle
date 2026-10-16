@@ -17,7 +17,7 @@ android {
         }
     }
     compileOptions {
-        // JGit 6 uses Java 11+ library APIs; desugaring brings them to minSdk 26 (ADR-006)
+        // Library desugaring backs the Java APIs JGit uses on minSdk 26 (ADR-006, checked on API 26 by GitOpsDeviceTest)
         coreLibraryDesugaringEnabled true
     }
     buildTypes {
