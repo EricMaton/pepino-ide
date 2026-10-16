@@ -1,9 +1,10 @@
 import { registerPlugin } from '@capacitor/core';
 import { ProjectSpaceError } from '../projects/errors';
-import { joinPath, parentPath, resolveInRoot } from '../projects/paths';
+import { isWithin, joinPath, parentPath, resolveInRoot } from '../projects/paths';
 import { canBeProject, GIT_DIR, isRepository, MARKER_DIR } from '../projects/projects';
 import type { FsEvents } from '../projects/observed';
 import type { ProjectSpace } from '../projects/projectSpace';
+import { applyExclusion, diffTexts, type FileDiff, type LineExclusion } from './diff';
 
 /*
  * The git engine (ADR-006): what the UI asks git for, without knowing what
@@ -50,11 +51,12 @@ export interface Branch {
 
 /**
  * A git failure the UI handles: switching branch would overwrite uncommitted
- * changes to [paths], or a branch to delete has commits on no other branch.
+ * changes to [paths], a branch to delete has commits on no other branch, or
+ * [paths] changed after their lines were picked for a commit.
  */
 export class GitError extends Error {
   constructor(
-    readonly code: 'CONFLICT' | 'NOT_MERGED',
+    readonly code: 'CONFLICT' | 'NOT_MERGED' | 'STALE',
     message: string,
     readonly paths: readonly string[] = [],
   ) {
@@ -71,11 +73,18 @@ export interface GitEngine {
   info(path: string): Promise<RepoInfo | null>;
   /** Every file that differs from the last commit, sorted by path. */
   status(path: string): Promise<FileChange[]>;
+  /** How [file] (repo-relative) differs from the last commit, like status: the file on disk against it. */
+  diff(path: string, file: string): Promise<FileDiff>;
   /**
    * Commits exactly [paths] as they are on disk (a missing one is a deletion),
    * like GitHub Desktop's ticked files: whatever was staged before is left out.
+   * The files in [excluded] go without the changed lines picked there; when
+   * one changed since, nothing is committed (a STALE [GitError]).
    */
-  commit(path: string, commit: { message: string; paths: readonly string[] }): Promise<CommitResult>;
+  commit(
+    path: string,
+    commit: { message: string; paths: readonly string[]; excluded?: Readonly<Record<string, LineExclusion>> },
+  ): Promise<CommitResult>;
   /** The identity commits are made with, or null until it is set. */
   identity(): Promise<Identity | null>;
   setIdentity(identity: Identity): Promise<void>;
@@ -98,7 +107,13 @@ interface GitPlugin {
   init(options: { path: string }): Promise<RepoInfo>;
   info(options: { path: string }): Promise<{ info: RepoInfo | null }>;
   status(options: { path: string }): Promise<{ changes: FileChange[] }>;
-  commit(options: { path: string; message: string; paths: string[] }): Promise<CommitResult>;
+  diff(options: { path: string; file: string }): Promise<FileDiff>;
+  commit(options: {
+    path: string;
+    message: string;
+    paths: string[];
+    excluded: Record<string, LineExclusion>;
+  }): Promise<CommitResult>;
   identity(): Promise<{ identity: Identity | null }>;
   setIdentity(options: Identity): Promise<void>;
   branches(options: { path: string }): Promise<{ branches: Branch[] }>;
@@ -120,7 +135,9 @@ type Announce = <K extends keyof FsEvents>(topic: K, payload: FsEvents[K]) => vo
 /** A plugin rejection with a code the UI handles, as a [GitError]; anything else as it is. */
 function gitError(error: unknown): unknown {
   const { code, message, data } = (error ?? {}) as { code?: string; message?: string; data?: { paths?: string[] } };
-  if (code === 'CONFLICT' || code === 'NOT_MERGED') return new GitError(code, message ?? code, data?.paths ?? []);
+  if (code === 'CONFLICT' || code === 'NOT_MERGED' || code === 'STALE') {
+    return new GitError(code, message ?? code, data?.paths ?? []);
+  }
   return error;
 }
 
@@ -149,8 +166,15 @@ export function createNativeGitEngine(announce: Announce): GitEngine {
     async status(path) {
       return (await git.status({ path: project(path) })).changes;
     },
-    commit(path, { message, paths }) {
-      return git.commit({ path: project(path), message, paths: [...paths] });
+    diff(path, file) {
+      return git.diff({ path: project(path), file });
+    },
+    commit(path, { message, paths, excluded = {} }) {
+      return git
+        .commit({ path: project(path), message, paths: [...paths], excluded: { ...excluded } })
+        .catch((error: unknown) => {
+          throw gitError(error);
+        });
     },
     async identity() {
       return (await git.identity()).identity;
@@ -189,6 +213,16 @@ const isValidBranchName = (name: string) =>
   /^[A-Za-z0-9._/-]+$/.test(name) && !name.startsWith('-') && !name.includes('..') && !name.endsWith('/');
 
 type Snapshot = Record<string, string>;
+
+/** Bigger files are committed whole, never shown line by line (as on Android). */
+const DIFF_MAX_CHARS = 1 << 20;
+
+/** A short FNV-1a hash: the stand-in's diff version. */
+const hashOf = (text: string): string => {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);
+  return (hash >>> 0).toString(16);
+};
 
 /**
  * A stand-in for the web and tests: a repository is a `.git` folder whose
@@ -282,7 +316,23 @@ export function createMemoryGitEngine(space: ProjectSpace): GitEngine {
       return changes.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
     },
 
-    async commit(path, { message, paths }) {
+    async diff(path, file) {
+      const folder = await repository(path);
+      const target = resolveInRoot(joinPath(folder, file));
+      if (target === folder || !isWithin(target, folder)) {
+        throw new ProjectSpaceError('EscapesRoot', `Outside the repository: ${file}`);
+      }
+      const [refs, branch] = await Promise.all([readRefs(folder), currentBranch(folder)]);
+      const before = refs[branch]?.[file] ?? '';
+      const after = await space.readTextFile(target).catch(() => '');
+      const version = `${hashOf(before)}:${hashOf(after)}`;
+      if (before.length > DIFF_MAX_CHARS || after.length > DIFF_MAX_CHARS) {
+        return { version: '', binary: false, tooLarge: true, hunks: [] };
+      }
+      return { version, binary: false, tooLarge: false, hunks: diffTexts(before, after) };
+    },
+
+    async commit(path, { message, paths, excluded = {} }) {
       const folder = await repository(path);
       if (!identity) throw new Error('Set your name and email for commits first');
       if (paths.length === 0) throw new Error('Choose at least one file to commit');
@@ -290,10 +340,22 @@ export function createMemoryGitEngine(space: ProjectSpace): GitEngine {
       if (!summary) throw new Error('A commit needs a summary');
       const [refs, branch, files] = await Promise.all([readRefs(folder), currentBranch(folder), readFiles(folder)]);
       const head = refs[branch] ?? {};
+      const stale = paths.filter((file) => {
+        const exclusion = excluded[file];
+        if (!exclusion || exclusion.lines.length === 0) return false;
+        return exclusion.version !== `${hashOf(head[file] ?? '')}:${hashOf(files.get(file) ?? '')}`;
+      });
+      if (stale.length > 0) {
+        throw new GitError('STALE', `${stale[0]} changed since you picked its lines: check them again`, stale);
+      }
       const next = { ...head };
       for (const file of paths) {
+        const exclusion = excluded[file];
         const text = files.get(file);
-        if (text === undefined) delete next[file];
+        if (exclusion && exclusion.lines.length > 0) {
+          const partial = applyExclusion(head[file] ?? '', text ?? '', new Set(exclusion.lines));
+          if (partial !== null) next[file] = partial;
+        } else if (text === undefined) delete next[file];
         else next[file] = text;
       }
       if (branch in refs && JSON.stringify(next) === JSON.stringify(head)) {

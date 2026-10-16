@@ -8,9 +8,15 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import org.json.JSONArray;
 
 /**
  * The `Git` Capacitor plugin (ADR-006): JGit on the project space
@@ -50,6 +56,10 @@ public class GitPlugin extends Plugin {
                 call.reject(e.getMessage(), "CONFLICT", e, data);
             } catch (GitOps.NotMergedBranchException e) {
                 call.reject(e.getMessage(), "NOT_MERGED", e);
+            } catch (GitOps.StaleSelectionException e) {
+                JSObject data = new JSObject();
+                data.put("paths", new JSArray(e.paths));
+                call.reject(e.getMessage(), "STALE", e, data);
             } catch (Exception e) {
                 call.reject(e.getMessage() != null ? e.getMessage() : e.toString(), e);
             }
@@ -111,10 +121,60 @@ public class GitPlugin extends Plugin {
             JSArray rawPaths = call.getArray("paths", new JSArray());
             List<String> paths = new ArrayList<>();
             for (int i = 0; i < rawPaths.length(); i++) paths.add(rawPaths.getString(i));
-            GitOps.CommitResult commit = GitOps.commit(folder(call), call.getString("message"), paths, who);
+            GitOps.CommitResult commit = GitOps.commit(folder(call), call.getString("message"), paths, exclusions(call), who);
             JSObject result = new JSObject();
             result.put("id", commit.id());
             result.put("summary", commit.summary());
+            return result;
+        });
+    }
+
+    /** `excluded`: { [path]: { version, lines: number[] } }. */
+    private static Map<String, GitOps.LineExclusion> exclusions(PluginCall call) throws Exception {
+        JSObject raw = call.getObject("excluded", new JSObject());
+        Map<String, GitOps.LineExclusion> exclusions = new HashMap<>();
+        for (Iterator<String> paths = raw.keys(); paths.hasNext(); ) {
+            String path = paths.next();
+            JSObject exclusion = raw.getJSObject(path);
+            if (exclusion == null) continue;
+            JSONArray rawLines = exclusion.optJSONArray("lines");
+            Set<Integer> lines = new HashSet<>();
+            for (int i = 0; rawLines != null && i < rawLines.length(); i++) lines.add(rawLines.getInt(i));
+            exclusions.put(path, new GitOps.LineExclusion(exclusion.getString("version", ""), lines));
+        }
+        return exclusions;
+    }
+
+    @PluginMethod
+    public void diff(PluginCall call) {
+        run(call, () -> {
+            GitOps.FileDiff diff = GitOps.diff(folder(call), call.getString("file"));
+            JSArray hunks = new JSArray();
+            for (GitOps.Hunk hunk : diff.hunks()) {
+                JSArray lines = new JSArray();
+                for (GitOps.DiffLine line : hunk.lines()) {
+                    JSObject json = new JSObject();
+                    json.put("kind", line.kind());
+                    json.put("text", line.text());
+                    json.put("oldLine", line.oldLine() > 0 ? line.oldLine() : JSObject.NULL);
+                    json.put("newLine", line.newLine() > 0 ? line.newLine() : JSObject.NULL);
+                    json.put("index", line.index() >= 0 ? line.index() : JSObject.NULL);
+                    if (line.noNewline()) json.put("noNewline", true);
+                    lines.put(json);
+                }
+                JSObject json = new JSObject();
+                json.put("oldStart", hunk.oldStart());
+                json.put("oldLines", hunk.oldLines());
+                json.put("newStart", hunk.newStart());
+                json.put("newLines", hunk.newLines());
+                json.put("lines", lines);
+                hunks.put(json);
+            }
+            JSObject result = new JSObject();
+            result.put("version", diff.version());
+            result.put("binary", diff.binary());
+            result.put("tooLarge", diff.tooLarge());
+            result.put("hunks", hunks);
             return result;
         });
     }

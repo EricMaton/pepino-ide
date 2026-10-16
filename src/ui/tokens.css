@@ -26,6 +26,9 @@
   --hairline: color-mix(in srgb, var(--fg) 14%, transparent);
   --grid-dot: color-mix(in srgb, var(--fg) 9%, transparent);
   --scrim: rgb(0 0 0 / 0.78);
+  /* Diffs: added lines lift towards the foreground, removed ones take the red */
+  --diff-added: color-mix(in srgb, var(--fg) 11%, transparent);
+  --diff-removed: color-mix(in srgb, var(--primary) 24%, transparent);
 
   /* Typography: mono carries the UI, Archivo Expanded carries names */
   --font-display: 'Archivo Variable', 'Arial Black', sans-serif;

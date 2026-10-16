@@ -306,6 +306,144 @@ public class GitOpsTest {
         assertEquals(Collections.singletonList(new GitOps.Branch("main", true)), GitOps.branches(app));
     }
 
+    private static String line(GitOps.DiffLine line) {
+        String mark = line.kind().equals("added") ? "+" : line.kind().equals("removed") ? "-" : " ";
+        return mark + line.text();
+    }
+
+    private static List<String> lines(GitOps.Hunk hunk) {
+        List<String> lines = new java.util.ArrayList<>();
+        for (GitOps.DiffLine line : hunk.lines()) lines.add(line(line));
+        return lines;
+    }
+
+    private static String numbered(int from, int to) {
+        StringBuilder text = new StringBuilder();
+        for (int i = from; i <= to; i++) text.append("line ").append(i).append('\n');
+        return text.toString();
+    }
+
+    /** What the last commit holds for [path]. */
+    private static String committed(File app, String path) throws Exception {
+        try (Git git = Git.open(app)) {
+            org.eclipse.jgit.lib.Repository repository = git.getRepository();
+            try (org.eclipse.jgit.treewalk.TreeWalk walk = org.eclipse.jgit.treewalk.TreeWalk.forPath(
+                repository, path, repository.resolve("HEAD^{tree}"))) {
+                if (walk == null) return null;
+                return new String(repository.open(walk.getObjectId(0)).getBytes(), StandardCharsets.UTF_8);
+            }
+        }
+    }
+
+    @Test
+    public void diffShowsHunksWithThreeLinesOfContextAndBothLineNumbers() throws Exception {
+        File app = project("app");
+        GitOps.init(app);
+        write(app, "a.txt", numbered(1, 20));
+        GitOps.commit(app, "first", Collections.singletonList("a.txt"), ME);
+        write(app, "a.txt", numbered(1, 20).replace("line 2\n", "line two\n").replace("line 18\n", "").concat("line 21\n"));
+
+        GitOps.FileDiff diff = GitOps.diff(app, "a.txt");
+
+        assertFalse(diff.binary());
+        assertEquals(2, diff.hunks().size());
+        GitOps.Hunk first = diff.hunks().get(0);
+        assertEquals(Arrays.asList(" line 1", "-line 2", "+line two", " line 3", " line 4", " line 5"), lines(first));
+        assertEquals(Arrays.asList(1, 5, 1, 5), Arrays.asList(first.oldStart(), first.oldLines(), first.newStart(), first.newLines()));
+        assertEquals(new GitOps.DiffLine("removed", "line 2", 2, 0, 0, false), first.lines().get(1));
+        assertEquals(new GitOps.DiffLine("added", "line two", 0, 2, 1, false), first.lines().get(2));
+        GitOps.Hunk second = diff.hunks().get(1);
+        assertEquals(
+            Arrays.asList(" line 15", " line 16", " line 17", "-line 18", " line 19", " line 20", "+line 21"),
+            lines(second)
+        );
+        assertEquals(new GitOps.DiffLine("context", "line 19", 19, 18, -1, false), second.lines().get(4));
+        assertEquals(2, second.lines().get(3).index());
+        assertEquals(3, second.lines().get(6).index());
+        assertEquals(diff.version(), GitOps.diff(app, "a.txt").version());
+    }
+
+    @Test
+    public void diffOfNewDeletedBinaryAndMissingNewlineFiles() throws Exception {
+        File app = project("app");
+        GitOps.init(app);
+        write(app, "new.txt", "a\r\nb");
+        GitOps.FileDiff created = GitOps.diff(app, "new.txt");
+        assertEquals(Arrays.asList("+a", "+b"), lines(created.hunks().get(0)));
+        assertEquals(Arrays.asList(0, 0, 1, 2), Arrays.asList(
+            created.hunks().get(0).oldStart(), created.hunks().get(0).oldLines(),
+            created.hunks().get(0).newStart(), created.hunks().get(0).newLines()));
+        assertTrue(created.hunks().get(0).lines().get(1).noNewline());
+
+        Files.write(new File(app, "logo.png").toPath(), new byte[] {(byte) 0x89, 'P', 'N', 'G', 0, 0, 1});
+        GitOps.commit(app, "first", Arrays.asList("new.txt", "logo.png"), ME);
+        assertTrue(new File(app, "new.txt").delete());
+        write(app, "logo.png", "\0changed");
+
+        assertEquals(Arrays.asList("-a", "-b"), lines(GitOps.diff(app, "new.txt").hunks().get(0)));
+        GitOps.FileDiff binary = GitOps.diff(app, "logo.png");
+        assertTrue(binary.binary());
+        assertEquals(Collections.emptyList(), binary.hunks());
+        assertThrows(IllegalArgumentException.class, () -> GitOps.diff(app, "../outside.txt"));
+    }
+
+    @Test
+    public void commitLeavesOutTheExcludedLines() throws Exception {
+        File app = project("app");
+        GitOps.init(app);
+        write(app, "a.txt", "one\ntwo\nthree\n");
+        GitOps.commit(app, "first", Collections.singletonList("a.txt"), ME);
+        write(app, "a.txt", "one\n2\nthree\nfour\n");
+        GitOps.FileDiff diff = GitOps.diff(app, "a.txt");
+        // 0: -two, 1: +2, 2: +four; keep "two" and leave "four" out
+        java.util.Map<String, GitOps.LineExclusion> excluded = Collections.singletonMap(
+            "a.txt", new GitOps.LineExclusion(diff.version(), new java.util.HashSet<>(Arrays.asList(0, 2))));
+
+        GitOps.commit(app, "two ways", Collections.singletonList("a.txt"), excluded, ME);
+
+        assertEquals("one\ntwo\n2\nthree\n", committed(app, "a.txt"));
+        assertEquals("one\n2\nthree\nfour\n", read(app, "a.txt"));
+        assertEquals(changes("a.txt", "modified"), GitOps.status(app));
+    }
+
+    @Test
+    public void commitOfSomeLinesOfANewFileAndOfNoneOfThem() throws Exception {
+        File app = project("app");
+        GitOps.init(app);
+        write(app, "keep.txt", "k\n");
+        write(app, "new.txt", "a\nb\nc");
+        String version = GitOps.diff(app, "new.txt").version();
+        java.util.Map<String, GitOps.LineExclusion> excluded = new java.util.HashMap<>();
+        excluded.put("new.txt", new GitOps.LineExclusion(version, new java.util.HashSet<>(Collections.singletonList(1))));
+
+        GitOps.commit(app, "first", Arrays.asList("keep.txt", "new.txt"), excluded, ME);
+        assertEquals("a\nc", committed(app, "new.txt"));
+
+        write(app, "keep.txt", "k2\n");
+        write(app, "new.txt", "a\nb\nc\nd\n");
+        GitOps.FileDiff diff = GitOps.diff(app, "new.txt");
+        excluded.put("new.txt", new GitOps.LineExclusion(diff.version(), new java.util.HashSet<>(Arrays.asList(0, 1, 2, 3))));
+        GitOps.commit(app, "keep only", Arrays.asList("keep.txt", "new.txt"), excluded, ME);
+        assertEquals("a\nc", committed(app, "new.txt"));
+        assertEquals("k2\n", committed(app, "keep.txt"));
+    }
+
+    @Test
+    public void commitRefusesLinesPickedOnAnOlderVersionAndCommitsNothing() throws Exception {
+        File app = repoWithACommit();
+        write(app, "a.txt", "picked\n");
+        String version = GitOps.diff(app, "a.txt").version();
+        write(app, "a.txt", "changed again\n");
+        java.util.Map<String, GitOps.LineExclusion> excluded = Collections.singletonMap(
+            "a.txt", new GitOps.LineExclusion(version, new java.util.HashSet<>(Collections.singletonList(0))));
+
+        GitOps.StaleSelectionException stale = assertThrows(GitOps.StaleSelectionException.class,
+            () -> GitOps.commit(app, "late", Collections.singletonList("a.txt"), excluded, ME));
+
+        assertEquals(Collections.singletonList("a.txt"), stale.paths);
+        assertEquals("main", committed(app, "a.txt"));
+    }
+
     private static int countCommits(Git git) throws Exception {
         int count = 0;
         for (Object ignored : git.log().call()) count++;

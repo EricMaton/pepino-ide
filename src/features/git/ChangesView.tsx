@@ -2,11 +2,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useServices } from '../../app/services';
 import { Button, Dialog, TextField } from '../../ui/components';
 import { cx } from '../../ui/cx';
+import { navigate } from '../../ui/motion';
 import { useSnackbar } from '../../ui/useSnackbar';
 import { errorMessage } from '../projects/errors';
 import { basename, isWithin, parentPath } from '../projects/paths';
-import type { ChangeKind, CommitResult, FileChange, Identity } from './engine';
+import type { LineExclusion } from './diff';
+import { DiffView } from './DiffView';
+import { type ChangeKind, type CommitResult, type FileChange, GitError, type Identity } from './engine';
 import styles from './GitScreen.module.css';
+import type { Selection } from './selection';
 
 /** Files written in a burst (autosave, a plugin) re-read the status once. */
 const STATUS_DEBOUNCE_MS = 400;
@@ -68,8 +72,9 @@ function useChanges(path: string): { changes: FileChange[] | null; refresh: () =
 
 /**
  * GitHub Desktop's Changes: every changed file with a tick (all ticked by
- * default), and the commit box under them. The commit takes exactly the
- * ticked files; partial (line) staging comes with the diff viewer (#25).
+ * default), and the commit box under them. Tapping a file opens its diff,
+ * where single lines can be left out. The commit takes exactly the ticked
+ * files, without the lines left out.
  */
 export function ChangesView({
   path,
@@ -86,6 +91,10 @@ export function ChangesView({
   const { changes, refresh } = useChanges(path);
   // Unticked files; anything new comes in ticked
   const [excluded, setExcluded] = useState<ReadonlySet<string>>(new Set());
+  // Ticked files with some of their lines left out (picked in the diff)
+  const [partial, setPartial] = useState<Readonly<Record<string, LineExclusion>>>({});
+  // The file whose diff is open
+  const [opened, setOpened] = useState<string | null>(null);
   const [summary, setSummary] = useState('');
   const [description, setDescription] = useState('');
   const [committing, setCommitting] = useState(false);
@@ -110,14 +119,36 @@ export function ChangesView({
   const allTicked = changes !== null && changes.length > 0 && ticked.length === changes.length;
   const canCommit = ticked.length > 0 && summary.trim() !== '' && !committing;
 
-  const toggle = (file: string) =>
+  const selectionOf = (file: string): Selection => (excluded.has(file) ? 'none' : (partial[file] ?? 'all'));
+  const select = useCallback((file: string, selection: Selection) => {
     setExcluded((current) => {
+      if (current.has(file) === (selection === 'none')) return current;
       const next = new Set(current);
-      if (next.has(file)) next.delete(file);
-      else next.add(file);
+      if (selection === 'none') next.add(file);
+      else next.delete(file);
       return next;
     });
-  const toggleAll = () => setExcluded(allTicked ? new Set((changes ?? []).map((change) => change.path)) : new Set());
+    setPartial((current) => {
+      if (typeof selection === 'object') return { ...current, [file]: selection };
+      if (!(file in current)) return current;
+      const next = { ...current };
+      delete next[file];
+      return next;
+    });
+  }, []);
+  const toggle = (file: string) => select(file, excluded.has(file) ? 'all' : 'none');
+  // Ticked with lines left out reads as "some", like a file not ticked at all
+  const anyPartial = ticked.some((change) => change.path in partial);
+  const toggleAll = () => {
+    setPartial({});
+    setExcluded(allTicked && !anyPartial ? new Set((changes ?? []).map((change) => change.path)) : new Set());
+  };
+  const onSelectOpened = useCallback(
+    (selection: Selection) => opened !== null && select(opened, selection),
+    [opened, select],
+  );
+  const open = (file: string) => navigate('forward', () => setOpened(file));
+  const close = useCallback(() => navigate('back', () => setOpened(null)), []);
 
   const commit = async () => {
     if (!canCommit) return;
@@ -129,15 +160,20 @@ export function ChangesView({
     setCommitting(true);
     setLastCommit(null);
     const message = description.trim() ? `${summary.trim()}\n\n${description.trim()}` : summary.trim();
+    const paths = ticked.map((change) => change.path);
+    const lines = Object.fromEntries(paths.filter((file) => file in partial).map((file) => [file, partial[file]]));
     try {
-      const result = await git.commit(path, { message, paths: ticked.map((change) => change.path) });
+      const result = await git.commit(path, { message, paths, excluded: lines });
       setLastCommit(result);
       setSummary('');
       setDescription('');
       setExcluded(new Set());
+      setPartial({});
       refresh();
       onCommitted();
     } catch (error) {
+      // Lines picked before the file changed again: they are all in again, to be checked
+      if (error instanceof GitError && error.code === 'STALE') error.paths.forEach((file) => select(file, 'all'));
       showSnackbar(`Error: ${errorMessage(error)}`);
     } finally {
       setCommitting(false);
@@ -157,14 +193,14 @@ export function ChangesView({
 
   return (
     <div className={styles.changes}>
-      <div className={styles.changesHead}>
+      <div className={styles.changesHead} inert={opened !== null}>
         <label className={styles.checkRow}>
           <input
             type="checkbox"
             className={styles.check}
             checked={allTicked}
             ref={(input) => {
-              if (input) input.indeterminate = ticked.length > 0 && !allTicked;
+              if (input) input.indeterminate = ticked.length > 0 && (!allTicked || anyPartial);
             }}
             disabled={count === 0}
             onChange={toggleAll}
@@ -175,7 +211,7 @@ export function ChangesView({
         </label>
       </div>
 
-      <div className={styles.changeList}>
+      <div className={styles.changeList} inert={opened !== null}>
         {changes === null ? (
           <p className={cx('label', 'cursor', styles.note)} data-loading>
             Reading changes
@@ -189,23 +225,37 @@ export function ChangesView({
           changes.map((change) => {
             const folder = parentPath(change.path);
             const { mark, label } = KIND_MARKS[change.kind];
+            const someLines = change.path in partial && !excluded.has(change.path);
             return (
-              <label key={change.path} className={styles.change}>
-                <input
-                  type="checkbox"
-                  className={styles.check}
-                  checked={!excluded.has(change.path)}
-                  onChange={() => toggle(change.path)}
-                />
-                <span className={styles.changeText}>
-                  <span className="body ellipsis">{basename(change.path)}</span>
-                  {folder && <span className="caption muted ellipsis">{folder}</span>}
-                </span>
-                <span className={cx('label', styles.kind, styles[`kind-${change.kind}`])} title={label}>
-                  <span aria-hidden>{mark}</span>
-                  <span className="visually-hidden">{label}</span>
-                </span>
-              </label>
+              <div key={change.path} className={styles.change}>
+                <label className={styles.changeTick}>
+                  <input
+                    type="checkbox"
+                    className={styles.check}
+                    aria-label={`Commit ${change.path}`}
+                    checked={!excluded.has(change.path)}
+                    ref={(input) => {
+                      if (input) input.indeterminate = someLines;
+                    }}
+                    onChange={() => toggle(change.path)}
+                  />
+                </label>
+                <button type="button" className={styles.changeOpen} onClick={() => open(change.path)}>
+                  <span className={styles.changeText}>
+                    <span className="body ellipsis">{basename(change.path)}</span>
+                    {(folder || someLines) && (
+                      <span className="caption muted ellipsis">
+                        {someLines && <span className="accent">SOME LINES{folder && ' · '}</span>}
+                        {folder}
+                      </span>
+                    )}
+                  </span>
+                  <span className={cx('label', styles.kind, styles[`kind-${change.kind}`])} title={label}>
+                    <span aria-hidden>{mark}</span>
+                    <span className="visually-hidden">{label}</span>
+                  </span>
+                </button>
+              </div>
             );
           })
         )}
@@ -213,6 +263,7 @@ export function ChangesView({
 
       <form
         className={styles.commitBox}
+        inert={opened !== null}
         onSubmit={(event) => {
           event.preventDefault();
           void commit();
@@ -242,6 +293,10 @@ export function ChangesView({
           {identity ? `As ${identity.name} <${identity.email}> · change` : 'Set who commits'}
         </button>
       </form>
+
+      {opened !== null && (
+        <DiffView path={path} file={opened} selection={selectionOf(opened)} onSelect={onSelectOpened} onClose={close} />
+      )}
 
       {askingIdentity && (
         <IdentityDialog

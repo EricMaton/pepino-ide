@@ -9,7 +9,7 @@
 - [x] `git init` / abrir repo existente en un proyecto (#22)
 - [x] Commits con mensaje, staging de archivos (#23; el stage parcial, por líneas, va con el diff viewer #25)
 - [x] Branches: crear, cambiar, borrar, lista (#24)
-- [ ] Diff viewer táctil (cambios por archivo, antes/después)
+- [x] Diff viewer táctil (cambios por archivo, antes/después) y stage por líneas tocando el diff (#25)
 - [ ] History: log de commits con autor, fecha, mensaje
 - [ ] Snapshot automático pre-cambio + integración con el autosave del editor
 - [ ] Tests de las operaciones core de git

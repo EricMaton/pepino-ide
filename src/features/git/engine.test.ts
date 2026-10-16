@@ -80,6 +80,44 @@ describe('memory git engine: changes and commits', () => {
   });
 });
 
+describe('memory git engine: diffs and picked lines', () => {
+  beforeEach(async () => {
+    await git.init('app');
+    await git.setIdentity({ name: 'Pepino', email: 'me@pepino.dev' });
+    await space.writeTextFile('app/a.txt', 'one\ntwo\nthree\n');
+    await git.commit('app', { message: 'first', paths: ['a.txt'] });
+  });
+
+  it('diffs the file on disk against the last commit', async () => {
+    await space.writeTextFile('app/a.txt', 'one\n2\nthree\n');
+    const diff = await git.diff('app', 'a.txt');
+    expect(diff.binary).toBe(false);
+    expect(diff.hunks[0].lines.map((line) => line.text)).toEqual(['one', 'two', '2', 'three']);
+    expect((await git.diff('app', 'a.txt')).version).toBe(diff.version);
+    await expect(git.diff('app', '../outside.txt')).rejects.toMatchObject({ code: 'EscapesRoot' });
+  });
+
+  it('commits without the lines left out, and refuses lines picked on an older version', async () => {
+    await space.writeTextFile('app/a.txt', 'one\n2\nthree\nfour\n');
+    const { version } = await git.diff('app', 'a.txt');
+    await git.commit('app', { message: 'part', paths: ['a.txt'], excluded: { 'a.txt': { version, lines: [0, 2] } } });
+    // "two" stayed in the commit, "four" stayed out
+    const diff = await git.diff('app', 'a.txt');
+    expect(
+      diff.hunks.flatMap((hunk) => hunk.lines.filter((line) => line.index !== null).map((line) => line.text)),
+    ).toEqual(['two', 'four']);
+
+    await space.writeTextFile('app/a.txt', 'changed again\n');
+    await expect(
+      git.commit('app', {
+        message: 'late',
+        paths: ['a.txt'],
+        excluded: { 'a.txt': { version: diff.version, lines: [0] } },
+      }),
+    ).rejects.toMatchObject({ code: 'STALE', paths: ['a.txt'] });
+  });
+});
+
 describe('memory git engine: branches', () => {
   beforeEach(async () => {
     await git.init('app');
