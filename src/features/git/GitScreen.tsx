@@ -5,6 +5,7 @@ import { Button, Dialog, TextField } from '../../ui/components';
 import { cx } from '../../ui/cx';
 import { BranchIcon, FolderIcon, PlusIcon, ProjectIcon } from '../../ui/icons';
 import { useSnackbar } from '../../ui/useSnackbar';
+import { useGitHubAccount } from '../github/useGitHubAccount';
 import { errorMessage } from '../projects/errors';
 import { type FileEntry, isValidEntryName } from '../projects/files';
 import { FolderPicker } from '../projects/FolderPicker';
@@ -15,6 +16,7 @@ import { useFolderChanges } from '../projects/useFolderChanges';
 import { useFolderStack } from '../projects/useFolderStack';
 import { BranchesDialog } from './BranchesDialog';
 import { ChangesView } from './ChangesView';
+import { CloneRepositoryDialog } from './CloneDialog';
 import type { RepoInfo } from './engine';
 import styles from './GitScreen.module.css';
 import { HistoryView } from './HistoryView';
@@ -22,7 +24,7 @@ import { HistoryView } from './HistoryView';
 /*
  * GIT works like GitHub Desktop on the one active project, which the editor
  * shares: choosing a repository here makes it the active project everywhere.
- * Cloning (#29, #31, #32) shows already and turns on with GitHub sign-in.
+ * Cloning lists the user's GitHub repositories (#31); cloning one is #32.
  */
 interface GitScreenProps {
   project: ProjectInfo | null;
@@ -56,7 +58,8 @@ function useRepositories(): ProjectInfo[] | null {
 }
 
 /** The ways to bring a repository into the list, each a dialog over GIT. */
-type RepositoryDialog = { kind: 'create' } | { kind: 'initialize' } | { kind: 'add'; added: readonly ProjectInfo[] };
+type RepositoryDialog =
+  { kind: 'clone' } | { kind: 'create' } | { kind: 'initialize' } | { kind: 'add'; added: readonly ProjectInfo[] };
 
 /** [dialog], open; [onDone] gets the repository it created, initialized or added. */
 function RepositoryDialogs({
@@ -69,6 +72,8 @@ function RepositoryDialogs({
   onDone: (path: string) => void;
 }) {
   switch (dialog.kind) {
+    case 'clone':
+      return <CloneRepositoryDialog onClose={onClose} />;
     case 'create':
       return <CreateRepositoryDialog onClose={onClose} onCreated={onDone} />;
     case 'initialize':
@@ -81,6 +86,7 @@ function RepositoryDialogs({
 /** GitHub Desktop's "Let's get started": clone, create, initialize, or add a repository already on the device. */
 function GitStart({ onOpen }: { onOpen: (path: string) => void }) {
   const repos = useRepositories();
+  const account = useGitHubAccount();
   const [dialog, setDialog] = useState<RepositoryDialog | null>(null);
   return (
     <div className={styles.screen}>
@@ -91,7 +97,12 @@ function GitStart({ onOpen }: { onOpen: (path: string) => void }) {
           Git works on one repository at a time: the project the editor has open. Pick one to start.
         </p>
         <div className={styles.actions}>
-          <ActionCard icon={<BranchIcon size={22} />} title="Clone a repository" detail="From GitHub · Sign in first" />
+          <ActionCard
+            icon={<BranchIcon size={22} />}
+            title="Clone a repository"
+            detail={account ? `From GitHub · @${account.login}` : 'From GitHub · Sign in first'}
+            onClick={() => setDialog({ kind: 'clone' })}
+          />
           <ActionCard
             icon={<PlusIcon size={22} />}
             title="Create a new repository"
@@ -719,6 +730,7 @@ function ChooseRepository({
 }) {
   const repos = useRepositories();
   const more: [string, ReactNode, RepositoryDialog][] = [
+    ['Clone a repository', <BranchIcon key="icon" size={20} />, { kind: 'clone' }],
     ['Create a new repository', <PlusIcon key="icon" size={20} />, { kind: 'create' }],
     ['Initialize a repository', <ProjectIcon key="icon" size={20} />, { kind: 'initialize' }],
     ['Add an existing repository', <FolderIcon key="icon" size={20} />, { kind: 'add', added: repos ?? [] }],

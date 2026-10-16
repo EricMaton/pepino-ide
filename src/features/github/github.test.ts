@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createMemoryGitHub, createNativeGitHub, GitHubError } from './github';
+import { createMemoryGitHub, createNativeGitHub, GitHubError, REPOS_PER_PAGE } from './github';
 
 const plugin = vi.hoisted(() => ({
   account: vi.fn(),
@@ -8,6 +8,7 @@ const plugin = vi.hoisted(() => ({
   cancelLogin: vi.fn(),
   logout: vi.fn(),
   openUrl: vi.fn(),
+  repos: vi.fn(),
 }));
 
 vi.mock('@capacitor/core', () => ({ registerPlugin: () => plugin }));
@@ -26,6 +27,15 @@ describe('native GitHub', () => {
     const github = createNativeGitHub('client1', 'repo read:user');
     expect(await github.startLogin()).toMatchObject({ userCode: 'WDJB-MJHT' });
     expect(plugin.startLogin).toHaveBeenCalledWith({ clientId: 'client1', scopes: 'repo read:user' });
+  });
+
+  it('asks the plugin for a page of repositories, REPOS_PER_PAGE at a time', async () => {
+    plugin.repos.mockResolvedValue({ repos: [], hasMore: false });
+    await createNativeGitHub('client1').repos(3);
+    expect(plugin.repos).toHaveBeenCalledWith({ page: 3, perPage: REPOS_PER_PAGE });
+
+    plugin.repos.mockRejectedValue({ code: 'RATE_LIMITED', message: 'Too many requests' });
+    await expect(createNativeGitHub('client1').repos(1)).rejects.toMatchObject({ code: 'RATE_LIMITED' });
   });
 
   it('tells listeners who signed in and when they sign out', async () => {

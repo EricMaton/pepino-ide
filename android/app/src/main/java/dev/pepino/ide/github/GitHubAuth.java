@@ -32,7 +32,8 @@ public final class GitHubAuth {
      * A sign-in that did not end with a token: "EXPIRED" (the code ran out),
      * "DENIED" (the user cancelled on GitHub), "CANCELLED" (in Pepino),
      * "DISABLED" (the OAuth app has no device flow), "UNAUTHORIZED" (the
-     * token was refused) or "FAILED".
+     * token was refused), "RATE_LIMITED" (too many API calls, #31) or
+     * "FAILED".
      */
     public static final class LoginException extends Exception {
         public final String code;
@@ -186,7 +187,7 @@ public final class GitHubAuth {
         }
     }
 
-    private static HttpURLConnection open(String url) throws IOException {
+    static HttpURLConnection open(String url) throws IOException {
         HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
         connection.setConnectTimeout(15_000);
         connection.setReadTimeout(30_000);
@@ -224,7 +225,7 @@ public final class GitHubAuth {
         }
     }
 
-    private static String read(InputStream in) throws IOException {
+    static String read(InputStream in) throws IOException {
         try (InputStream stream = in) {
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
             byte[] buffer = new byte[8192];

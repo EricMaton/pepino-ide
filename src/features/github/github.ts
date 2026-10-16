@@ -31,7 +31,34 @@ export interface DeviceLogin {
   expiresIn: number;
 }
 
-export type GitHubErrorCode = 'EXPIRED' | 'DENIED' | 'CANCELLED' | 'DISABLED' | 'UNAUTHORIZED' | 'NETWORK' | 'FAILED';
+/** A repository the user can clone (#31). */
+export interface GitHubRepo {
+  /** `owner/name`. */
+  fullName: string;
+  name: string;
+  owner: string;
+  description: string | null;
+  private: boolean;
+  fork: boolean;
+  archived: boolean;
+  defaultBranch: string;
+  cloneUrl: string;
+  language: string | null;
+  /** ISO time of the last push; null for an empty repository. */
+  pushedAt: string | null;
+}
+
+/** A page of repositories, and whether GitHub has more after it. */
+export interface RepoPage {
+  repos: GitHubRepo[];
+  hasMore: boolean;
+}
+
+/** Repositories per page: big enough that most people have one or two. */
+export const REPOS_PER_PAGE = 50;
+
+export type GitHubErrorCode =
+  'EXPIRED' | 'DENIED' | 'CANCELLED' | 'DISABLED' | 'UNAUTHORIZED' | 'RATE_LIMITED' | 'NETWORK' | 'FAILED';
 
 export class GitHubError extends Error {
   constructor(
@@ -56,6 +83,8 @@ export interface GitHub {
   logout(): Promise<void>;
   /** Opens an https link in the browser. */
   openUrl(url: string): Promise<void>;
+  /** [page] (from 1) of the signed-in user's repositories, most recently pushed first. */
+  repos(page: number): Promise<RepoPage>;
   /** Called whenever someone signs in or out; returns the unsubscribe. */
   subscribe(listener: (account: GitHubAccount | null) => void): () => void;
 }
@@ -67,9 +96,18 @@ interface GitHubPlugin {
   cancelLogin(): Promise<void>;
   logout(): Promise<void>;
   openUrl(options: { url: string }): Promise<void>;
+  repos(options: { page: number; perPage: number }): Promise<RepoPage>;
 }
 
-const CODES: readonly GitHubErrorCode[] = ['EXPIRED', 'DENIED', 'CANCELLED', 'DISABLED', 'UNAUTHORIZED', 'NETWORK'];
+const CODES: readonly GitHubErrorCode[] = [
+  'EXPIRED',
+  'DENIED',
+  'CANCELLED',
+  'DISABLED',
+  'UNAUTHORIZED',
+  'RATE_LIMITED',
+  'NETWORK',
+];
 
 /** A plugin rejection as a [GitHubError]. */
 function githubError(error: unknown): GitHubError {
@@ -116,17 +154,41 @@ export function createNativeGitHub(clientId = GITHUB_CLIENT_ID, scopes = GITHUB_
         tell(null);
       }),
     openUrl: (url) => call(() => plugin.openUrl({ url })),
+    repos: (page) => call(() => plugin.repos({ page, perPage: REPOS_PER_PAGE })),
     subscribe,
   };
+}
+
+/** [count] made-up repositories for the web stand-in, most recently pushed first. */
+function sampleRepos(owner: string, count: number): GitHubRepo[] {
+  const languages = ['TypeScript', 'Kotlin', 'Python', null];
+  return Array.from({ length: count }, (_, index) => {
+    const name = index === 0 ? 'pepino-ide' : `project-${String(index).padStart(3, '0')}`;
+    return {
+      fullName: `${owner}/${name}`,
+      name,
+      owner,
+      description: index % 3 === 0 ? null : `Sample repository number ${index}`,
+      private: index % 4 === 1,
+      fork: index % 7 === 3,
+      archived: index % 11 === 5,
+      defaultBranch: 'main',
+      cloneUrl: `https://github.com/${owner}/${name}.git`,
+      language: languages[index % languages.length],
+      pushedAt: index % 13 === 12 ? null : new Date(Date.UTC(2026, 9, 16) - index * 86_400_000).toISOString(),
+    };
+  });
 }
 
 /**
  * A stand-in for the web (`npm run dev`) and tests: GitHub's OAuth endpoints
  * do not allow CORS, so the browser cannot sign in for real. Approving takes
- * [approveAfterMs]; the account lives in memory only.
+ * [approveAfterMs]; the account lives in memory only, with [repoCount]
+ * made-up repositories that take [latencyMs] a page.
  */
-export function createMemoryGitHub(approveAfterMs = 3000): GitHub {
+export function createMemoryGitHub(approveAfterMs = 3000, repoCount = 120, latencyMs = 400): GitHub {
   const { tell, subscribe } = listeners();
+  const allRepos = sampleRepos('octocat', repoCount);
   let account: GitHubAccount | null = null;
   let waiting: { cancel: () => void } | null = null;
   return {
@@ -160,6 +222,12 @@ export function createMemoryGitHub(approveAfterMs = 3000): GitHub {
       tell(null);
     },
     openUrl: async (url) => void window.open(url, '_blank', 'noopener'),
+    repos: async (page) => {
+      if (!account) throw new GitHubError('UNAUTHORIZED', 'Not signed in to GitHub');
+      await new Promise((resolve) => setTimeout(resolve, latencyMs));
+      const from = (page - 1) * REPOS_PER_PAGE;
+      return { repos: allRepos.slice(from, from + REPOS_PER_PAGE), hasMore: from + REPOS_PER_PAGE < allRepos.length };
+    },
     subscribe,
   };
 }
