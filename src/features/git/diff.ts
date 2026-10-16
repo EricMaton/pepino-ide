@@ -19,6 +19,8 @@ export interface DiffLine {
   index: number | null;
   /** The file ends on this line without a line break. */
   noNewline?: boolean;
+  /** Not a line but the file's final line break, added or removed (empty text, no line numbers). */
+  endOfFile?: boolean;
 }
 
 /** Changed lines and the context around them; starts and counts as in git's "@@ -a,b +c,d @@". */
@@ -58,13 +60,29 @@ interface Edit {
 }
 
 interface Line {
-  /** With its line break, if it has one. */
+  /** Without its '\n' (a '\r' before it stays): what lines are compared by, as in GitOps. */
   raw: string;
   text: string;
 }
 
 const splitLines = (text: string): Line[] =>
-  (text.match(/[^\n]*\n|[^\n]+$/g) ?? []).map((raw) => ({ raw, text: raw.replace(/\r?\n$/, '') }));
+  (text.match(/[^\n]*\n|[^\n]+$/g) ?? []).map((line) => {
+    const raw = line.endsWith('\n') ? line.slice(0, -1) : line;
+    return { raw, text: raw.replace(/\r$/, '') };
+  });
+
+/**
+ * [before] and [after] as lines, and how each ends: bare when its last line
+ * has no line break (an empty side ends like the other). When they differ,
+ * that final line break is one more changed line, numbered after the others.
+ */
+function sidesOf(before: string, after: string) {
+  const a = splitLines(before);
+  const b = splitLines(after);
+  const oldBare = before !== '' ? !before.endsWith('\n') : after !== '' && !after.endsWith('\n');
+  const newBare = after !== '' ? !after.endsWith('\n') : oldBare;
+  return { a, b, list: edits(a, b), oldBare, newBare, endOfFile: oldBare !== newBare };
+}
 
 /** Past this many cells (lines × lines) the middle of a change is one replaced block, not a minimal diff. */
 const MAX_CELLS = 4_000_000;
@@ -124,17 +142,20 @@ const changedCount = (list: Edit[]) =>
 
 /** [before] → [after] as hunks, numbered like GitOps.diff. */
 export function diffTexts(before: string, after: string): Hunk[] {
-  const a = splitLines(before);
-  const b = splitLines(after);
-  const list = edits(a, b);
-  const endsBare = (lines: Line[], i: number) => i === lines.length - 1 && !lines[i].raw.endsWith('\n');
+  const { a, b, list: changes, oldBare, newBare, endOfFile } = sidesOf(before, after);
+  // The final line break, when it changed, is an empty edit at the end: it gets its hunk and context too.
+  const list = endOfFile
+    ? [...changes, { beginA: a.length, endA: a.length, beginB: b.length, endB: b.length }]
+    : changes;
+  const endsBare = (lines: Line[], i: number) => i === lines.length - 1 && (lines === a ? oldBare : newBare);
+  // A context line ends the file as it is now.
   const context = (ai: number, bi: number): DiffLine => ({
     kind: 'context',
     text: a[ai].text,
     oldLine: ai + 1,
     newLine: bi + 1,
     index: null,
-    ...(endsBare(a, ai) && { noNewline: true }),
+    ...(endsBare(b, bi) && { noNewline: true }),
   });
 
   const hunks: Hunk[] = [];
@@ -172,6 +193,16 @@ export function diffTexts(before: string, after: string): Hunk[] {
           ...(endsBare(b, bi) && { noNewline: true }),
         });
       }
+      if (edit.beginA === edit.endA && edit.beginB === edit.endB) {
+        lines.push({
+          kind: newBare ? 'removed' : 'added',
+          text: '',
+          oldLine: null,
+          newLine: null,
+          index: index++,
+          endOfFile: true,
+        });
+      }
     }
     for (; ai < aEnd; ai++, bi++) lines.push(context(ai, bi));
     const oldLines = aEnd - aStart;
@@ -191,30 +222,25 @@ export function diffTexts(before: string, after: string): Hunk[] {
 
 /**
  * [after] as committed when the [excluded] changed lines stay as they were:
- * a removed line left out is kept, an added line left out is not added.
+ * a removed line left out is kept, an added line left out is not added, and
+ * the final line break is the old one unless its change is committed.
  * Null when every changed line is left out (the file is not committed).
  */
 export function applyExclusion(before: string, after: string, excluded: ReadonlySet<number>): string | null {
-  const a = splitLines(before);
-  const b = splitLines(after);
-  const list = edits(a, b);
-  if ([...excluded].filter((line) => line < changedCount(list)).length >= changedCount(list)) return null;
-  let out = '';
-  const copy = (lines: Line[], from: number, to: number) => {
-    for (let k = from; k < to; k++) {
-      // A last line without a break that is no longer last gets one.
-      if (out !== '' && !out.endsWith('\n')) out += '\n';
-      out += lines[k].raw;
-    }
-  };
+  const { a, b, list, oldBare, newBare, endOfFile } = sidesOf(before, after);
+  const total = changedCount(list) + (endOfFile ? 1 : 0);
+  if ([...excluded].filter((line) => line < total).length >= total) return null;
+  const kept: string[] = [];
   let ai = 0;
   let index = 0;
   for (const edit of list) {
-    copy(a, ai, edit.beginA);
-    for (let k = edit.beginA; k < edit.endA; k++) if (excluded.has(index++)) copy(a, k, k + 1);
-    for (let k = edit.beginB; k < edit.endB; k++) if (!excluded.has(index++)) copy(b, k, k + 1);
+    for (; ai < edit.beginA; ai++) kept.push(a[ai].raw);
+    for (let k = edit.beginA; k < edit.endA; k++) if (excluded.has(index++)) kept.push(a[k].raw);
+    for (let k = edit.beginB; k < edit.endB; k++) if (!excluded.has(index++)) kept.push(b[k].raw);
     ai = edit.endA;
   }
-  copy(a, ai, a.length);
-  return out;
+  for (; ai < a.length; ai++) kept.push(a[ai].raw);
+  const bare = endOfFile && !excluded.has(index) ? newBare : oldBare;
+  // Lines are joined by '\n' (a '\r' stays with its line), so every line but the last has one.
+  return kept.length === 0 ? '' : kept.join('\n') + (bare ? '' : '\n');
 }

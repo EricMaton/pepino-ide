@@ -160,6 +160,7 @@ public class GitPlugin extends Plugin {
                     json.put("newLine", line.newLine() > 0 ? line.newLine() : JSObject.NULL);
                     json.put("index", line.index() >= 0 ? line.index() : JSObject.NULL);
                     if (line.noNewline()) json.put("noNewline", true);
+                    if (line.endOfFile()) json.put("endOfFile", true);
                     lines.put(json);
                 }
                 JSObject json = new JSObject();

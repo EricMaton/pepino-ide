@@ -54,8 +54,51 @@ describe('applyExclusion', () => {
     expect(applyExclusion('a\nc', 'a\nb\nc\nd\n', new Set([0, 1, 2, 3]))).toBeNull();
   });
 
-  it('gives a kept last line its line break when lines follow it', () => {
-    // 0: -c (no newline), 1: +c\n, 2: +d
-    expect(applyExclusion('a\nc', 'a\nc\nd\n', new Set([0, 1]))).toBe('a\nc\nd\n');
+  // The same case as GitOpsTest.aLastLineThatGainsALineBreakIsNotChangedAndTheLineBreakIsAChangeOfItsOwn
+  it('keeps a last line that gains a line break, and commits the break on its own', () => {
+    expect(applyExclusion('hello world;', 'hello world;\nhola mundo;\n', new Set([1]))).toBe(
+      'hello world;\nhola mundo;',
+    );
+    expect(applyExclusion('hello world;', 'hello world;\nhola mundo;\n', new Set([0]))).toBe('hello world;\n');
+    expect(applyExclusion('hello world;\nhola mundo;\n', 'hello world;', new Set([0]))).toBe(
+      'hello world;\nhola mundo;',
+    );
+    expect(applyExclusion('hello world;\nhola mundo;\n', 'hello world;', new Set([1]))).toBe('hello world;\n');
+    expect(applyExclusion('a\r\nb\r\n', 'a\r\nc\r\n', new Set([0]))).toBe('a\r\nb\r\nc\r\n');
+  });
+});
+
+describe('the final line break', () => {
+  it('is not a change of the last line', () => {
+    const [hunk] = diffTexts('hello world;', 'hello world;\nhola mundo;');
+    expect(marks(hunk)).toEqual([' hello world;', '+hola mundo;']);
+    expect(hunk.lines[0]).toEqual({ kind: 'context', text: 'hello world;', oldLine: 1, newLine: 1, index: null });
+    expect(hunk.lines[1].noNewline).toBe(true);
+  });
+
+  it('is one more changed line, after the others, when it comes or goes', () => {
+    const [added] = diffTexts('hello world;', 'hello world;\nhola mundo;\n');
+    expect(marks(added)).toEqual([' hello world;', '+hola mundo;', '+']);
+    expect(added.lines[2]).toEqual({
+      kind: 'added',
+      text: '',
+      oldLine: null,
+      newLine: null,
+      index: 1,
+      endOfFile: true,
+    });
+    expect(marks(diffTexts('hello world;\nhola mundo;', 'hello world;\nhola mundo;\n')[0])).toEqual([
+      ' hello world;',
+      ' hola mundo;',
+      '+',
+    ]);
+    const [removed] = diffTexts('hello world;\nhola mundo;\n', 'hello world;');
+    expect(marks(removed)).toEqual([' hello world;', '-hola mundo;', '-']);
+    expect(removed.lines[0].noNewline).toBe(true);
+  });
+
+  it('does not change for a new or a deleted file', () => {
+    expect(marks(diffTexts('', 'a\nb')[0])).toEqual(['+a', '+b']);
+    expect(marks(diffTexts('a\nb\n', '')[0])).toEqual(['-a', '-b']);
   });
 });

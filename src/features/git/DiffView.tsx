@@ -276,7 +276,7 @@ function LineRow({
         {MARKS[line.kind]}
       </span>
       <span className={styles.lineText}>
-        {line.text}
+        {line.endOfFile ? <span className={cx('caption', styles.eof)}>line break at end of file</span> : line.text}
         {line.noNewline && <span className={cx('caption', styles.eof)}>no newline at end</span>}
       </span>
     </>
@@ -284,12 +284,17 @@ function LineRow({
   if (line.index === null) return <div className={cx(styles.line, styles['line-context'])}>{content}</div>;
   const index = line.index;
   const included = !excluded.has(index);
+  const verb = line.kind === 'added' ? 'Added' : 'Removed';
   return (
     <button
       type="button"
       role="checkbox"
       aria-checked={included}
-      aria-label={`${line.kind === 'added' ? 'Added' : 'Removed'} line ${line.kind === 'removed' ? line.oldLine : line.newLine}: ${line.text}`}
+      aria-label={
+        line.endOfFile
+          ? `${verb} line break at end of file`
+          : `${verb} line ${line.kind === 'removed' ? line.oldLine : line.newLine}: ${line.text}`
+      }
       className={cx(styles.line, styles[`line-${line.kind}`], !included && styles.lineOut)}
       onClick={() => onToggle([index])}
     >

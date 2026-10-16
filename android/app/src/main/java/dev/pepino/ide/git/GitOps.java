@@ -24,7 +24,7 @@ import org.eclipse.jgit.diff.DiffAlgorithm;
 import org.eclipse.jgit.diff.Edit;
 import org.eclipse.jgit.diff.EditList;
 import org.eclipse.jgit.diff.RawText;
-import org.eclipse.jgit.diff.RawTextComparator;
+import org.eclipse.jgit.diff.SequenceComparator;
 import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.dircache.DirCacheEditor;
 import org.eclipse.jgit.dircache.DirCacheEntry;
@@ -109,8 +109,14 @@ public final class GitOps {
      * [newLine] are 1-based, 0 on the side the line is not on. [index] numbers
      * the changed lines of the file in order (-1 for context): it is how a
      * commit leaves lines out. [noNewline]: the file ends on it without one.
+     * [endOfFile]: not a line but the file's final line break, added or
+     * removed (empty [text], no line numbers).
      */
-    public record DiffLine(String kind, String text, int oldLine, int newLine, int index, boolean noNewline) {}
+    public record DiffLine(String kind, String text, int oldLine, int newLine, int index, boolean noNewline, boolean endOfFile) {
+        DiffLine(String kind, String text, int oldLine, int newLine, int index, boolean noNewline) {
+            this(kind, text, oldLine, newLine, index, noNewline, false);
+        }
+    }
 
     /** Changed lines and the context around them; starts and counts as in git's "@@ -a,b +c,d @@". */
     public record Hunk(int oldStart, int oldLines, int newStart, int newLines, List<DiffLine> lines) {}
@@ -248,6 +254,72 @@ public final class GitOps {
         boolean endsWithoutNewline(int i) {
             return i == size() - 1 && isMissingNewlineAtEnd();
         }
+
+        /** Where line [i] ends without its '\n' (a '\r' before it stays): what lines are compared by. */
+        int contentEnd(int i) {
+            int end = end(i);
+            return end > start(i) && content[end - 1] == '\n' ? end - 1 : end;
+        }
+
+        boolean sameLine(int i, Lines other, int j) {
+            int length = contentEnd(i) - start(i);
+            if (length != other.contentEnd(j) - other.start(j)) return false;
+            for (int k = 0; k < length; k++) {
+                if (content[start(i) + k] != other.content[other.start(j) + k]) return false;
+            }
+            return true;
+        }
+
+        int hashLine(int i) {
+            int hash = 5381;
+            for (int p = start(i); p < contentEnd(i); p++) hash = ((hash << 5) + hash) + (content[p] & 0xff);
+            return hash;
+        }
+    }
+
+    /**
+     * Lines compared without their final '\n': a last line that gains or
+     * loses its line break is still the same line. The line break at the end
+     * of the file is a change of its own ([Changes.endOfFile]).
+     */
+    private static final SequenceComparator<Lines> BY_CONTENT = new SequenceComparator<Lines>() {
+        @Override
+        public boolean equals(Lines a, int ai, Lines b, int bi) {
+            return a.sameLine(ai, b, bi);
+        }
+
+        @Override
+        public int hash(Lines seq, int i) {
+            return seq.hashLine(i);
+        }
+    };
+
+    /**
+     * The changed lines between [a] and [b], and how each side ends: [oldBare]
+     * / [newBare] when its last line has no line break (an empty side ends
+     * like the other). When they differ, that final line break is one more
+     * changed line, numbered after all the others.
+     */
+    private record Changes(Lines a, Lines b, EditList edits, boolean oldBare, boolean newBare) {
+        static Changes of(byte[] old, byte[] now) {
+            Lines a = new Lines(old);
+            Lines b = new Lines(now);
+            EditList edits = DiffAlgorithm.getAlgorithm(DiffAlgorithm.SupportedAlgorithm.HISTOGRAM).diff(BY_CONTENT, a, b);
+            boolean oldBare = a.size() > 0 ? a.isMissingNewlineAtEnd() : b.size() > 0 && b.isMissingNewlineAtEnd();
+            boolean newBare = b.size() > 0 ? b.isMissingNewlineAtEnd() : oldBare;
+            return new Changes(a, b, edits, oldBare, newBare);
+        }
+
+        boolean endOfFile() {
+            return oldBare != newBare;
+        }
+
+        /** The changed lines, the final line break included when it changed. */
+        int count() {
+            int count = endOfFile() ? 1 : 0;
+            for (Edit edit : edits) count += edit.getLengthA() + edit.getLengthB();
+            return count;
+        }
     }
 
     /** A file in the last commit and on disk (empty where it is missing), and the mode to commit it with. */
@@ -257,9 +329,8 @@ public final class GitOps {
             return ids.idFor(Constants.OBJ_BLOB, old).name() + ":" + ids.idFor(Constants.OBJ_BLOB, now).name();
         }
 
-        EditList edits() {
-            return DiffAlgorithm.getAlgorithm(DiffAlgorithm.SupportedAlgorithm.HISTOGRAM)
-                .diff(RawTextComparator.DEFAULT, new Lines(old), new Lines(now));
+        Changes changes() {
+            return Changes.of(old, now);
         }
     }
 
@@ -296,11 +367,16 @@ public final class GitOps {
             Sides sides = sides(git.getRepository(), folder, path);
             if (sides.tooLarge()) return new FileDiff("", false, true, Collections.emptyList());
             if (!sides.text()) return new FileDiff(sides.version(), true, false, Collections.emptyList());
-            return new FileDiff(sides.version(), false, false, hunks(new Lines(sides.old()), new Lines(sides.now()), sides.edits()));
+            return new FileDiff(sides.version(), false, false, hunks(sides.changes()));
         }
     }
 
-    private static List<Hunk> hunks(Lines a, Lines b, EditList edits) {
+    private static List<Hunk> hunks(Changes changes) {
+        Lines a = changes.a();
+        Lines b = changes.b();
+        // The final line break, when it changed, is an empty edit at the end: it gets its hunk and context too.
+        List<Edit> edits = new ArrayList<>(changes.edits());
+        if (changes.endOfFile()) edits.add(new Edit(a.size(), a.size(), b.size(), b.size()));
         List<Hunk> hunks = new ArrayList<>();
         int index = 0;
         for (int first = 0; first < edits.size(); ) {
@@ -318,15 +394,18 @@ public final class GitOps {
             int bi = bStart;
             for (int k = first; k <= last; k++) {
                 Edit edit = edits.get(k);
-                for (; ai < edit.getBeginA(); ai++, bi++) lines.add(context(a, ai, bi));
+                for (; ai < edit.getBeginA(); ai++, bi++) lines.add(context(a, ai, b, bi));
                 for (; ai < edit.getEndA(); ai++) {
                     lines.add(new DiffLine("removed", a.text(ai), ai + 1, 0, index++, a.endsWithoutNewline(ai)));
                 }
                 for (; bi < edit.getEndB(); bi++) {
                     lines.add(new DiffLine("added", b.text(bi), 0, bi + 1, index++, b.endsWithoutNewline(bi)));
                 }
+                if (edit.isEmpty()) {
+                    lines.add(new DiffLine(changes.newBare() ? "removed" : "added", "", 0, 0, index++, false, true));
+                }
             }
-            for (; ai < aEnd; ai++, bi++) lines.add(context(a, ai, bi));
+            for (; ai < aEnd; ai++, bi++) lines.add(context(a, ai, b, bi));
             int oldLines = aEnd - aStart;
             int newLines = bEnd - bStart;
             // git numbers an empty side by the line before it
@@ -336,44 +415,45 @@ public final class GitOps {
         return hunks;
     }
 
-    private static DiffLine context(Lines a, int ai, int bi) {
-        return new DiffLine("context", a.text(ai), ai + 1, bi + 1, -1, a.endsWithoutNewline(ai));
+    /** A context line ends the file as it is now. */
+    private static DiffLine context(Lines a, int ai, Lines b, int bi) {
+        return new DiffLine("context", a.text(ai), ai + 1, bi + 1, -1, b.endsWithoutNewline(bi));
     }
 
     /**
      * The file as committed when [excluded] changed lines stay as they were:
-     * a removed line left out is kept, an added line left out is not added.
+     * a removed line left out is kept, an added line left out is not added,
+     * and the final line break is the old one unless its change is committed.
      */
-    private static byte[] partial(Lines a, Lines b, EditList edits, Set<Integer> excluded) {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
+    private static byte[] partial(Changes changes, Set<Integer> excluded) {
+        Lines a = changes.a();
+        Lines b = changes.b();
+        List<int[]> kept = new ArrayList<>(); // {0 for a / 1 for b, line}
         int ai = 0;
         int index = 0;
-        for (Edit edit : edits) {
-            copy(out, a, ai, edit.getBeginA());
+        for (Edit edit : changes.edits()) {
+            for (; ai < edit.getBeginA(); ai++) kept.add(new int[] {0, ai});
             for (int k = edit.getBeginA(); k < edit.getEndA(); k++) {
-                if (excluded.contains(index++)) copy(out, a, k, k + 1);
+                if (excluded.contains(index++)) kept.add(new int[] {0, k});
             }
             for (int k = edit.getBeginB(); k < edit.getEndB(); k++) {
-                if (!excluded.contains(index++)) copy(out, b, k, k + 1);
+                if (!excluded.contains(index++)) kept.add(new int[] {1, k});
             }
             ai = edit.getEndA();
         }
-        copy(out, a, ai, a.size());
+        for (; ai < a.size(); ai++) kept.add(new int[] {0, ai});
+        boolean bare = changes.endOfFile() && !excluded.contains(index) ? changes.newBare() : changes.oldBare();
+
+        // Lines are joined by '\n' (a '\r' stays with its line), so every line but the last has one.
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        for (int k = 0; k < kept.size(); k++) {
+            Lines text = kept.get(k)[0] == 0 ? a : b;
+            int line = kept.get(k)[1];
+            if (k > 0) out.write('\n');
+            out.write(text.getRawContent(), text.start(line), text.contentEnd(line) - text.start(line));
+        }
+        if (!kept.isEmpty() && !bare) out.write('\n');
         return out.toByteArray();
-    }
-
-    private static void copy(ByteArrayOutputStream out, Lines text, int from, int to) {
-        if (from >= to) return;
-        // A last line without a break that is no longer last gets one.
-        byte[] written = out.toByteArray();
-        if (written.length > 0 && written[written.length - 1] != '\n') out.write('\n');
-        out.write(text.getRawContent(), text.start(from), text.end(to - 1) - text.start(from));
-    }
-
-    private static int changedLines(EditList edits) {
-        int count = 0;
-        for (Edit edit : edits) count += edit.getLengthA() + edit.getLengthB();
-        return count;
     }
 
     /**
@@ -419,14 +499,14 @@ public final class GitOps {
                     stale.add(path);
                     continue;
                 }
-                EditList edits = sides.edits();
-                int total = changedLines(edits);
+                Changes changes = sides.changes();
+                int total = changes.count();
                 Set<Integer> lines = new HashSet<>();
                 for (int line : exclusion.lines()) if (line >= 0 && line < total) lines.add(line);
                 // Every line left out: the file is not part of this commit.
                 if (lines.isEmpty()) whole.add(path);
                 else if (lines.size() < total) {
-                    partials.put(path, new Partial(partial(new Lines(sides.old()), new Lines(sides.now()), edits, lines), sides.mode()));
+                    partials.put(path, new Partial(partial(changes, lines), sides.mode()));
                 }
             }
             if (!stale.isEmpty()) throw new StaleSelectionException(stale);

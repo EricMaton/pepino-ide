@@ -560,6 +560,8 @@
 
 .box {
   flex: none;
+  display: grid;
+  place-content: center;
   width: 16px;
   height: 16px;
   border: var(--stroke) solid var(--outline);
@@ -568,6 +570,17 @@
 .box-true {
   border-color: var(--primary);
   background: var(--primary);
+}
+
+/* The tick of .check, at the box's size */
+.box-true::before {
+  content: '';
+  width: 8px;
+  height: 4px;
+  margin-top: -2px;
+  border-left: 2px solid var(--on-primary);
+  border-bottom: 2px solid var(--on-primary);
+  transform: rotate(-45deg);
 }
 
 .box-mixed {

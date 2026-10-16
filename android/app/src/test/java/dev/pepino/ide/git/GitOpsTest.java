@@ -388,6 +388,44 @@ public class GitOpsTest {
     }
 
     @Test
+    public void aLastLineThatGainsALineBreakIsNotChangedAndTheLineBreakIsAChangeOfItsOwn() throws Exception {
+        File app = project("app");
+        GitOps.init(app);
+        write(app, "main.py", "hello world;");
+        GitOps.commit(app, "first", Collections.singletonList("main.py"), ME);
+
+        // Only a line added after it: "hello world;" is context, not removed and added again.
+        write(app, "main.py", "hello world;\nhola mundo;");
+        GitOps.Hunk hunk = GitOps.diff(app, "main.py").hunks().get(0);
+        assertEquals(Arrays.asList(" hello world;", "+hola mundo;"), lines(hunk));
+        assertEquals(new GitOps.DiffLine("context", "hello world;", 1, 1, -1, false), hunk.lines().get(0));
+        assertTrue(hunk.lines().get(1).noNewline());
+
+        // And the file now ending with a line break: one more change, after the lines.
+        write(app, "main.py", "hello world;\nhola mundo;\n");
+        GitOps.FileDiff diff = GitOps.diff(app, "main.py");
+        assertEquals(Arrays.asList(" hello world;", "+hola mundo;", "+"), lines(diff.hunks().get(0)));
+        assertEquals(new GitOps.DiffLine("added", "", 0, 0, 1, false, true), diff.hunks().get(0).lines().get(2));
+        java.util.Map<String, GitOps.LineExclusion> excluded = Collections.singletonMap(
+            "main.py", new GitOps.LineExclusion(diff.version(), new java.util.HashSet<>(Collections.singletonList(1))));
+        GitOps.commit(app, "the line", Collections.singletonList("main.py"), excluded, ME);
+        assertEquals("hello world;\nhola mundo;", committed(app, "main.py"));
+
+        // Only the final line break left: the lines are context around it.
+        assertEquals(Arrays.asList(" hello world;", " hola mundo;", "+"), lines(GitOps.diff(app, "main.py").hunks().get(0)));
+        GitOps.commit(app, "the break", Collections.singletonList("main.py"), ME);
+
+        // Removing the last line and the final line break; the line kept, the break goes.
+        write(app, "main.py", "hello world;");
+        diff = GitOps.diff(app, "main.py");
+        assertEquals(Arrays.asList(" hello world;", "-hola mundo;", "-"), lines(diff.hunks().get(0)));
+        excluded = Collections.singletonMap(
+            "main.py", new GitOps.LineExclusion(diff.version(), new java.util.HashSet<>(Collections.singletonList(0))));
+        GitOps.commit(app, "no break", Collections.singletonList("main.py"), excluded, ME);
+        assertEquals("hello world;\nhola mundo;", committed(app, "main.py"));
+    }
+
+    @Test
     public void commitLeavesOutTheExcludedLines() throws Exception {
         File app = project("app");
         GitOps.init(app);
