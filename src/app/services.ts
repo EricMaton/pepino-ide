@@ -4,6 +4,7 @@ import { createContext, useContext } from 'react';
 import { CommandDispatcher, CommandRegistry } from '../core/commands';
 import { EventBus } from '../core/events';
 import { createMemoryGitEngine, createNativeGitEngine, type GitEngine } from '../features/git/engine';
+import { createRepositories, type Repositories } from '../features/git/repositories';
 import { createCapacitorBackend } from '../features/projects/capacitorBackend';
 import { type FsEvents, observeProjectSpace } from '../features/projects/observed';
 import type { ProjectInfo } from '../features/projects/projects';
@@ -32,6 +33,8 @@ export interface Services {
   workspace: Workspace;
   /** Git on the projects (ADR-006): JGit on Android, a stand-in on the web. */
   git: GitEngine;
+  /** The repositories added to GIT, like GitHub Desktop's list. */
+  repositories: Repositories;
   /** Small user preferences (editor font size…), persisted across restarts. */
   preferences: KeyValueStore;
 }
@@ -50,6 +53,7 @@ export function createServices(): Services {
     events.publish(topic, payload as never),
   );
   const recentProjects = createRecentProjects(preferences, projectSpace);
+  const repositories = createRepositories(preferences, projectSpace);
   const session = createSessionStore(preferences);
   const workspace = createWorkspace(projectSpace, events, {
     load: async (root) => {
@@ -83,6 +87,7 @@ export function createServices(): Services {
     session,
     workspace,
     git,
+    repositories,
     preferences,
   };
 }

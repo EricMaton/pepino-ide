@@ -1,14 +1,14 @@
 import { type ReactNode, useState } from 'react';
-import { useBackHandler } from '../../ui/back';
 import { Button, Dialog, TextField } from '../../ui/components';
 import { cx } from '../../ui/cx';
-import { BackIcon, FolderIcon } from '../../ui/icons';
-import { Breadcrumb } from './Breadcrumb';
+import { FolderIcon } from '../../ui/icons';
 import styles from './FileExplorer.module.css';
-import { type FileEntry, isValidEntryName, sortEntries } from './files';
+import { FolderPicker } from './FolderPicker';
+import { type FileEntry, isValidEntryName } from './files';
 import { isReservedName } from './projects';
 import type { ProjectSpace } from './projectSpace';
 import { useDirectoryListing } from './useDirectoryListing';
+import { useFolderStack } from './useFolderStack';
 
 /** [project] marks folders that are workspaces, which changes the wording. */
 export type ExplorerDialog =
@@ -213,19 +213,8 @@ export function TransferDialog({
   onClose: () => void;
   onConfirm: (destinationDir: string) => void;
 }) {
-  const [pickStack, setPickStack] = useState<string[]>([rootPath]);
-  const pickPath = pickStack[pickStack.length - 1];
-  const listing = useDirectoryListing(projectSpace, pickPath);
-  const canGoUp = pickStack.length > 1;
-  const goUp = () => setPickStack((stack) => (stack.length > 1 ? stack.slice(0, -1) : stack));
-  useBackHandler(canGoUp, goUp);
-
-  const folders = listing?.ok
-    ? sortEntries(
-        listing.entries.filter((folder) => folder.isDirectory && folder.path !== entry.path),
-        'name',
-      )
-    : [];
+  const folders = useFolderStack(rootPath);
+  const listing = useDirectoryListing(projectSpace, folders.path);
   const verb = move ? 'Move' : 'Copy';
 
   return (
@@ -236,44 +225,18 @@ export function TransferDialog({
       actions={
         <>
           <CancelButton onClick={onClose} />
-          <Button variant="filled" onClick={() => onConfirm(pickPath)}>
+          <Button variant="filled" onClick={() => onConfirm(folders.path)}>
             {verb} here
           </Button>
         </>
       }
     >
-      <div className={styles.pickerBar}>
-        <Button square disabled={!canGoUp} onClick={goUp} aria-label="Up one folder">
-          <BackIcon size={20} />
-        </Button>
-        <Breadcrumb
-          stack={pickStack}
-          rootLabel={rootLabel}
-          onJump={(depth) => setPickStack((stack) => stack.slice(0, depth + 1))}
-        />
-      </div>
-      {listing === null ? (
-        <p className={cx('label', 'cursor', styles.pickerMessage)}>Reading</p>
-      ) : !listing.ok ? (
-        <p className={cx('label', 'accent', styles.pickerMessage)}>✕ Can&apos;t read folder</p>
-      ) : folders.length === 0 ? (
-        <p className={cx('label', 'muted', styles.pickerMessage)}>No subfolders</p>
-      ) : (
-        <div className={styles.pickerList}>
-          {folders.map((folder) => (
-            <Button
-              key={folder.path}
-              variant="text"
-              listItem
-              className={cx('body', styles.pickerFolder)}
-              onClick={() => setPickStack((stack) => [...stack, folder.path])}
-            >
-              <FolderIcon size={20} />
-              <span className="ellipsis">{folder.name}</span>
-            </Button>
-          ))}
-        </div>
-      )}
+      <FolderPicker
+        folders={folders}
+        listing={listing}
+        rootLabel={rootLabel}
+        hide={(folder) => folder.path === entry.path}
+      />
     </Dialog>
   );
 }
