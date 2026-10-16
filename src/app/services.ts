@@ -3,6 +3,7 @@ import { Preferences } from '@capacitor/preferences';
 import { createContext, useContext } from 'react';
 import { CommandDispatcher, CommandRegistry } from '../core/commands';
 import { EventBus } from '../core/events';
+import { createFileHistory, type FileHistory } from '../features/editor/fileHistory';
 import { createMemoryGitEngine, createNativeGitEngine, type GitEngine } from '../features/git/engine';
 import { createRepositories, type Repositories } from '../features/git/repositories';
 import { createCapacitorBackend } from '../features/projects/capacitorBackend';
@@ -35,6 +36,8 @@ export interface Services {
   git: GitEngine;
   /** The repositories added to GIT, like GitHub Desktop's list. */
   repositories: Repositories;
+  /** Files' earlier versions, kept before the editor overwrites them (#27). */
+  fileHistory: FileHistory;
   /** Small user preferences (editor font size…), persisted across restarts. */
   preferences: KeyValueStore;
 }
@@ -72,6 +75,7 @@ export function createServices(): Services {
   const git = Capacitor.isNativePlatform()
     ? createNativeGitEngine((topic, payload) => events.publish(topic, payload as never))
     : createMemoryGitEngine(projectSpace);
+  const fileHistory = createFileHistory(projectSpace, git);
 
   // Recents only listen to the bus: whoever opens a project doesn't need to know about them.
   events.subscribe('project.opened', (project) => {
@@ -88,6 +92,7 @@ export function createServices(): Services {
     workspace,
     git,
     repositories,
+    fileHistory,
     preferences,
   };
 }

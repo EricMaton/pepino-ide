@@ -10,8 +10,8 @@
 - [x] Commits con mensaje, staging de archivos (#23; el stage parcial, por líneas, va con el diff viewer #25)
 - [x] Branches: crear, cambiar, borrar, lista (#24)
 - [x] Diff viewer táctil (cambios por archivo, antes/después) y stage por líneas tocando el diff (#25)
-- [ ] History: log de commits con autor, fecha, mensaje
-- [ ] Snapshot automático pre-cambio + integración con el autosave del editor
+- [x] History: log de commits con autor, fecha, mensaje; cada commit abre sus archivos y su diff (#26)
+- [x] Snapshot automático pre-cambio + integración con el autosave del editor: snapshots en `refs/pepino/snapshots` antes del primer guardado y de cambiar de rama, y "Earlier versions" en el editor para restaurarlos (#27)
 - [ ] Tests de las operaciones core de git
 
 ## Criterios de aceptación

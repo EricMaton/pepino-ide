@@ -12,7 +12,7 @@ import { navigate } from '../../ui/motion';
 import { saveSettled, trackSave } from './pendingSaves';
 import { Button, Dialog } from '../../ui/components';
 import { cx } from '../../ui/cx';
-import { BackIcon, CloseIcon, TreeIcon } from '../../ui/icons';
+import { BackIcon, CloseIcon, HistoryIcon, TreeIcon } from '../../ui/icons';
 import { useSnackbar } from '../../ui/useSnackbar';
 import { errorMessage } from '../projects/errors';
 import { fileBadge } from '../projects/files';
@@ -22,9 +22,9 @@ import { CodeEditor } from './CodeEditor';
 import styles from './EditorScreen.module.css';
 import { EditorToolbar } from './EditorToolbar';
 import { languageFor } from './languages';
-import { takeSnapshot } from './snapshots';
 import { detectLineSeparator, type LineSeparator, serialize } from './text';
 import { DEFAULT_TOOLBAR } from './toolbar';
+import { VersionsView } from './VersionsView';
 import { clampFontSize, DEFAULT_FONT_SIZE, FONT_SIZE_KEY, ZOOM_STEP } from './zoom';
 
 /** Quiet time after the last keystroke before autosaving. */
@@ -80,7 +80,7 @@ export default function EditorScreen({
   initialViewState,
   onViewState,
 }: EditorScreenProps) {
-  const { projectSpace, registry, dispatcher, events, workspace, preferences } = useServices();
+  const { projectSpace, registry, dispatcher, events, workspace, preferences, fileHistory } = useServices();
   const showSnackbar = useSnackbar();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('saved');
@@ -90,6 +90,12 @@ export default function EditorScreen({
   const [filesOpen, setFilesOpenNow] = useState(false);
   // The tree slides over the editor and away again (ui/motion.ts).
   const setFilesOpen = useCallback((open: boolean) => navigate('drawer', () => setFilesOpenNow(open)), []);
+  // "Earlier versions" laid over the editor (#27)
+  const [versionsOpen, setVersionsOpenNow] = useState(false);
+  const setVersionsOpen = useCallback(
+    (open: boolean) => navigate(open ? 'forward' : 'back', () => setVersionsOpenNow(open)),
+    [],
+  );
   const files = useFileSource();
   const [fontSize, setFontSize] = useState(DEFAULT_FONT_SIZE);
 
@@ -204,9 +210,9 @@ export default function EditorScreen({
     try {
       if (!snapshotTaken.current) {
         // A failed snapshot must not cost the user their edits: log it and save anyway.
-        await takeSnapshot(projectSpace, path, original.text).catch((error: unknown) =>
-          console.error(`Cannot snapshot ${path}`, error),
-        );
+        await fileHistory
+          .beforeOverwrite(path, original.text)
+          .catch((error: unknown) => console.error(`Cannot snapshot ${path}`, error));
         snapshotTaken.current = true;
       }
       await projectSpace.writeTextFile(path, serialize(current, original.separator));
@@ -219,7 +225,7 @@ export default function EditorScreen({
       showSnackbar(`Error: ${errorMessage(error)}`);
       return false;
     }
-  }, [projectSpace, events, showSnackbar]);
+  }, [projectSpace, fileHistory, events, showSnackbar]);
 
   /** Saves pending edits; saves run one after another, never in parallel. */
   const save = useCallback((): Promise<boolean> => {
@@ -280,6 +286,32 @@ export default function EditorScreen({
     [events, projectSpace, view],
   );
 
+  /** The file's text now, unsaved edits included. */
+  const currentText = useCallback(() => {
+    const original = opened.current;
+    if (!original) return '';
+    return doc.current ? serialize(doc.current, original.separator) : original.text;
+  }, []);
+
+  // An earlier version comes back as an edit (undo takes it back), after the file as it is now is
+  // saved and kept: restoring never loses what was there.
+  const restoreVersion = useCallback(
+    async (text: string) => {
+      if (!view || !(await save())) return;
+      await fileHistory
+        .beforeOverwrite(livePath.current, currentText(), 'Before restoring an earlier version')
+        .catch((error: unknown) => console.error(`Cannot keep ${livePath.current} before restoring`, error));
+      snapshotTaken.current = true;
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: Text.of(text.split(/\r\n?|\n/)) },
+        userEvent: 'restore',
+      });
+      setVersionsOpen(false);
+      showSnackbar('Earlier version restored: undo takes it back');
+    },
+    [view, save, fileHistory, currentText, setVersionsOpen, showSnackbar],
+  );
+
   const revertToOpened = useCallback(() => {
     const original = opened.current;
     if (!view || !original) return;
@@ -289,7 +321,7 @@ export default function EditorScreen({
 
   // Back goes up a level: from a workspace file to its tree (the file stays open), from a loose file
   // back to the explorer (closing it). With the tree showing, the tree's own back takes over.
-  useBackHandler(visible && !confirmClose && !filesOpen, () =>
+  useBackHandler(visible && !confirmClose && !filesOpen && !versionsOpen, () =>
     inWorkspace ? setFilesOpen(true) : void requestClose(),
   );
 
@@ -326,6 +358,11 @@ export default function EditorScreen({
       registry.register({ id: 'editor.save', title: `Save ${name}`, run: () => void save() }),
       registry.register({ id: 'editor.close', title: `Close ${name}`, run: () => void requestClose() }),
       registry.register({ id: 'editor.revert', title: `Revert ${name} to the opened version`, run: revertToOpened }),
+      registry.register({
+        id: 'editor.versions',
+        title: `Earlier versions of ${name}`,
+        run: () => setVersionsOpen(true),
+      }),
       ...(inWorkspace
         ? [registry.register({ id: 'editor.files', title: 'Project files', run: () => setFilesOpen(true) })]
         : []),
@@ -342,6 +379,7 @@ export default function EditorScreen({
     save,
     requestClose,
     revertToOpened,
+    setVersionsOpen,
     fontSize,
     changeFontSize,
     setFilesOpen,
@@ -412,6 +450,7 @@ export default function EditorScreen({
           dirty={dirty}
           onTree={() => setFilesOpen(true)}
           onCloseActive={() => void requestClose()}
+          onVersions={() => setVersionsOpen(true)}
         />
       ) : (
         <div className={styles.tabBar}>
@@ -421,6 +460,7 @@ export default function EditorScreen({
           <span className={cx('caption', 'muted', 'ellipsis', styles.looseLabel)}>
             <span className={styles.looseTag}>LOOSE FILE</span> · outside any workspace
           </span>
+          <VersionsButton onClick={() => setVersionsOpen(true)} />
         </div>
       )}
 
@@ -456,6 +496,15 @@ export default function EditorScreen({
           onClose={() => setFilesOpen(false)}
           onBack={() => tabs.onLeave(() => setFilesOpenNow(false))}
           onOpenFile={openOther}
+        />
+      )}
+
+      {visible && versionsOpen && loaded?.kind === 'text' && (
+        <VersionsView
+          path={path}
+          current={currentText}
+          onRestore={(text) => void restoreVersion(text)}
+          onClose={() => setVersionsOpen(false)}
         />
       )}
 
@@ -495,10 +544,20 @@ interface TabBarProps {
   dirty: boolean;
   onTree: () => void;
   onCloseActive: () => void;
+  onVersions: () => void;
+}
+
+/** At the end of the tab row: the file's earlier versions. */
+function VersionsButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Button variant="text" square className={styles.versionsButton} aria-label="Earlier versions" onClick={onClick}>
+      <HistoryIcon size={20} />
+    </Button>
+  );
 }
 
 /** The row under the top bar: the tree button, then one tab per open file (like VS Code). */
-function TabBar({ tabs, active, dirty, onTree, onCloseActive }: TabBarProps) {
+function TabBar({ tabs, active, dirty, onTree, onCloseActive, onVersions }: TabBarProps) {
   const activeRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     activeRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
@@ -541,6 +600,7 @@ function TabBar({ tabs, active, dirty, onTree, onCloseActive }: TabBarProps) {
           );
         })}
       </div>
+      <VersionsButton onClick={onVersions} />
     </div>
   );
 }

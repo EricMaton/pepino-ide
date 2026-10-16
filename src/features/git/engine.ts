@@ -57,6 +57,13 @@ export interface LogEntry {
   time: number;
 }
 
+/** A snapshot holding one version of a file: when it was taken, and why. */
+export interface SnapshotVersion {
+  id: string;
+  reason: string;
+  time: number;
+}
+
 /** How many commits the history reads at a time. */
 export const LOG_PAGE = 50;
 
@@ -111,6 +118,17 @@ export interface GitEngine {
   commitChanges(path: string, commit: string): Promise<FileChange[]>;
   /** How [file] changed in [commit]: its first parent's version against the commit's. */
   commitDiff(path: string, commit: string, file: string): Promise<FileDiff>;
+  /**
+   * Records the working tree as it is on disk (every file not ignored,
+   * untracked ones too) as a snapshot on Pepino's own ref, which no branch,
+   * History or push shows; nothing new when nothing changed since the last.
+   * Branch switches take one by themselves first. Returns its id.
+   */
+  snapshot(path: string, reason: string): Promise<string>;
+  /** The versions of [file] in the snapshots, newest first; one that repeats the newer one is left out. */
+  snapshotVersions(path: string, file: string): Promise<SnapshotVersion[]>;
+  /** [file] as snapshot [id] has it, or null when it was not there. */
+  snapshotFile(path: string, id: string, file: string): Promise<string | null>;
   /** The identity commits are made with, or null until it is set. */
   identity(): Promise<Identity | null>;
   setIdentity(identity: Identity): Promise<void>;
@@ -143,6 +161,9 @@ interface GitPlugin {
   log(options: { path: string; skip: number; limit: number }): Promise<{ commits: LogEntry[] }>;
   commitChanges(options: { path: string; commit: string }): Promise<{ changes: FileChange[] }>;
   commitDiff(options: { path: string; commit: string; file: string }): Promise<FileDiff>;
+  snapshot(options: { path: string; reason: string }): Promise<{ id: string }>;
+  snapshotVersions(options: { path: string; file: string }): Promise<{ versions: SnapshotVersion[] }>;
+  snapshotFile(options: { path: string; id: string; file: string }): Promise<{ text: string | null }>;
   identity(): Promise<{ identity: Identity | null }>;
   setIdentity(options: Identity): Promise<void>;
   branches(options: { path: string }): Promise<{ branches: Branch[] }>;
@@ -213,6 +234,15 @@ export function createNativeGitEngine(announce: Announce): GitEngine {
     },
     commitDiff(path, commit, file) {
       return git.commitDiff({ path: project(path), commit, file });
+    },
+    async snapshot(path, reason) {
+      return (await git.snapshot({ path: project(path), reason })).id;
+    },
+    async snapshotVersions(path, file) {
+      return (await git.snapshotVersions({ path: project(path), file })).versions;
+    },
+    async snapshotFile(path, id, file) {
+      return (await git.snapshotFile({ path: project(path), id, file })).text;
     },
     async identity() {
       return (await git.identity()).identity;
@@ -288,6 +318,13 @@ export function createMemoryGitEngine(space: ProjectSpace): GitEngine {
   };
   const writeLog = (folder: string, log: Log) =>
     space.writeTextFile(gitPath(folder, 'pepino-log.json'), JSON.stringify(log));
+
+  /** The snapshots, newest first, each with the files as they were. */
+  type Snapshots = (SnapshotVersion & { files: Snapshot })[];
+  const readSnapshots = async (folder: string): Promise<Snapshots> => {
+    const raw = await space.readTextFile(gitPath(folder, 'pepino-snapshots.json')).catch(() => '[]');
+    return JSON.parse(raw) as Snapshots;
+  };
 
   /** The commit [id] (or a prefix of it) on any branch, and the files of its parent. */
   const findCommit = async (folder: string, id: string) => {
@@ -457,6 +494,38 @@ export function createMemoryGitEngine(space: ProjectSpace): GitEngine {
       return { version: '', binary: false, tooLarge: false, hunks: diffTexts(before, after) };
     },
 
+    async snapshot(path, reason) {
+      const folder = await repository(path);
+      const [snapshots, files] = await Promise.all([readSnapshots(folder), readFiles(folder)]);
+      const tree = Object.fromEntries(files);
+      const last = snapshots[0];
+      if (last && JSON.stringify(last.files) === JSON.stringify(tree)) return last.id;
+      const time = Date.now();
+      const id = [0, 1, 2, 3, 4]
+        .map((part) => hashOf(`snapshot:${part}:${folder}:${snapshots.length}:${time}`).padStart(8, '0'))
+        .join('');
+      const next = [{ id, reason: reason.trim() || 'Snapshot', time, files: tree }, ...snapshots];
+      await space.writeTextFile(gitPath(folder, 'pepino-snapshots.json'), JSON.stringify(next));
+      return id;
+    },
+
+    async snapshotVersions(path, file) {
+      const versions: SnapshotVersion[] = [];
+      let newer: string | undefined;
+      for (const { files, ...version } of await readSnapshots(await repository(path))) {
+        const text = files[file];
+        if (text !== undefined && text !== newer) versions.push(version);
+        newer = text;
+      }
+      return versions;
+    },
+
+    async snapshotFile(path, id, file) {
+      const snapshot = (await readSnapshots(await repository(path))).find((candidate) => candidate.id === id);
+      if (!snapshot) throw new Error(`No snapshot ${id}`);
+      return snapshot.files[file] ?? null;
+    },
+
     identity: async () => identity,
 
     async setIdentity(next) {
@@ -502,6 +571,8 @@ export function createMemoryGitEngine(space: ProjectSpace): GitEngine {
       if (conflicts.length > 0) {
         throw new GitError('CONFLICT', `Commit your changes to ${conflicts[0]} before switching branch`, conflicts);
       }
+      // The files are about to be rewritten: keep how they are first.
+      await engine.snapshot(folder, `Before switching to ${name}`);
       for (const file of differing) {
         if (file in target) await writeFile(folder, file, target[file]);
         else await space.delete(joinPath(folder, file));

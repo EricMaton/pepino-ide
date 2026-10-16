@@ -85,8 +85,16 @@ El código del spike está en la rama
   timestamps, FS monitor) quedan para #64.
 - Escribir en el repo y en el editor pasa por el mismo disco
   (`filesDir/projects`). El editor guarda por Capacitor y git lee del disco,
-  así que no hay estado duplicado. El snapshot pre-cambio (#27) puede ser un
-  `stash` o un commit en una ref propia.
+  así que no hay estado duplicado.
+- El snapshot pre-cambio (#27) es un commit en una ref propia,
+  `refs/pepino/snapshots`, encadenado al anterior. Guarda el árbol de trabajo
+  tal como está en disco, sin tocar el índice ni HEAD. Entran los archivos no
+  ignorados, también los que git no sigue; quedan fuera `node_modules` y los
+  de más de 5 MB. No sale en History ni en las ramas, y un push de ramas no
+  lo sube. Se toma antes del primer guardado de cada archivo en el editor y
+  antes de cambiar de rama. Si nada cambió desde el último, no se crea otro.
+  Por ahora la cadena no se poda: git deduplica los blobs, así que cada
+  snapshot solo cuesta lo que cambió.
 - Commits atómicos: JGit escribe con archivos `.lock` y renombrados. Si la app
   muere a mitad de un commit, no se corrompe el repo (criterio 3 del sprint);
   se comprobará en #28.

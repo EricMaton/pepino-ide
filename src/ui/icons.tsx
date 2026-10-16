@@ -113,3 +113,11 @@ export const ProjectIcon = (props: IconProps) => (
     <path d="M10 11l-2 2.5 2 2.5M14 11l2 2.5-2 2.5" />
   </Icon>
 );
+
+/** A clock: earlier versions of a file. */
+export const HistoryIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7v5l3 3" />
+  </Icon>
+);

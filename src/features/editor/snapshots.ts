@@ -4,10 +4,11 @@ import { MARKER_DIR } from '../projects/projects';
 import type { ProjectSpace } from '../projects/projectSpace';
 
 /*
- * Pre-edit snapshots: before a file is overwritten for the first time in an
- * editing session, its previous content is copied to
- * `<top-level folder>/.pepino/snapshots/` (or the space root for loose
- * files). Git snapshots (#27) will build on the same idea.
+ * Pre-edit copies, for files outside any git repository: before a file is
+ * overwritten for the first time in an editing session, its previous
+ * content is copied to `<top-level folder>/.pepino/snapshots/` (or the space
+ * root for loose files). Inside a repository the editor takes a git snapshot
+ * instead (./fileHistory.ts).
  */
 export const SNAPSHOTS_KEPT = 10;
 

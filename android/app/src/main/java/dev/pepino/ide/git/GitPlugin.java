@@ -223,6 +223,42 @@ public class GitPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void snapshot(PluginCall call) {
+        run(call, () -> {
+            JSObject result = new JSObject();
+            result.put("id", GitOps.snapshot(folder(call), call.getString("reason")));
+            return result;
+        });
+    }
+
+    @PluginMethod
+    public void snapshotVersions(PluginCall call) {
+        run(call, () -> {
+            JSArray versions = new JSArray();
+            for (GitOps.SnapshotVersion version : GitOps.snapshotVersions(folder(call), call.getString("file"), call.getInt("limit", 50))) {
+                JSObject json = new JSObject();
+                json.put("id", version.id());
+                json.put("reason", version.reason());
+                json.put("time", version.time());
+                versions.put(json);
+            }
+            JSObject result = new JSObject();
+            result.put("versions", versions);
+            return result;
+        });
+    }
+
+    @PluginMethod
+    public void snapshotFile(PluginCall call) {
+        run(call, () -> {
+            String text = GitOps.snapshotFile(folder(call), call.getString("id"), call.getString("file"));
+            JSObject result = new JSObject();
+            result.put("text", text == null ? JSObject.NULL : text);
+            return result;
+        });
+    }
+
+    @PluginMethod
     public void identity(PluginCall call) {
         run(call, () -> {
             GitOps.Identity identity = GitOps.identity(configFile());
