@@ -1,31 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useServices } from '../../app/services';
 import { TopBar } from '../../app/TopBar';
 import { Button, Dialog } from '../../ui/components';
 import { cx } from '../../ui/cx';
 import { useSnackbar } from '../../ui/useSnackbar';
 import { type GitHubAccount, GitHubError } from '../github/github';
-import { GitHubLoginDialog } from './GitHubLoginDialog';
+import { GitHubLoginDialog } from '../github/GitHubLoginDialog';
+import { useGitHubAccount } from '../github/useGitHubAccount';
 import styles from './SettingsScreen.module.css';
-
-/** The GitHub account, kept up to date with sign-ins and sign-outs. Undefined while reading. */
-function useGitHubAccount(): GitHubAccount | null | undefined {
-  const { github } = useServices();
-  const [account, setAccount] = useState<GitHubAccount | null | undefined>(undefined);
-  useEffect(() => {
-    let active = true;
-    github.account().then(
-      (found) => active && setAccount(found),
-      () => active && setAccount(null),
-    );
-    const unsubscribe = github.subscribe(setAccount);
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, [github]);
-  return account;
-}
 
 /**
  * Settings. For now the accounts: GitHub (#29), which clone, push and pull

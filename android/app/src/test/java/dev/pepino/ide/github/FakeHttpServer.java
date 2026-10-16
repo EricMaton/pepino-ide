@@ -20,7 +20,11 @@ final class FakeHttpServer implements AutoCloseable {
 
     record Request(String method, String path, Map<String, String> headers, String body) {}
 
-    record Response(int status, String body) {}
+    record Response(int status, String body, Map<String, String> headers) {
+        Response(int status, String body) {
+            this(status, body, Map.of());
+        }
+    }
 
     interface Handler {
         /** The answer, or null to drop the connection unanswered (no network). */
@@ -38,10 +42,13 @@ final class FakeHttpServer implements AutoCloseable {
                     Response response = handler.handle(read(client.getInputStream()));
                     if (response == null) continue;
                     byte[] body = response.body().getBytes(StandardCharsets.UTF_8);
+                    StringBuilder headers = new StringBuilder();
+                    response.headers().forEach((name, value) -> headers.append(name).append(": ").append(value).append("\r\n"));
                     OutputStream out = client.getOutputStream();
                     out.write((
                         "HTTP/1.1 " + response.status() + " X\r\n"
                             + "Content-Type: application/json\r\n"
+                            + headers
                             + "Content-Length: " + body.length + "\r\n"
                             + "Connection: close\r\n\r\n"
                     ).getBytes(StandardCharsets.UTF_8));

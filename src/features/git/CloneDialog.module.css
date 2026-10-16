@@ -1,0 +1,87 @@
+.signIn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.signIn p {
+  margin: 0;
+}
+
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* The filter stays at the top of the dialog while the list scrolls under it */
+.filter {
+  position: sticky;
+  top: calc(-1 * var(--space-5));
+  z-index: 1;
+  margin-top: calc(-1 * var(--space-5));
+  padding: var(--space-5) 0 var(--space-3);
+  background: var(--surface);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--hairline);
+}
+
+/* A repository: owner/name, its description, then what it is */
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 56px;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-bottom: 1px solid var(--hairline);
+  background: none;
+  color: var(--fg);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.row:active,
+.rowSelected {
+  background: var(--surface-variant);
+  box-shadow: inset 4px 0 0 var(--primary);
+}
+
+.name {
+  font-weight: 700;
+}
+
+.tags {
+  color: var(--outline);
+  letter-spacing: 0.04em;
+}
+
+.rowSelected .tags {
+  color: var(--primary);
+}
+
+/* The end of the list: loading, the count, or what went wrong */
+.end {
+  min-height: var(--space-6);
+}
+
+.status {
+  margin: 0;
+}
+
+.error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.error p {
+  margin: 0;
+}

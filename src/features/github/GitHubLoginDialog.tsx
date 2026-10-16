@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useServices } from '../../app/services';
 import { Button, Dialog } from '../../ui/components';
 import { cx } from '../../ui/cx';
-import { type DeviceLogin, type GitHubAccount, GitHubError } from '../github/github';
-import styles from './SettingsScreen.module.css';
+import { type DeviceLogin, type GitHubAccount, GitHubError } from './github';
+import styles from './GitHubLoginDialog.module.css';
 
 type Step =
   { kind: 'starting' } | { kind: 'code'; login: DeviceLogin; copied: boolean } | { kind: 'failed'; error: GitHubError };

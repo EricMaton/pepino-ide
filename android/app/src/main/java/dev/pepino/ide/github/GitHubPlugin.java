@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -29,6 +30,7 @@ public class GitHubPlugin extends Plugin {
     // Waiting for the user to approve can take minutes: it never holds up the other calls.
     private final ExecutorService waiting = Executors.newSingleThreadExecutor();
     private final GitHubAuth auth = GitHubAuth.github();
+    private final GitHubApi api = GitHubApi.github();
     private TokenStore tokens;
     // The sign-in in progress (one at a time), and whether Pepino cancelled it
     private volatile GitHubAuth.DeviceCode pending;
@@ -137,6 +139,40 @@ public class GitHubPlugin extends Plugin {
                 pending = null;
             }
         });
+    }
+
+    /** A page of the signed-in user's repositories (#31): { repos, hasMore }. */
+    @PluginMethod
+    public void repos(PluginCall call) {
+        int page = call.getInt("page", 1);
+        int perPage = call.getInt("perPage", 50);
+        run(call, () -> {
+            String token = tokens.read(TOKEN);
+            if (token == null) throw new GitHubAuth.LoginException("UNAUTHORIZED", "Not signed in to GitHub");
+            GitHubApi.Page found = api.repos(token, page, perPage);
+            JSArray repos = new JSArray();
+            for (GitHubApi.Repo repo : found.repos()) repos.put(toJson(repo));
+            JSObject result = new JSObject();
+            result.put("repos", repos);
+            result.put("hasMore", found.hasMore());
+            return result;
+        });
+    }
+
+    private static JSObject toJson(GitHubApi.Repo repo) {
+        JSObject json = new JSObject();
+        json.put("fullName", repo.fullName());
+        json.put("name", repo.name());
+        json.put("owner", repo.owner());
+        json.put("description", repo.description() == null ? JSObject.NULL : repo.description());
+        json.put("private", repo.isPrivate());
+        json.put("fork", repo.fork());
+        json.put("archived", repo.archived());
+        json.put("defaultBranch", repo.defaultBranch());
+        json.put("cloneUrl", repo.cloneUrl());
+        json.put("language", repo.language() == null ? JSObject.NULL : repo.language());
+        json.put("pushedAt", repo.pushedAt() == null ? JSObject.NULL : repo.pushedAt());
+        return json;
     }
 
     /** Stops waiting for the sign-in in progress (it ends with CANCELLED at the next poll). */
