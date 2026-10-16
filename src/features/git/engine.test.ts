@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMemoryBackend } from '../projects/memoryBackend';
 import { createProjectSpace, type ProjectSpace } from '../projects/projectSpace';
-import { createMemoryGitEngine, type GitEngine } from './engine';
+import { createMemoryGitEngine, GitError, type GitEngine } from './engine';
 
 let space: ProjectSpace;
 let git: GitEngine;
@@ -77,5 +77,52 @@ describe('memory git engine: changes and commits', () => {
     await expect(git.commit('app', { message: 'again', paths: ['a.txt'] })).rejects.toThrow('no changes');
     const fresh = createMemoryGitEngine(space);
     await expect(fresh.commit('app', { message: 'x', paths: ['src/b.ts'] })).rejects.toThrow('name and email');
+  });
+});
+
+describe('memory git engine: branches', () => {
+  beforeEach(async () => {
+    await git.init('app');
+    await git.setIdentity({ name: 'Pepino', email: 'me@pepino.dev' });
+    await space.writeTextFile('app/a.txt', 'main');
+  });
+
+  it('cannot branch before the first commit', async () => {
+    expect(await git.branches('app')).toEqual([{ name: 'main', current: true }]);
+    await expect(git.createBranch('app', 'feature')).rejects.toThrow('first commit');
+  });
+
+  it('creates, switches (rewriting files) and lists branches', async () => {
+    await git.commit('app', { message: 'first', paths: ['a.txt'] });
+    expect(await git.createBranch('app', 'feature')).toEqual({ branch: 'feature', hasCommits: true });
+    await space.writeTextFile('app/a.txt', 'feature');
+    await space.writeTextFile('app/b.txt', 'only here');
+    await git.commit('app', { message: 'work', paths: ['a.txt', 'b.txt'] });
+
+    expect(await git.checkout('app', 'main')).toEqual({ branch: 'main', hasCommits: true });
+    expect(await space.readTextFile('app/a.txt')).toBe('main');
+    await expect(space.readTextFile('app/b.txt')).rejects.toMatchObject({ code: 'NotFound' });
+    expect(await git.branches('app')).toEqual([
+      { name: 'feature', current: false },
+      { name: 'main', current: true },
+    ]);
+  });
+
+  it('refuses to overwrite uncommitted changes, and deletes merged branches only unless forced', async () => {
+    await git.commit('app', { message: 'first', paths: ['a.txt'] });
+    await git.createBranch('app', 'feature');
+    await space.writeTextFile('app/a.txt', 'feature');
+    await git.commit('app', { message: 'work', paths: ['a.txt'] });
+    await space.writeTextFile('app/a.txt', 'uncommitted');
+
+    await expect(git.checkout('app', 'main')).rejects.toMatchObject({ code: 'CONFLICT', paths: ['a.txt'] });
+    expect(await space.readTextFile('app/a.txt')).toBe('uncommitted');
+
+    await git.commit('app', { message: 'more', paths: ['a.txt'] });
+    await git.checkout('app', 'main');
+    await expect(git.deleteBranch('app', 'main')).rejects.toThrow('Switch to another branch');
+    await expect(git.deleteBranch('app', 'feature')).rejects.toBeInstanceOf(GitError);
+    await git.deleteBranch('app', 'feature', { force: true });
+    expect(await git.branches('app')).toEqual([{ name: 'main', current: true }]);
   });
 });

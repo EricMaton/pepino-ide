@@ -6,17 +6,22 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import org.eclipse.jgit.api.CheckoutCommand;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.Status;
+import org.eclipse.jgit.api.errors.CheckoutConflictException;
 import org.eclipse.jgit.api.errors.EmptyCommitException;
+import org.eclipse.jgit.api.errors.NotMergedException;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.PersonIdent;
+import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.RepositoryCache;
 import org.eclipse.jgit.revwalk.RevCommit;
@@ -48,6 +53,34 @@ public final class GitOps {
 
     /** A commit just made: its short id and first line. */
     public record CommitResult(String id, String summary) {}
+
+    /** A local branch; [current] is the one HEAD is on. */
+    public record Branch(String name, boolean current) {}
+
+    /** After switching branch: where HEAD is now, and the files the switch wrote or removed (repo-relative). */
+    public record Switched(RepoInfo info, List<String> written, List<String> removed) {}
+
+    /** Switching would overwrite uncommitted changes to these files. */
+    public static final class ConflictException extends IllegalStateException {
+        public final List<String> paths;
+
+        ConflictException(List<String> paths) {
+            super("Commit your changes to " + describe(paths) + " before switching branch");
+            this.paths = paths;
+        }
+
+        private static String describe(List<String> paths) {
+            String first = new File(paths.get(0)).getName();
+            return paths.size() == 1 ? first : first + " and " + (paths.size() - 1) + " more";
+        }
+    }
+
+    /** The branch has commits that no other branch has; deleting it needs [force]. */
+    public static final class NotMergedBranchException extends IllegalStateException {
+        NotMergedBranchException(String name) {
+            super(name + " has commits that are on no other branch");
+        }
+    }
 
     private GitOps() {}
 
@@ -164,6 +197,81 @@ public final class GitOps {
                 return new CommitResult(commit.abbreviate(7).name(), commit.getShortMessage());
             } catch (EmptyCommitException e) {
                 throw new IllegalArgumentException("Those files have no changes to commit");
+            }
+        }
+    }
+
+    /** The local branches by name. A repository with no commits yet has just its unborn current branch. */
+    public static List<Branch> branches(File folder) throws IOException, GitAPIException {
+        try (Git git = Git.open(folder)) {
+            String current = git.getRepository().getBranch();
+            Map<String, Boolean> names = new TreeMap<>();
+            for (Ref ref : git.branchList().call()) names.put(Repository.shortenRefName(ref.getName()), false);
+            names.put(current, true);
+            List<Branch> branches = new ArrayList<>();
+            names.forEach((name, isCurrent) -> branches.add(new Branch(name, isCurrent)));
+            return branches;
+        }
+    }
+
+    /** Creates [name] at the current commit and switches to it; uncommitted changes come along. */
+    public static RepoInfo createBranch(File folder, String name) throws IOException, GitAPIException {
+        String branch = name == null ? "" : name.trim();
+        if (!Repository.isValidRefName(Constants.R_HEADS + branch)) {
+            throw new IllegalArgumentException("Not a valid branch name: " + branch);
+        }
+        try (Git git = Git.open(folder)) {
+            Repository repository = git.getRepository();
+            if (repository.resolve(Constants.HEAD) == null) {
+                throw new IllegalStateException("Make the first commit before creating branches");
+            }
+            if (repository.exactRef(Constants.R_HEADS + branch) != null) {
+                throw new IllegalArgumentException("There is already a branch named " + branch);
+            }
+            git.checkout().setCreateBranch(true).setName(branch).call();
+            return info(repository);
+        }
+    }
+
+    /**
+     * Switches to [name]. Uncommitted changes come along when the two branches
+     * agree on those files; when they do not, nothing changes and the conflict
+     * names the files (commit them first).
+     */
+    public static Switched checkout(File folder, String name) throws IOException, GitAPIException {
+        try (Git git = Git.open(folder)) {
+            Repository repository = git.getRepository();
+            if (name.equals(repository.getBranch())) return new Switched(info(repository), Collections.emptyList(), Collections.emptyList());
+            if (repository.exactRef(Constants.R_HEADS + name) == null) {
+                throw new IllegalArgumentException("No branch named " + name);
+            }
+            CheckoutCommand checkout = git.checkout().setName(name);
+            try {
+                checkout.call();
+            } catch (CheckoutConflictException e) {
+                throw new ConflictException(e.getConflictingPaths());
+            }
+            return new Switched(
+                info(repository),
+                new ArrayList<>(checkout.getResult().getModifiedList()),
+                new ArrayList<>(checkout.getResult().getRemovedList())
+            );
+        }
+    }
+
+    /** Deletes branch [name], never the current one; with commits on no other branch it needs [force]. */
+    public static void deleteBranch(File folder, String name, boolean force) throws IOException, GitAPIException {
+        try (Git git = Git.open(folder)) {
+            if (name.equals(git.getRepository().getBranch())) {
+                throw new IllegalArgumentException("Switch to another branch before deleting " + name);
+            }
+            if (git.getRepository().exactRef(Constants.R_HEADS + name) == null) {
+                throw new IllegalArgumentException("No branch named " + name);
+            }
+            try {
+                git.branchDelete().setBranchNames(Constants.R_HEADS + name).setForce(force).call();
+            } catch (NotMergedException e) {
+                throw new NotMergedBranchException(name);
             }
         }
     }

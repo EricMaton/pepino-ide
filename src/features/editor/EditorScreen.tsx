@@ -1,5 +1,5 @@
 import { App as CapacitorApp } from '@capacitor/app';
-import { Text } from '@codemirror/state';
+import { Text, Transaction } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { EditorViewState } from '../../app/session';
@@ -251,6 +251,31 @@ export default function EditorScreen({
     if (!dirty || (await save())) onClose();
     else setConfirmClose(true);
   }, [dirty, save, onClose]);
+
+  // Someone else rewrote the file (a branch switch, a plugin): show the new content, unless the
+  // editor has edits of its own, which win (saving them is what the user expects).
+  useEffect(
+    () =>
+      events.subscribe('fs.written', ({ path: written }) => {
+        if (written !== livePath.current || !view) return;
+        void projectSpace.readTextFile(written).then((text) => {
+          const original = opened.current;
+          const saved = savedDoc.current;
+          if (!original || !saved || livePath.current !== written) return;
+          if (serialize(saved, original.separator) === text) return; // our own save
+          if (doc.current && !doc.current.eq(saved)) return; // unsaved edits win
+          const next = Text.of(text.split(/\r\n?|\n/));
+          opened.current = { text, doc: next, separator: detectLineSeparator(text) };
+          savedDoc.current = next;
+          snapshotTaken.current = false;
+          view.dispatch({
+            changes: { from: 0, to: view.state.doc.length, insert: next },
+            annotations: Transaction.addToHistory.of(false),
+          });
+        });
+      }),
+    [events, projectSpace, view],
+  );
 
   const revertToOpened = useCallback(() => {
     const original = opened.current;

@@ -8,7 +8,7 @@
 - [x] Spike al inicio del sprint: isomorphic-git sobre `ProjectSpace` frente a un plugin Capacitor nativo (JGit / libgit2); decidir con medidas y documentar en un ADR ([ADR-006](../decisions/ADR-006-git.md): JGit, #21)
 - [x] `git init` / abrir repo existente en un proyecto (#22)
 - [x] Commits con mensaje, staging de archivos (#23; el stage parcial, por líneas, va con el diff viewer #25)
-- [ ] Branches: crear, cambiar, borrar, lista
+- [x] Branches: crear, cambiar, borrar, lista (#24)
 - [ ] Diff viewer táctil (cambios por archivo, antes/después)
 - [ ] History: log de commits con autor, fecha, mensaje
 - [ ] Snapshot automático pre-cambio + integración con el autosave del editor

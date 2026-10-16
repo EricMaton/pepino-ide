@@ -203,6 +203,109 @@ public class GitOpsTest {
         assertThrows(IllegalArgumentException.class, () -> GitOps.setIdentity(config, new GitOps.Identity("", "x@y")));
     }
 
+    private static String read(File folder, String path) throws Exception {
+        return new String(Files.readAllBytes(new File(folder, path).toPath()), StandardCharsets.UTF_8);
+    }
+
+    /** A repository on main with a.txt ("main") committed. */
+    private File repoWithACommit() throws Exception {
+        File app = project("app");
+        GitOps.init(app);
+        write(app, "a.txt", "main");
+        GitOps.commit(app, "first", Collections.singletonList("a.txt"), ME);
+        return app;
+    }
+
+    @Test
+    public void anUnbornRepositoryHasJustItsCurrentBranchAndCannotBranchYet() throws Exception {
+        File app = project("app");
+        GitOps.init(app);
+        assertEquals(Collections.singletonList(new GitOps.Branch("main", true)), GitOps.branches(app));
+        assertThrows(IllegalStateException.class, () -> GitOps.createBranch(app, "feature"));
+    }
+
+    @Test
+    public void createBranchSwitchesToItAndKeepsUncommittedChanges() throws Exception {
+        File app = repoWithACommit();
+        write(app, "a.txt", "work in progress");
+
+        assertEquals(new GitOps.RepoInfo("feature", true), GitOps.createBranch(app, " feature "));
+
+        assertEquals(
+            Arrays.asList(new GitOps.Branch("feature", true), new GitOps.Branch("main", false)),
+            GitOps.branches(app)
+        );
+        assertEquals("work in progress", read(app, "a.txt"));
+        assertThrows(IllegalArgumentException.class, () -> GitOps.createBranch(app, "main"));
+        assertThrows(IllegalArgumentException.class, () -> GitOps.createBranch(app, "bad name"));
+        assertThrows(IllegalArgumentException.class, () -> GitOps.createBranch(app, ""));
+    }
+
+    @Test
+    public void checkoutRewritesTheFilesAndReportsThem() throws Exception {
+        File app = repoWithACommit();
+        GitOps.createBranch(app, "feature");
+        write(app, "a.txt", "feature");
+        write(app, "b.txt", "only on feature");
+        GitOps.commit(app, "feature work", Arrays.asList("a.txt", "b.txt"), ME);
+
+        GitOps.Switched switched = GitOps.checkout(app, "main");
+
+        assertEquals(new GitOps.RepoInfo("main", true), switched.info());
+        assertEquals("main", read(app, "a.txt"));
+        assertFalse(new File(app, "b.txt").exists());
+        assertEquals(Collections.singletonList("a.txt"), switched.written());
+        assertEquals(Collections.singletonList("b.txt"), switched.removed());
+        assertEquals(Collections.emptyList(), GitOps.checkout(app, "main").written());
+    }
+
+    @Test
+    public void checkoutCarriesChangesTheBranchesAgreeOn() throws Exception {
+        File app = repoWithACommit();
+        GitOps.createBranch(app, "feature");
+        GitOps.checkout(app, "main");
+        write(app, "a.txt", "uncommitted");
+
+        GitOps.checkout(app, "feature");
+
+        assertEquals("uncommitted", read(app, "a.txt"));
+        assertEquals(changes("a.txt", "modified"), GitOps.status(app));
+    }
+
+    @Test
+    public void checkoutRefusesToOverwriteUncommittedChanges() throws Exception {
+        File app = repoWithACommit();
+        GitOps.createBranch(app, "feature");
+        write(app, "a.txt", "feature");
+        GitOps.commit(app, "feature work", Collections.singletonList("a.txt"), ME);
+        write(app, "a.txt", "uncommitted");
+
+        GitOps.ConflictException conflict = assertThrows(GitOps.ConflictException.class, () -> GitOps.checkout(app, "main"));
+
+        assertEquals(Collections.singletonList("a.txt"), conflict.paths);
+        assertEquals("uncommitted", read(app, "a.txt"));
+        assertEquals("feature", GitOps.info(app).branch());
+        assertThrows(IllegalArgumentException.class, () -> GitOps.checkout(app, "missing"));
+    }
+
+    @Test
+    public void deleteBranchNeedsForceForCommitsOnNoOtherBranch() throws Exception {
+        File app = repoWithACommit();
+        GitOps.createBranch(app, "merged");
+        GitOps.checkout(app, "main");
+        GitOps.deleteBranch(app, "merged", false);
+
+        GitOps.createBranch(app, "work");
+        write(app, "a.txt", "only on work");
+        GitOps.commit(app, "work", Collections.singletonList("a.txt"), ME);
+        assertThrows(IllegalArgumentException.class, () -> GitOps.deleteBranch(app, "work", false));
+        GitOps.checkout(app, "main");
+        assertThrows(GitOps.NotMergedBranchException.class, () -> GitOps.deleteBranch(app, "work", false));
+        GitOps.deleteBranch(app, "work", true);
+
+        assertEquals(Collections.singletonList(new GitOps.Branch("main", true)), GitOps.branches(app));
+    }
+
     private static int countCommits(Git git) throws Exception {
         int count = 0;
         for (Object ignored : git.log().call()) count++;
