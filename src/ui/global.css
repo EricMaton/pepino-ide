@@ -98,9 +98,68 @@ input {
   text-overflow: ellipsis;
 }
 
-/* Held to read the rest (ui/marquee.ts): it slides, so no "…" in the way */
-.ellipsis.marquee {
-  text-overflow: clip;
+/* Held to read it whole (ui/fullText.ts): the full text in a bubble above the finger */
+.fullText {
+  position: fixed;
+  inset: auto;
+  z-index: 1000;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-variant);
+  color: var(--fg);
+  box-shadow: var(--shadow-primary);
+  font-family: var(--font-mono);
+  font-size: var(--caption-size);
+  line-height: 1.4;
+  overflow: visible;
+  pointer-events: none;
+  animation: fullText-in 120ms ease-out;
+}
+
+.fullText p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.fullText p + p {
+  margin-top: var(--space-1);
+  color: var(--outline);
+}
+
+/* The arrow, pointing at the text */
+.fullText::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: calc(var(--arrow, 50%) - 7px);
+  border: 7px solid transparent;
+  border-top-color: var(--fg);
+}
+
+.fullText.below::after {
+  top: auto;
+  bottom: 100%;
+  border-top-color: transparent;
+  border-bottom-color: var(--fg);
+}
+
+@keyframes fullText-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fullText {
+    animation: none;
+  }
 }
 
 .muted {
