@@ -2,6 +2,8 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  /* The page itself never scrolls: a focused field scrolled into view would push the top bar under the status bar */
+  overflow: clip;
   padding-top: var(--inset-top);
   padding-left: var(--inset-left);
   padding-right: var(--inset-right);
@@ -123,9 +125,16 @@
   font-size: 11px;
 }
 
-/* While typing in the editor, the bottom nav steps aside for the editor and its keys */
-.app[data-focus-mode] .nav {
+/* While typing anywhere, the bottom nav steps aside: the keyboard, the field and its action get the room */
+.app[data-keyboard-open] .nav {
   display: none;
+}
+
+/* The keyboard leaves little height: what no longer fits (a form pinned under a list) scrolls here, and
+   the field being typed in is scrolled into view here, never by moving the whole page (see .app). */
+.app[data-keyboard-open] .content {
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 /* The explorer's way back to the active project, always at hand above the nav. The workspace
