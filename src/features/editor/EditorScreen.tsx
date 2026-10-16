@@ -25,9 +25,7 @@ import { languageFor } from './languages';
 import { takeSnapshot } from './snapshots';
 import { detectLineSeparator, type LineSeparator, serialize } from './text';
 import { DEFAULT_TOOLBAR } from './toolbar';
-import { clampFontSize, DEFAULT_FONT_SIZE, ZOOM_STEP } from './zoom';
-
-const FONT_SIZE_KEY = 'pepino.editor.fontSize';
+import { clampFontSize, DEFAULT_FONT_SIZE, FONT_SIZE_KEY, ZOOM_STEP } from './zoom';
 
 /** Quiet time after the last keystroke before autosaving. */
 const AUTOSAVE_DELAY_MS = 1000;

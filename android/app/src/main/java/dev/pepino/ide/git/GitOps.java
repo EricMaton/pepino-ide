@@ -1,5 +1,6 @@
 package dev.pepino.ide.git;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -7,8 +8,10 @@ import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import org.eclipse.jgit.api.CheckoutCommand;
 import org.eclipse.jgit.api.Git;
@@ -17,16 +20,29 @@ import org.eclipse.jgit.api.errors.CheckoutConflictException;
 import org.eclipse.jgit.api.errors.EmptyCommitException;
 import org.eclipse.jgit.api.errors.NotMergedException;
 import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.diff.DiffAlgorithm;
+import org.eclipse.jgit.diff.Edit;
+import org.eclipse.jgit.diff.EditList;
+import org.eclipse.jgit.diff.RawText;
+import org.eclipse.jgit.diff.SequenceComparator;
 import org.eclipse.jgit.dircache.DirCache;
+import org.eclipse.jgit.dircache.DirCacheEditor;
+import org.eclipse.jgit.dircache.DirCacheEntry;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.FileMode;
+import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectInserter;
+import org.eclipse.jgit.lib.ObjectLoader;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.RepositoryCache;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.storage.file.FileBasedConfig;
+import org.eclipse.jgit.treewalk.TreeWalk;
 import org.eclipse.jgit.util.FS;
+import org.eclipse.jgit.util.RawParseUtils;
 
 /**
  * The git operations, on plain files and JGit only (no Android), so the JVM
@@ -79,6 +95,49 @@ public final class GitOps {
     public static final class NotMergedBranchException extends IllegalStateException {
         NotMergedBranchException(String name) {
             super(name + " has commits that are on no other branch");
+        }
+    }
+
+    /** Lines of context around each change in a diff, as git shows them. */
+    static final int DIFF_CONTEXT = 3;
+
+    /** Bigger files are committed whole, never shown line by line. */
+    static final int DIFF_MAX_BYTES = 1 << 20;
+
+    /**
+     * A line of a diff: "context", "added" or "removed". [oldLine] and
+     * [newLine] are 1-based, 0 on the side the line is not on. [index] numbers
+     * the changed lines of the file in order (-1 for context): it is how a
+     * commit leaves lines out. [noNewline]: the file ends on it without one.
+     * [endOfFile]: not a line but the file's final line break, added or
+     * removed (empty [text], no line numbers).
+     */
+    public record DiffLine(String kind, String text, int oldLine, int newLine, int index, boolean noNewline, boolean endOfFile) {
+        DiffLine(String kind, String text, int oldLine, int newLine, int index, boolean noNewline) {
+            this(kind, text, oldLine, newLine, index, noNewline, false);
+        }
+    }
+
+    /** Changed lines and the context around them; starts and counts as in git's "@@ -a,b +c,d @@". */
+    public record Hunk(int oldStart, int oldLines, int newStart, int newLines, List<DiffLine> lines) {}
+
+    /**
+     * A file against the last commit. Binary and too large files have no
+     * hunks (they are committed whole). [version] names the two contents the
+     * hunks were made from, so lines picked on them can be checked at commit.
+     */
+    public record FileDiff(String version, boolean binary, boolean tooLarge, List<Hunk> hunks) {}
+
+    /** Changed lines ([DiffLine.index]) to leave out of a commit, picked on the diff [version]. */
+    public record LineExclusion(String version, Set<Integer> lines) {}
+
+    /** The files changed after their lines were picked; nothing was committed. */
+    public static final class StaleSelectionException extends IllegalStateException {
+        public final List<String> paths;
+
+        StaleSelectionException(List<String> paths) {
+            super(new File(paths.get(0)).getName() + " changed since you picked its lines: check them again");
+            this.paths = paths;
         }
     }
 
@@ -159,6 +218,244 @@ public final class GitOps {
         for (String path : paths) kinds.put(path, kind);
     }
 
+    /** [path] inside the repository at [folder], never outside it. */
+    private static File repoFile(File folder, String path) throws IOException {
+        if (path == null || path.trim().isEmpty()) throw new IllegalArgumentException("No file given");
+        File base = folder.getCanonicalFile();
+        File file = new File(base, path).getCanonicalFile();
+        if (!file.toPath().startsWith(base.toPath()) || file.equals(base)) {
+            throw new IllegalArgumentException("Outside the repository: " + path);
+        }
+        return file;
+    }
+
+    /** RawText with each line's bytes reachable, so a partial commit copies them exactly. */
+    private static final class Lines extends RawText {
+        Lines(byte[] content) {
+            super(content);
+        }
+
+        /** Line [i] (0-based) runs from [start] to [end], its line break included. */
+        int start(int i) {
+            return lines.get(i + 1);
+        }
+
+        int end(int i) {
+            return lines.get(i + 2);
+        }
+
+        String text(int i) {
+            int end = end(i);
+            if (end > start(i) && content[end - 1] == '\n') end--;
+            if (end > start(i) && content[end - 1] == '\r') end--;
+            return RawParseUtils.decode(content, start(i), end);
+        }
+
+        boolean endsWithoutNewline(int i) {
+            return i == size() - 1 && isMissingNewlineAtEnd();
+        }
+
+        /** Where line [i] ends without its '\n' (a '\r' before it stays): what lines are compared by. */
+        int contentEnd(int i) {
+            int end = end(i);
+            return end > start(i) && content[end - 1] == '\n' ? end - 1 : end;
+        }
+
+        boolean sameLine(int i, Lines other, int j) {
+            int length = contentEnd(i) - start(i);
+            if (length != other.contentEnd(j) - other.start(j)) return false;
+            for (int k = 0; k < length; k++) {
+                if (content[start(i) + k] != other.content[other.start(j) + k]) return false;
+            }
+            return true;
+        }
+
+        int hashLine(int i) {
+            int hash = 5381;
+            for (int p = start(i); p < contentEnd(i); p++) hash = ((hash << 5) + hash) + (content[p] & 0xff);
+            return hash;
+        }
+    }
+
+    /**
+     * Lines compared without their final '\n': a last line that gains or
+     * loses its line break is still the same line. The line break at the end
+     * of the file is a change of its own ([Changes.endOfFile]).
+     */
+    private static final SequenceComparator<Lines> BY_CONTENT = new SequenceComparator<Lines>() {
+        @Override
+        public boolean equals(Lines a, int ai, Lines b, int bi) {
+            return a.sameLine(ai, b, bi);
+        }
+
+        @Override
+        public int hash(Lines seq, int i) {
+            return seq.hashLine(i);
+        }
+    };
+
+    /**
+     * The changed lines between [a] and [b], and how each side ends: [oldBare]
+     * / [newBare] when its last line has no line break (an empty side ends
+     * like the other). When they differ, that final line break is one more
+     * changed line, numbered after all the others.
+     */
+    private record Changes(Lines a, Lines b, EditList edits, boolean oldBare, boolean newBare) {
+        static Changes of(byte[] old, byte[] now) {
+            Lines a = new Lines(old);
+            Lines b = new Lines(now);
+            EditList edits = DiffAlgorithm.getAlgorithm(DiffAlgorithm.SupportedAlgorithm.HISTOGRAM).diff(BY_CONTENT, a, b);
+            boolean oldBare = a.size() > 0 ? a.isMissingNewlineAtEnd() : b.size() > 0 && b.isMissingNewlineAtEnd();
+            boolean newBare = b.size() > 0 ? b.isMissingNewlineAtEnd() : oldBare;
+            return new Changes(a, b, edits, oldBare, newBare);
+        }
+
+        boolean endOfFile() {
+            return oldBare != newBare;
+        }
+
+        /** The changed lines, the final line break included when it changed. */
+        int count() {
+            int count = endOfFile() ? 1 : 0;
+            for (Edit edit : edits) count += edit.getLengthA() + edit.getLengthB();
+            return count;
+        }
+    }
+
+    /** A file in the last commit and on disk (empty where it is missing), and the mode to commit it with. */
+    private record Sides(byte[] old, byte[] now, FileMode mode, boolean text, boolean tooLarge) {
+        String version() {
+            ObjectInserter.Formatter ids = new ObjectInserter.Formatter();
+            return ids.idFor(Constants.OBJ_BLOB, old).name() + ":" + ids.idFor(Constants.OBJ_BLOB, now).name();
+        }
+
+        Changes changes() {
+            return Changes.of(old, now);
+        }
+    }
+
+    private static Sides sides(Repository repository, File folder, String path) throws IOException {
+        File file = repoFile(folder, path);
+        byte[] old = new byte[0];
+        FileMode mode = FS.DETECTED.canExecute(file) ? FileMode.EXECUTABLE_FILE : FileMode.REGULAR_FILE;
+        boolean text = true;
+        ObjectId tree = repository.resolve(Constants.HEAD + "^{tree}");
+        if (tree != null) {
+            try (TreeWalk walk = TreeWalk.forPath(repository, path, tree)) {
+                if (walk != null) {
+                    mode = walk.getFileMode(0);
+                    // Symlinks and submodules are not text to pick lines from.
+                    text = mode == FileMode.REGULAR_FILE || mode == FileMode.EXECUTABLE_FILE;
+                    ObjectLoader blob = text ? repository.open(walk.getObjectId(0), Constants.OBJ_BLOB) : null;
+                    if (blob != null && blob.getSize() > DIFF_MAX_BYTES) return new Sides(old, old, mode, true, true);
+                    if (blob != null) old = blob.getCachedBytes(DIFF_MAX_BYTES);
+                }
+            }
+        }
+        if (file.length() > DIFF_MAX_BYTES) return new Sides(old, old, mode, text, true);
+        byte[] now = file.isFile() ? Files.readAllBytes(file.toPath()) : new byte[0];
+        return new Sides(old, now, mode, text && !RawText.isBinary(old) && !RawText.isBinary(now), false);
+    }
+
+    /**
+     * How [path] (repo-relative) differs from the last commit, as hunks of
+     * lines with [DIFF_CONTEXT] lines of context. Like status, it compares the
+     * file on disk with the last commit; what is staged does not matter.
+     */
+    public static FileDiff diff(File folder, String path) throws IOException {
+        try (Git git = Git.open(folder)) {
+            Sides sides = sides(git.getRepository(), folder, path);
+            if (sides.tooLarge()) return new FileDiff("", false, true, Collections.emptyList());
+            if (!sides.text()) return new FileDiff(sides.version(), true, false, Collections.emptyList());
+            return new FileDiff(sides.version(), false, false, hunks(sides.changes()));
+        }
+    }
+
+    private static List<Hunk> hunks(Changes changes) {
+        Lines a = changes.a();
+        Lines b = changes.b();
+        // The final line break, when it changed, is an empty edit at the end: it gets its hunk and context too.
+        List<Edit> edits = new ArrayList<>(changes.edits());
+        if (changes.endOfFile()) edits.add(new Edit(a.size(), a.size(), b.size(), b.size()));
+        List<Hunk> hunks = new ArrayList<>();
+        int index = 0;
+        for (int first = 0; first < edits.size(); ) {
+            // Edits closer than twice the context share a hunk.
+            int last = first;
+            while (last + 1 < edits.size() && edits.get(last + 1).getBeginA() - edits.get(last).getEndA() <= 2 * DIFF_CONTEXT) {
+                last++;
+            }
+            int aStart = Math.max(0, edits.get(first).getBeginA() - DIFF_CONTEXT);
+            int bStart = Math.max(0, edits.get(first).getBeginB() - DIFF_CONTEXT);
+            int aEnd = Math.min(a.size(), edits.get(last).getEndA() + DIFF_CONTEXT);
+            int bEnd = Math.min(b.size(), edits.get(last).getEndB() + DIFF_CONTEXT);
+            List<DiffLine> lines = new ArrayList<>();
+            int ai = aStart;
+            int bi = bStart;
+            for (int k = first; k <= last; k++) {
+                Edit edit = edits.get(k);
+                for (; ai < edit.getBeginA(); ai++, bi++) lines.add(context(a, ai, b, bi));
+                for (; ai < edit.getEndA(); ai++) {
+                    lines.add(new DiffLine("removed", a.text(ai), ai + 1, 0, index++, a.endsWithoutNewline(ai)));
+                }
+                for (; bi < edit.getEndB(); bi++) {
+                    lines.add(new DiffLine("added", b.text(bi), 0, bi + 1, index++, b.endsWithoutNewline(bi)));
+                }
+                if (edit.isEmpty()) {
+                    lines.add(new DiffLine(changes.newBare() ? "removed" : "added", "", 0, 0, index++, false, true));
+                }
+            }
+            for (; ai < aEnd; ai++, bi++) lines.add(context(a, ai, b, bi));
+            int oldLines = aEnd - aStart;
+            int newLines = bEnd - bStart;
+            // git numbers an empty side by the line before it
+            hunks.add(new Hunk(oldLines == 0 ? aStart : aStart + 1, oldLines, newLines == 0 ? bStart : bStart + 1, newLines, lines));
+            first = last + 1;
+        }
+        return hunks;
+    }
+
+    /** A context line ends the file as it is now. */
+    private static DiffLine context(Lines a, int ai, Lines b, int bi) {
+        return new DiffLine("context", a.text(ai), ai + 1, bi + 1, -1, b.endsWithoutNewline(bi));
+    }
+
+    /**
+     * The file as committed when [excluded] changed lines stay as they were:
+     * a removed line left out is kept, an added line left out is not added,
+     * and the final line break is the old one unless its change is committed.
+     */
+    private static byte[] partial(Changes changes, Set<Integer> excluded) {
+        Lines a = changes.a();
+        Lines b = changes.b();
+        List<int[]> kept = new ArrayList<>(); // {0 for a / 1 for b, line}
+        int ai = 0;
+        int index = 0;
+        for (Edit edit : changes.edits()) {
+            for (; ai < edit.getBeginA(); ai++) kept.add(new int[] {0, ai});
+            for (int k = edit.getBeginA(); k < edit.getEndA(); k++) {
+                if (excluded.contains(index++)) kept.add(new int[] {0, k});
+            }
+            for (int k = edit.getBeginB(); k < edit.getEndB(); k++) {
+                if (!excluded.contains(index++)) kept.add(new int[] {1, k});
+            }
+            ai = edit.getEndA();
+        }
+        for (; ai < a.size(); ai++) kept.add(new int[] {0, ai});
+        boolean bare = changes.endOfFile() && !excluded.contains(index) ? changes.newBare() : changes.oldBare();
+
+        // Lines are joined by '\n' (a '\r' stays with its line), so every line but the last has one.
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        for (int k = 0; k < kept.size(); k++) {
+            Lines text = kept.get(k)[0] == 0 ? a : b;
+            int line = kept.get(k)[1];
+            if (k > 0) out.write('\n');
+            out.write(text.getRawContent(), text.start(line), text.contentEnd(line) - text.start(line));
+        }
+        if (!kept.isEmpty() && !bare) out.write('\n');
+        return out.toByteArray();
+    }
+
     /**
      * Commits exactly [paths] (as they are on disk; a missing one is a
      * deletion) with [message], as [who]. Anything staged before is left out.
@@ -167,11 +464,52 @@ public final class GitOps {
      */
     public static CommitResult commit(File folder, String message, List<String> paths, Identity who)
         throws IOException, GitAPIException {
+        return commit(folder, message, paths, Collections.emptyMap(), who);
+    }
+
+    /**
+     * Like [commit], leaving out of the files in [excluded] the changed lines
+     * picked there: GitHub Desktop's line selection. When a file changed since
+     * its lines were picked, nothing is committed ([StaleSelectionException]).
+     */
+    public static CommitResult commit(
+        File folder,
+        String message,
+        List<String> paths,
+        Map<String, LineExclusion> excluded,
+        Identity who
+    ) throws IOException, GitAPIException {
         if (paths.isEmpty()) throw new IllegalArgumentException("Choose at least one file to commit");
         if (message == null || message.trim().isEmpty()) throw new IllegalArgumentException("A commit needs a summary");
         try (Git git = Git.open(folder)) {
             Repository repository = git.getRepository();
             excludePepino(repository);
+            // Files with some (not all, not none) of their lines picked: committed as built from those lines.
+            Map<String, Partial> partials = new TreeMap<>();
+            List<String> stale = new ArrayList<>();
+            List<String> whole = new ArrayList<>();
+            for (String path : paths) {
+                LineExclusion exclusion = excluded.get(path);
+                if (exclusion == null || exclusion.lines().isEmpty()) {
+                    whole.add(path);
+                    continue;
+                }
+                Sides sides = sides(repository, folder, path);
+                if (sides.tooLarge() || !sides.text() || !sides.version().equals(exclusion.version())) {
+                    stale.add(path);
+                    continue;
+                }
+                Changes changes = sides.changes();
+                int total = changes.count();
+                Set<Integer> lines = new HashSet<>();
+                for (int line : exclusion.lines()) if (line >= 0 && line < total) lines.add(line);
+                // Every line left out: the file is not part of this commit.
+                if (lines.isEmpty()) whole.add(path);
+                else if (lines.size() < total) {
+                    partials.put(path, new Partial(partial(changes, lines), sides.mode()));
+                }
+            }
+            if (!stale.isEmpty()) throw new StaleSelectionException(stale);
             // The index becomes the last commit plus exactly the chosen files.
             if (repository.resolve(Constants.HEAD) != null) {
                 git.reset().call();
@@ -181,10 +519,11 @@ public final class GitOps {
                 index.write();
                 index.commit();
             }
-            for (String path : paths) {
+            for (String path : whole) {
                 if (new File(folder, path).exists()) git.add().addFilepattern(path).call();
                 else git.rm().setCached(true).addFilepattern(path).call();
             }
+            if (!partials.isEmpty()) stage(repository, partials);
             PersonIdent ident = new PersonIdent(who.name(), who.email());
             try {
                 RevCommit commit = git
@@ -198,6 +537,33 @@ public final class GitOps {
             } catch (EmptyCommitException e) {
                 throw new IllegalArgumentException("Those files have no changes to commit");
             }
+        }
+    }
+
+    /** A file committed with some of its lines: its content as built from them. */
+    private record Partial(byte[] content, FileMode mode) {}
+
+    /** Puts each partial file into the index, past the disk. */
+    private static void stage(Repository repository, Map<String, Partial> partials) throws IOException {
+        DirCache index = repository.lockDirCache();
+        try (ObjectInserter inserter = repository.newObjectInserter()) {
+            DirCacheEditor editor = index.editor();
+            for (Map.Entry<String, Partial> entry : partials.entrySet()) {
+                Partial partial = entry.getValue();
+                ObjectId blob = inserter.insert(Constants.OBJ_BLOB, partial.content());
+                editor.add(new DirCacheEditor.PathEdit(entry.getKey()) {
+                    @Override
+                    public void apply(DirCacheEntry ent) {
+                        ent.setFileMode(partial.mode());
+                        ent.setObjectId(blob);
+                        ent.setLength(partial.content().length);
+                    }
+                });
+            }
+            inserter.flush();
+            editor.commit();
+        } finally {
+            index.unlock();
         }
     }
 
