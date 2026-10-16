@@ -3,6 +3,7 @@ package dev.pepino.ide.git;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -27,9 +28,12 @@ import org.eclipse.jgit.diff.EditList;
 import org.eclipse.jgit.diff.RawText;
 import org.eclipse.jgit.diff.SequenceComparator;
 import org.eclipse.jgit.dircache.DirCache;
+import org.eclipse.jgit.dircache.DirCacheBuilder;
 import org.eclipse.jgit.dircache.DirCacheEditor;
 import org.eclipse.jgit.dircache.DirCacheEntry;
+import org.eclipse.jgit.dircache.DirCacheIterator;
 import org.eclipse.jgit.errors.ConfigInvalidException;
+import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
@@ -37,6 +41,7 @@ import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.ObjectLoader;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
+import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.RepositoryCache;
 import org.eclipse.jgit.revwalk.RevCommit;
@@ -44,7 +49,9 @@ import org.eclipse.jgit.revwalk.RevTree;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileBasedConfig;
 import org.eclipse.jgit.treewalk.EmptyTreeIterator;
+import org.eclipse.jgit.treewalk.FileTreeIterator;
 import org.eclipse.jgit.treewalk.TreeWalk;
+import org.eclipse.jgit.treewalk.filter.NotIgnoredFilter;
 import org.eclipse.jgit.treewalk.filter.TreeFilter;
 import org.eclipse.jgit.util.FS;
 import org.eclipse.jgit.util.RawParseUtils;
@@ -80,6 +87,24 @@ public final class GitOps {
      * rest of it, and who wrote it when ([time] in millis since the epoch).
      */
     public record LogEntry(String id, String summary, String description, String author, String email, long time) {}
+
+    /**
+     * Pepino's snapshots of the working tree: a chain of commits on a ref of
+     * its own, which no branch, History or push ever shows.
+     */
+    static final String SNAPSHOTS_REF = "refs/pepino/snapshots";
+
+    /** Bigger files are left out of snapshots. */
+    static final int SNAPSHOT_MAX_FILE_BYTES = 5 << 20;
+
+    /** How far back [snapshotVersions] looks. */
+    static final int SNAPSHOTS_SCANNED = 500;
+
+    /** Folders snapshots never look into: dependencies, rebuilt at will. */
+    private static final Set<String> SNAPSHOT_SKIPPED = Set.of("node_modules");
+
+    /** A snapshot holding one version of a file: when it was taken, and why. */
+    public record SnapshotVersion(String id, String reason, long time) {}
 
     /** A local branch; [current] is the one HEAD is on. */
     public record Branch(String name, boolean current) {}
@@ -666,6 +691,135 @@ public final class GitOps {
         }
     }
 
+    /**
+     * Records the working tree as it is on disk (every file that is not
+     * ignored, untracked ones too) as a snapshot on [SNAPSHOTS_REF], with
+     * [reason] as its message. Nothing new is recorded when nothing changed
+     * since the last one. The index, HEAD and the files are left as they are.
+     * Returns the snapshot's id.
+     */
+    public static String snapshot(File folder, String reason) throws IOException {
+        try (Git git = Git.open(folder)) {
+            return snapshot(git.getRepository(), reason);
+        }
+    }
+
+    private static String snapshot(Repository repository, String reason) throws IOException {
+        excludePepino(repository);
+        try (ObjectInserter inserter = repository.newObjectInserter(); RevWalk walk = new RevWalk(repository)) {
+            ObjectId tree = workingTree(repository, inserter);
+            Ref ref = repository.exactRef(SNAPSHOTS_REF);
+            RevCommit last = ref == null ? null : walk.parseCommit(ref.getObjectId());
+            if (last != null && last.getTree().equals(tree)) return last.getName();
+            PersonIdent pepino = new PersonIdent("Pepino", "snapshots@pepino.dev");
+            CommitBuilder commit = new CommitBuilder();
+            commit.setTreeId(tree);
+            if (last != null) commit.setParentId(last);
+            commit.setAuthor(pepino);
+            commit.setCommitter(pepino);
+            commit.setMessage((reason == null || reason.trim().isEmpty() ? "Snapshot" : reason.trim()) + "\n");
+            ObjectId id = inserter.insert(commit);
+            inserter.flush();
+            RefUpdate update = repository.updateRef(SNAPSHOTS_REF);
+            update.setNewObjectId(id);
+            update.setExpectedOldObjectId(last != null ? last : ObjectId.zeroId());
+            update.disableRefLog();
+            RefUpdate.Result result = update.update(walk);
+            if (result != RefUpdate.Result.NEW && result != RefUpdate.Result.FAST_FORWARD) {
+                throw new IOException("Cannot record the snapshot: " + result);
+            }
+            return id.getName();
+        }
+    }
+
+    /**
+     * The working tree as a tree object: files unchanged since the index
+     * reuse its blobs, the others are written. Ignored files, [SNAPSHOT_SKIPPED]
+     * folders and files over [SNAPSHOT_MAX_FILE_BYTES] are left out.
+     */
+    private static ObjectId workingTree(Repository repository, ObjectInserter inserter) throws IOException {
+        DirCache tree = DirCache.newInCore();
+        DirCacheBuilder builder = tree.builder();
+        try (TreeWalk walk = new TreeWalk(repository)) {
+            int disk = walk.addTree(new FileTreeIterator(repository));
+            int index = walk.addTree(new DirCacheIterator(repository.readDirCache()));
+            walk.setFilter(new NotIgnoredFilter(disk));
+            while (walk.next()) {
+                FileTreeIterator file = walk.getTree(disk, FileTreeIterator.class);
+                if (file == null) continue; // only in the index: gone from disk
+                if (walk.isSubtree()) {
+                    if (!SNAPSHOT_SKIPPED.contains(walk.getNameString())) walk.enterSubtree();
+                    continue;
+                }
+                FileMode mode = file.getEntryFileMode();
+                if (mode == FileMode.GITLINK || file.getEntryLength() > SNAPSHOT_MAX_FILE_BYTES) continue;
+                DirCacheIterator cached = walk.getTree(index, DirCacheIterator.class);
+                ObjectId blob;
+                if (cached != null && !file.isModified(cached.getDirCacheEntry(), true, walk.getObjectReader())) {
+                    blob = cached.getEntryObjectId();
+                } else {
+                    try (InputStream content = file.openEntryStream()) {
+                        blob = inserter.insert(Constants.OBJ_BLOB, file.getEntryContentLength(), content);
+                    }
+                }
+                DirCacheEntry entry = new DirCacheEntry(walk.getPathString());
+                entry.setFileMode(mode);
+                entry.setObjectId(blob);
+                builder.add(entry);
+            }
+        }
+        builder.finish();
+        return tree.writeTree(inserter);
+    }
+
+    /** The blob of [path] in [tree], or null when it is not there (or not a file). */
+    private static ObjectId blobId(Repository repository, RevTree tree, String path) throws IOException {
+        try (TreeWalk walk = TreeWalk.forPath(repository, path, tree)) {
+            if (walk == null || (walk.getFileMode(0).getBits() & FileMode.TYPE_MASK) != FileMode.TYPE_FILE) return null;
+            return walk.getObjectId(0);
+        }
+    }
+
+    /**
+     * The versions of [path] (repo-relative) in the snapshots, newest first:
+     * a snapshot whose copy of the file is the same as the newer one's is the
+     * same version and left out. At most [limit] of them.
+     */
+    public static List<SnapshotVersion> snapshotVersions(File folder, String path, int limit) throws IOException {
+        try (Git git = Git.open(folder); RevWalk walk = new RevWalk(git.getRepository())) {
+            Repository repository = git.getRepository();
+            List<SnapshotVersion> versions = new ArrayList<>();
+            Ref ref = repository.exactRef(SNAPSHOTS_REF);
+            if (ref == null) return versions;
+            walk.markStart(walk.parseCommit(ref.getObjectId()));
+            ObjectId newer = null;
+            int scanned = 0;
+            for (RevCommit commit : walk) {
+                if (++scanned > SNAPSHOTS_SCANNED || versions.size() >= limit) break;
+                ObjectId blob = blobId(repository, commit.getTree(), path);
+                if (blob != null && !blob.equals(newer)) {
+                    versions.add(new SnapshotVersion(
+                        commit.getName(),
+                        commit.getFullMessage().trim(),
+                        commit.getCommitterIdent().getWhen().getTime()
+                    ));
+                }
+                newer = blob;
+            }
+            return versions;
+        }
+    }
+
+    /** [path] (repo-relative) as snapshot [id] has it, as text; null when it is not there. */
+    public static String snapshotFile(File folder, String id, String path) throws IOException {
+        try (Git git = Git.open(folder); RevWalk walk = new RevWalk(git.getRepository())) {
+            Repository repository = git.getRepository();
+            ObjectId blob = blobId(repository, parseCommit(repository, walk, id).getTree(), path);
+            if (blob == null) return null;
+            return RawParseUtils.decode(repository.open(blob, Constants.OBJ_BLOB).getCachedBytes(SNAPSHOT_MAX_FILE_BYTES));
+        }
+    }
+
     public static List<Branch> branches(File folder) throws IOException, GitAPIException {
         try (Git git = Git.open(folder)) {
             String current = git.getRepository().getBranch();
@@ -709,6 +863,8 @@ public final class GitOps {
             if (repository.exactRef(Constants.R_HEADS + name) == null) {
                 throw new IllegalArgumentException("No branch named " + name);
             }
+            // The files are about to be rewritten: keep how they are first.
+            snapshot(repository, "Before switching to " + name);
             CheckoutCommand checkout = git.checkout().setName(name);
             try {
                 checkout.call();

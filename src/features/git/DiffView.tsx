@@ -116,9 +116,7 @@ export function DiffView({
   const { selection, onSelect } = picking ?? NOT_PICKING;
   const readOnly = picking === undefined;
   const { diff, error } = useDiff(path, file, commit);
-  const fontSize = useCodeFontSize();
   const showSnackbar = useSnackbar();
-  const scrollRef = useRef<HTMLDivElement>(null);
   useBackHandler(true, onClose);
 
   // Lines picked on what the file was before it changed again no longer mean the same lines.
@@ -130,41 +128,10 @@ export function DiffView({
     }
   }, [readOnly, version, selection, onSelect, showSnackbar, file]);
 
-  const rows = useMemo<Row[]>(
-    () =>
-      (diff?.hunks ?? []).flatMap((hunk): Row[] => [
-        { kind: 'hunk', hunk, lines: hunk.lines.flatMap((line) => (line.index === null ? [] : [line.index])) },
-        ...hunk.lines.map((line): Row => ({ kind: 'line', line })),
-      ]),
-    [diff],
-  );
   const excluded = diff ? excludedLines(diff, selection) : new Set<number>();
   const changed = diff ? changedLines(diff) : [];
-  const added = changed.filter((line) => line.kind === 'added').length;
-  const lastLine = diff?.hunks.at(-1);
-  const digits = String(
-    Math.max(
-      lastLine ? lastLine.oldStart + lastLine.oldLines : 0,
-      lastLine ? lastLine.newStart + lastLine.newLines : 0,
-    ),
-  ).length;
-  const lineHeight = Math.round(fontSize * 1.6);
   const toggle = (lines: readonly number[]) => diff && onSelect(toggleLines(diff, selection, lines));
-
-  // eslint-disable-next-line react-hooks/incompatible-library -- the virtualizer is read during render by design
-  const virtualizer = useVirtualizer({
-    count: rows.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: (index) => (rows[index].kind === 'hunk' ? 40 : lineHeight),
-    overscan: 20,
-  });
-
-  const counts = (
-    <>
-      <span className={styles.countAdded}>+{added}</span>{' '}
-      <span className={styles.countRemoved}>−{changed.length - added}</span>
-    </>
-  );
+  const counts = diff ? <DiffCounts diff={diff} /> : null;
   const lineText =
     diff && !diff.binary && !diff.tooLarge && changed.length > 0 ? (
       readOnly ? (
@@ -221,7 +188,7 @@ export function DiffView({
             Reading the diff
           </p>
         )
-      ) : diff.binary || diff.tooLarge || rows.length === 0 ? (
+      ) : diff.binary || diff.tooLarge || diff.hunks.length === 0 ? (
         <div className={styles.noChanges}>
           <p className="title">
             {diff.binary ? 'Binary file' : diff.tooLarge ? 'Too large to show' : 'No changes to the text'}
@@ -235,43 +202,96 @@ export function DiffView({
           </p>
         </div>
       ) : (
-        <div
-          ref={scrollRef}
-          className={styles.diffScroll}
-          style={
-            { '--code-size': `${fontSize}px`, '--code-line': `${lineHeight}px`, '--digits': digits } as CSSProperties
-          }
-        >
-          <div className={styles.diffRows} style={{ height: virtualizer.getTotalSize() }}>
-            {virtualizer.getVirtualItems().map((item) => {
-              const row = rows[item.index];
-              return (
-                <div
-                  key={item.key}
-                  ref={virtualizer.measureElement}
-                  data-index={item.index}
-                  className={styles.diffRow}
-                  style={{ transform: `translateY(${item.start}px)` }}
-                >
-                  {row.kind === 'hunk' ? (
-                    <HunkHeader
-                      hunk={row.hunk}
-                      lines={row.lines}
-                      excluded={excluded}
-                      onToggle={readOnly ? undefined : toggle}
-                    />
-                  ) : (
-                    <LineRow line={row.line} excluded={excluded} onToggle={readOnly ? undefined : toggle} />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        <DiffLines diff={diff} excluded={excluded} onToggle={readOnly ? undefined : toggle} />
       )}
     </div>
   );
 }
+
+/** "+3 −1": a diff's added and removed lines, in git's colors. */
+export function DiffCounts({ diff }: { diff: FileDiff }) {
+  const changed = changedLines(diff);
+  const added = changed.filter((line) => line.kind === 'added').length;
+  return (
+    <>
+      <span className={styles.countAdded}>+{added}</span>{' '}
+      <span className={styles.countRemoved}>−{changed.length - added}</span>
+    </>
+  );
+}
+
+/**
+ * A diff's hunks, one column, virtualized for long files, at the editor's
+ * font size. With [onToggle], changed lines and hunk headers are buttons
+ * that take lines in or out ([excluded] are out); without it, only to read.
+ */
+export function DiffLines({
+  diff,
+  excluded = NONE_EXCLUDED,
+  onToggle,
+}: {
+  diff: FileDiff;
+  excluded?: ReadonlySet<number>;
+  onToggle?: (lines: readonly number[]) => void;
+}) {
+  const fontSize = useCodeFontSize();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const rows = useMemo<Row[]>(
+    () =>
+      diff.hunks.flatMap((hunk): Row[] => [
+        { kind: 'hunk', hunk, lines: hunk.lines.flatMap((line) => (line.index === null ? [] : [line.index])) },
+        ...hunk.lines.map((line): Row => ({ kind: 'line', line })),
+      ]),
+    [diff],
+  );
+  const lastLine = diff.hunks.at(-1);
+  const digits = String(
+    Math.max(
+      lastLine ? lastLine.oldStart + lastLine.oldLines : 0,
+      lastLine ? lastLine.newStart + lastLine.newLines : 0,
+    ),
+  ).length;
+  const lineHeight = Math.round(fontSize * 1.6);
+
+  // eslint-disable-next-line react-hooks/incompatible-library -- the virtualizer is read during render by design
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (index) => (rows[index].kind === 'hunk' ? 40 : lineHeight),
+    overscan: 20,
+  });
+
+  return (
+    <div
+      ref={scrollRef}
+      className={styles.diffScroll}
+      style={{ '--code-size': `${fontSize}px`, '--code-line': `${lineHeight}px`, '--digits': digits } as CSSProperties}
+    >
+      <div className={styles.diffRows} style={{ height: virtualizer.getTotalSize() }}>
+        {virtualizer.getVirtualItems().map((item) => {
+          const row = rows[item.index];
+          return (
+            <div
+              key={item.key}
+              ref={virtualizer.measureElement}
+              data-index={item.index}
+              className={styles.diffRow}
+              style={{ transform: `translateY(${item.start}px)` }}
+            >
+              {row.kind === 'hunk' ? (
+                <HunkHeader hunk={row.hunk} lines={row.lines} excluded={excluded} onToggle={onToggle} />
+              ) : (
+                <LineRow line={row.line} excluded={excluded} onToggle={onToggle} />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+const NONE_EXCLUDED: ReadonlySet<number> = new Set();
 
 function HunkHeader({
   hunk,

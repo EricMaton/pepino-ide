@@ -217,3 +217,43 @@ describe('memory git engine: history', () => {
     await expect(git.commitChanges('app', 'nope')).rejects.toThrow('No commit');
   });
 });
+
+describe('memory git engine: snapshots', () => {
+  beforeEach(async () => {
+    await git.init('app');
+    await git.setIdentity({ name: 'Pepino', email: 'me@pepino.dev' });
+  });
+
+  it('records the files without touching history or changes, once per state', async () => {
+    await space.writeTextFile('app/a.txt', 'v1\n');
+    const changes = await git.status('app');
+    const first = await git.snapshot('app', 'Before editing a.txt');
+    expect(await git.snapshot('app', 'Again')).toBe(first);
+    expect(await git.status('app')).toEqual(changes);
+    expect(await git.log('app')).toEqual([]);
+    expect(await git.snapshotFile('app', first, 'a.txt')).toBe('v1\n');
+    expect(await git.snapshotFile('app', first, 'missing.txt')).toBeNull();
+  });
+
+  it('lists each version of a file once, newest first', async () => {
+    await space.writeTextFile('app/a.txt', 'v1\n');
+    await git.snapshot('app', 'one');
+    await space.writeTextFile('app/b.txt', 'other\n');
+    await git.snapshot('app', 'b changed');
+    await space.writeTextFile('app/a.txt', 'v2\n');
+    await git.snapshot('app', 'three');
+    const versions = await git.snapshotVersions('app', 'a.txt');
+    expect(versions.map((version) => version.reason)).toEqual(['three', 'b changed']);
+    expect(await git.snapshotFile('app', versions[1].id, 'a.txt')).toBe('v1\n');
+  });
+
+  it('takes one before switching branch', async () => {
+    await space.writeTextFile('app/a.txt', 'main\n');
+    await git.commit('app', { message: 'first', paths: ['a.txt'] });
+    await git.createBranch('app', 'feature');
+    await space.writeTextFile('app/notes.txt', 'uncommitted\n');
+    await git.checkout('app', 'main');
+    const [version] = await git.snapshotVersions('app', 'notes.txt');
+    expect(version.reason).toBe('Before switching to main');
+  });
+});

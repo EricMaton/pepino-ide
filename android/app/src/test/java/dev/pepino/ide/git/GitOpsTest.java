@@ -552,6 +552,72 @@ public class GitOpsTest {
         assertThrows(IllegalArgumentException.class, () -> GitOps.commitChanges(app, "0000000000"));
     }
 
+    @Test
+    public void snapshotRecordsTheWorkingTreeWithoutTouchingTheRepository() throws Exception {
+        File app = project("app");
+        GitOps.init(app);
+        write(app, "a.txt", "committed\n");
+        GitOps.commit(app, "First", Collections.singletonList("a.txt"), ME);
+        write(app, "a.txt", "edited\n");
+        write(app, "src/new.ts", "untracked\n");
+        write(app, ".gitignore", "build/\n");
+        write(app, "build/out.js", "ignored\n");
+        write(app, "node_modules/dep/index.js", "skipped\n");
+        write(app, ".pepino/snapshots/x@1.snap", "pepino's own\n");
+        List<GitOps.FileChange> before = GitOps.status(app);
+
+        String id = GitOps.snapshot(app, "Before editing a.txt");
+
+        assertEquals("edited\n", GitOps.snapshotFile(app, id, "a.txt"));
+        assertEquals("untracked\n", GitOps.snapshotFile(app, id, "src/new.ts"));
+        assertNull(GitOps.snapshotFile(app, id, "build/out.js"));
+        assertNull(GitOps.snapshotFile(app, id, "node_modules/dep/index.js"));
+        assertNull(GitOps.snapshotFile(app, id, ".pepino/snapshots/x@1.snap"));
+        // History, branches, the index and the files are as they were
+        assertEquals(before, GitOps.status(app));
+        assertEquals(1, GitOps.log(app, 0, 50).size());
+        assertEquals(1, GitOps.branches(app).size());
+        assertEquals("edited\n", new String(Files.readAllBytes(new File(app, "a.txt").toPath()), StandardCharsets.UTF_8));
+        // nothing changed since: the same snapshot
+        assertEquals(id, GitOps.snapshot(app, "Again"));
+    }
+
+    @Test
+    public void snapshotVersionsListEachVersionOfAFileOnce() throws Exception {
+        File app = project("app");
+        GitOps.init(app);
+        write(app, "a.txt", "v1\n");
+        String first = GitOps.snapshot(app, "one");
+        write(app, "b.txt", "other\n");
+        GitOps.snapshot(app, "b changed, a did not");
+        write(app, "a.txt", "v2\n");
+        String third = GitOps.snapshot(app, "three");
+
+        List<GitOps.SnapshotVersion> versions = GitOps.snapshotVersions(app, "a.txt", 50);
+
+        assertEquals(2, versions.size());
+        assertEquals(third, versions.get(0).id());
+        assertEquals("three", versions.get(0).reason());
+        assertEquals("b changed, a did not", versions.get(1).reason());
+        assertEquals("v1\n", GitOps.snapshotFile(app, versions.get(1).id(), "a.txt"));
+        assertEquals("v1\n", GitOps.snapshotFile(app, first, "a.txt"));
+        assertEquals(Collections.emptyList(), GitOps.snapshotVersions(app, "missing.txt", 50));
+        assertEquals(1, GitOps.snapshotVersions(app, "a.txt", 1).size());
+    }
+
+    @Test
+    public void checkoutTakesASnapshotFirst() throws Exception {
+        File app = repoWithACommit();
+        GitOps.createBranch(app, "feature");
+        write(app, "notes.txt", "uncommitted\n");
+
+        GitOps.checkout(app, "main");
+
+        List<GitOps.SnapshotVersion> versions = GitOps.snapshotVersions(app, "notes.txt", 50);
+        assertEquals(1, versions.size());
+        assertEquals("Before switching to main", versions.get(0).reason());
+    }
+
     private static int countCommits(Git git) throws Exception {
         int count = 0;
         for (Object ignored : git.log().call()) count++;
