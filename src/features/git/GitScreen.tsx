@@ -3,13 +3,14 @@ import { useServices } from '../../app/services';
 import { TopBar } from '../../app/TopBar';
 import { Button, Dialog, TextField } from '../../ui/components';
 import { cx } from '../../ui/cx';
-import { BranchIcon, FolderIcon, PlusIcon } from '../../ui/icons';
+import { BranchIcon, FolderIcon, PlusIcon, ProjectIcon } from '../../ui/icons';
 import { useSnackbar } from '../../ui/useSnackbar';
 import { errorMessage } from '../projects/errors';
 import { isValidEntryName, sortEntries } from '../projects/files';
 import { findRepositories, isReservedName, type ProjectInfo } from '../projects/projects';
 import { useDirectoryListing } from '../projects/useDirectoryListing';
 import { useFolderChanges } from '../projects/useFolderChanges';
+import { BranchesDialog } from './BranchesDialog';
 import { ChangesView } from './ChangesView';
 import type { RepoInfo } from './engine';
 import styles from './GitScreen.module.css';
@@ -264,6 +265,7 @@ function GitProject({ project, onOpen }: { project: ProjectInfo; onOpen: (path: 
   const { git } = useServices();
   const showSnackbar = useSnackbar();
   const [choosing, setChoosing] = useState(false);
+  const [branching, setBranching] = useState(false);
   const [initializing, setInitializing] = useState(false);
   const [tick, setTick] = useState(0);
   // undefined while reading; null when the project is not a repository
@@ -305,18 +307,41 @@ function GitProject({ project, onOpen }: { project: ProjectInfo; onOpen: (path: 
         subtitle={`${project.name} · ${repo === null ? 'NOT A REPOSITORY' : 'REPOSITORY'}`}
         label="Search commands · Git"
       />
-      <button type="button" className={styles.current} onClick={() => setChoosing(true)}>
-        <BranchIcon size={20} />
-        <span className={styles.actionText}>
-          <span className="caption muted">
-            CURRENT REPOSITORY{repo && <span className={styles.branch}> · {repo.branch}</span>}
+      {/* GitHub Desktop's toolbar: the repository, and the branch it is on */}
+      <div className={styles.toolbar}>
+        <button
+          type="button"
+          className={styles.current}
+          aria-label={`Current repository: ${project.name}`}
+          onClick={() => setChoosing(true)}
+        >
+          <ProjectIcon size={20} />
+          <span className={styles.actionText}>
+            <span className="caption muted">REPOSITORY</span>
+            <span className={cx('body', 'ellipsis', styles.repoName)}>{project.name}</span>
           </span>
-          <span className={cx('body', 'ellipsis', styles.repoName)}>{project.name}</span>
-        </span>
-        <span className="muted" aria-hidden>
-          ▾
-        </span>
-      </button>
+          <span className="muted" aria-hidden>
+            ▾
+          </span>
+        </button>
+        {repo && (
+          <button
+            type="button"
+            className={styles.current}
+            aria-label={`Current branch: ${repo.branch}`}
+            onClick={() => setBranching(true)}
+          >
+            <BranchIcon size={20} />
+            <span className={styles.actionText}>
+              <span className="caption muted">BRANCH</span>
+              <span className={cx('body', 'ellipsis', styles.repoName)}>{repo.branch}</span>
+            </span>
+            <span className="muted" aria-hidden>
+              ▾
+            </span>
+          </button>
+        )}
+      </div>
       {repo === undefined ? (
         <span hidden data-loading />
       ) : repo ? (
@@ -329,7 +354,12 @@ function GitProject({ project, onOpen }: { project: ProjectInfo; onOpen: (path: 
               History <span className={cx('caption', styles.soon)}>SOON</span>
             </button>
           </div>
-          <ChangesView path={project.path} branch={repo.branch} onCommitted={() => setTick((value) => value + 1)} />
+          <ChangesView
+            key={repo.branch}
+            path={project.path}
+            branch={repo.branch}
+            onCommitted={() => setTick((value) => value + 1)}
+          />
         </>
       ) : (
         <div className={styles.notRepo}>
@@ -346,6 +376,17 @@ function GitProject({ project, onOpen }: { project: ProjectInfo; onOpen: (path: 
             busy={initializing}
           />
         </div>
+      )}
+      {branching && repo && (
+        <BranchesDialog
+          path={project.path}
+          repo={repo}
+          onClose={() => setBranching(false)}
+          onSwitched={(info) => {
+            setBranching(false);
+            setRepo(info);
+          }}
+        />
       )}
       {choosing && (
         <ChooseRepository

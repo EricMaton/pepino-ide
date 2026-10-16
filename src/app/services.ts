@@ -66,7 +66,7 @@ export function createServices(): Services {
   });
 
   const git = Capacitor.isNativePlatform()
-    ? createNativeGitEngine((path) => events.publish('fs.created', { path }))
+    ? createNativeGitEngine((topic, payload) => events.publish(topic, payload as never))
     : createMemoryGitEngine(projectSpace);
 
   // Recents only listen to the bus: whoever opens a project doesn't need to know about them.

@@ -44,6 +44,12 @@ public class GitPlugin extends Plugin {
         executor.execute(() -> {
             try {
                 call.resolve(work.run());
+            } catch (GitOps.ConflictException e) {
+                JSObject data = new JSObject();
+                data.put("paths", new JSArray(e.paths));
+                call.reject(e.getMessage(), "CONFLICT", e, data);
+            } catch (GitOps.NotMergedBranchException e) {
+                call.reject(e.getMessage(), "NOT_MERGED", e);
             } catch (Exception e) {
                 call.reject(e.getMessage() != null ? e.getMessage() : e.toString(), e);
             }
@@ -134,6 +140,47 @@ public class GitPlugin extends Plugin {
     public void setIdentity(PluginCall call) {
         run(call, () -> {
             GitOps.setIdentity(configFile(), new GitOps.Identity(call.getString("name", ""), call.getString("email", "")));
+            return new JSObject();
+        });
+    }
+
+    @PluginMethod
+    public void branches(PluginCall call) {
+        run(call, () -> {
+            JSArray branches = new JSArray();
+            for (GitOps.Branch branch : GitOps.branches(folder(call))) {
+                JSObject json = new JSObject();
+                json.put("name", branch.name());
+                json.put("current", branch.current());
+                branches.put(json);
+            }
+            JSObject result = new JSObject();
+            result.put("branches", branches);
+            return result;
+        });
+    }
+
+    @PluginMethod
+    public void createBranch(PluginCall call) {
+        run(call, () -> toJson(GitOps.createBranch(folder(call), call.getString("name"))));
+    }
+
+    @PluginMethod
+    public void checkout(PluginCall call) {
+        run(call, () -> {
+            GitOps.Switched switched = GitOps.checkout(folder(call), call.getString("name"));
+            JSObject result = new JSObject();
+            result.put("info", toJson(switched.info()));
+            result.put("written", new JSArray(switched.written()));
+            result.put("removed", new JSArray(switched.removed()));
+            return result;
+        });
+    }
+
+    @PluginMethod
+    public void deleteBranch(PluginCall call) {
+        run(call, () -> {
+            GitOps.deleteBranch(folder(call), call.getString("name"), call.getBoolean("force", false));
             return new JSObject();
         });
     }
