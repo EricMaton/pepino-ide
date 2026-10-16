@@ -9,8 +9,12 @@ import static org.junit.Assert.assertTrue;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.PersonIdent;
+import org.eclipse.jgit.revwalk.RevCommit;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -88,6 +92,115 @@ public class GitOpsTest {
     @Test
     public void initRefusesWhatIsNotAFolder() throws Exception {
         assertThrows(java.io.IOException.class, () -> GitOps.init(new File(space, "missing")));
+    }
+
+    private static final GitOps.Identity ME = new GitOps.Identity("Pepino", "me@pepino.dev");
+
+    private static void write(File folder, String path, String text) throws Exception {
+        File file = new File(folder, path);
+        file.getParentFile().mkdirs();
+        Files.write(file.toPath(), text.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static List<GitOps.FileChange> changes(String... pathKinds) {
+        GitOps.FileChange[] list = new GitOps.FileChange[pathKinds.length / 2];
+        for (int i = 0; i < list.length; i++) list[i] = new GitOps.FileChange(pathKinds[2 * i], pathKinds[2 * i + 1]);
+        return Arrays.asList(list);
+    }
+
+    @Test
+    public void statusListsNewModifiedAndDeletedFilesAgainstTheLastCommit() throws Exception {
+        File app = project("app");
+        GitOps.init(app);
+        write(app, "keep.txt", "1");
+        write(app, "edit.txt", "1");
+        write(app, "gone.txt", "1");
+        GitOps.commit(app, "first", Arrays.asList("keep.txt", "edit.txt", "gone.txt"), ME);
+
+        write(app, "edit.txt", "2");
+        assertTrue(new File(app, "gone.txt").delete());
+        write(app, "src/new.ts", "x");
+
+        assertEquals(changes("edit.txt", "modified", "gone.txt", "deleted", "src/new.ts", "new"), GitOps.status(app));
+    }
+
+    @Test
+    public void pepinoSnapshotsAndIgnoredFilesAreNeverChanges() throws Exception {
+        File app = project("app");
+        GitOps.init(app);
+        write(app, ".pepino/snapshots/a.ts@1", "old");
+        write(app, ".gitignore", "build/\n");
+        write(app, "build/out.js", "x");
+        assertEquals(changes(".gitignore", "new"), GitOps.status(app));
+    }
+
+    @Test
+    public void anExistingRepositoryGetsPepinoExcludedToo() throws Exception {
+        File app = project("app");
+        Git.init().setDirectory(app).call().close();
+        write(app, ".pepino/snapshots/a.ts@1", "old");
+        assertEquals(Collections.emptyList(), GitOps.status(app));
+    }
+
+    @Test
+    public void commitTakesExactlyTheChosenFiles() throws Exception {
+        File app = project("app");
+        GitOps.init(app);
+        write(app, "a.txt", "a");
+        write(app, "b.txt", "b");
+        try (Git git = Git.open(app)) {
+            git.add().addFilepattern("b.txt").call(); // staged before, but not chosen
+        }
+
+        GitOps.CommitResult result = GitOps.commit(app, "Add a\n\nOnly a for now.", Collections.singletonList("a.txt"), ME);
+
+        assertEquals("Add a", result.summary());
+        assertEquals(7, result.id().length());
+        assertEquals(changes("b.txt", "new"), GitOps.status(app));
+        assertEquals(new GitOps.RepoInfo("main", true), GitOps.info(app));
+        try (Git git = Git.open(app)) {
+            RevCommit commit = git.log().call().iterator().next();
+            assertEquals("Add a\n\nOnly a for now.\n", commit.getFullMessage());
+            assertEquals("Pepino", commit.getAuthorIdent().getName());
+            assertEquals("me@pepino.dev", commit.getCommitterIdent().getEmailAddress());
+        }
+    }
+
+    @Test
+    public void commitRecordsADeletion() throws Exception {
+        File app = project("app");
+        GitOps.init(app);
+        write(app, "gone.txt", "1");
+        GitOps.commit(app, "first", Collections.singletonList("gone.txt"), ME);
+        assertTrue(new File(app, "gone.txt").delete());
+
+        GitOps.commit(app, "remove", Collections.singletonList("gone.txt"), ME);
+
+        assertEquals(Collections.emptyList(), GitOps.status(app));
+        try (Git git = Git.open(app)) {
+            assertEquals(2, countCommits(git));
+        }
+    }
+
+    @Test
+    public void commitRefusesNothingToCommit() throws Exception {
+        File app = project("app");
+        GitOps.init(app);
+        write(app, "a.txt", "a");
+        GitOps.commit(app, "first", Collections.singletonList("a.txt"), ME);
+        assertThrows(IllegalArgumentException.class, () -> GitOps.commit(app, "again", Collections.singletonList("a.txt"), ME));
+        assertThrows(IllegalArgumentException.class, () -> GitOps.commit(app, "none", Collections.emptyList(), ME));
+        write(app, "a.txt", "b");
+        assertThrows(IllegalArgumentException.class, () -> GitOps.commit(app, "  ", Collections.singletonList("a.txt"), ME));
+    }
+
+    @Test
+    public void identityIsStoredInTheAppsGitConfig() throws Exception {
+        File config = new File(temp.getRoot(), "home/.gitconfig");
+        assertNull(GitOps.identity(config));
+        GitOps.setIdentity(config, new GitOps.Identity(" Ana ", "ana@example.com "));
+        assertEquals(new GitOps.Identity("Ana", "ana@example.com"), GitOps.identity(config));
+        assertThrows(IllegalArgumentException.class, () -> GitOps.setIdentity(config, new GitOps.Identity("", "x@y")));
     }
 
     private static int countCommits(Git git) throws Exception {

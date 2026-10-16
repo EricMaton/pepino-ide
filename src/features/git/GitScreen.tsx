@@ -10,6 +10,7 @@ import { isValidEntryName, sortEntries } from '../projects/files';
 import { findRepositories, isReservedName, type ProjectInfo } from '../projects/projects';
 import { useDirectoryListing } from '../projects/useDirectoryListing';
 import { useFolderChanges } from '../projects/useFolderChanges';
+import { ChangesView } from './ChangesView';
 import type { RepoInfo } from './engine';
 import styles from './GitScreen.module.css';
 
@@ -22,16 +23,10 @@ interface GitScreenProps {
   project: ProjectInfo | null;
   /** Makes [path] the active project. */
   onOpen: (path: string) => void;
-  /** The git screens still to come, shown for a project that is a repository. */
-  teaser: ReactNode;
 }
 
-export function GitScreen({ project, onOpen, teaser }: GitScreenProps) {
-  return project ? (
-    <GitProject key={project.path} project={project} onOpen={onOpen} teaser={teaser} />
-  ) : (
-    <GitStart onOpen={onOpen} />
-  );
+export function GitScreen({ project, onOpen }: GitScreenProps) {
+  return project ? <GitProject key={project.path} project={project} onOpen={onOpen} /> : <GitStart onOpen={onOpen} />;
 }
 
 /** The local repositories, re-read whenever the top of the space changes. */
@@ -153,8 +148,7 @@ function CreateRepositoryDialog({ onClose, onCreated }: { onClose: () => void; o
     setBusy(true);
     try {
       if (create) await projectSpace.createDirectory(path);
-      const info = await git.init(path);
-      showSnackbar(`Initialized ${path} on ${info.branch}`);
+      await git.init(path);
       onCreated(path);
     } catch (failure) {
       showSnackbar(`Error: ${errorMessage(failure)}`);
@@ -266,15 +260,7 @@ function RepositoryList({
 }
 
 /** The active project: the "Current repository" switcher, then git, or the offer to start it. */
-function GitProject({
-  project,
-  onOpen,
-  teaser,
-}: {
-  project: ProjectInfo;
-  onOpen: (path: string) => void;
-  teaser: ReactNode;
-}) {
+function GitProject({ project, onOpen }: { project: ProjectInfo; onOpen: (path: string) => void }) {
   const { git } = useServices();
   const showSnackbar = useSnackbar();
   const [choosing, setChoosing] = useState(false);
@@ -304,7 +290,6 @@ function GitProject({
       (info) => {
         setInitializing(false);
         setRepo(info);
-        showSnackbar(`Initialized ${project.name} on ${info.branch}`);
       },
       (error: unknown) => {
         setInitializing(false);
@@ -335,7 +320,17 @@ function GitProject({
       {repo === undefined ? (
         <span hidden data-loading />
       ) : repo ? (
-        teaser
+        <>
+          <div className={styles.tabs} role="tablist" aria-label="Repository">
+            <button type="button" role="tab" aria-selected className={cx('label', styles.tab)}>
+              Changes
+            </button>
+            <button type="button" role="tab" aria-selected={false} className={cx('label', styles.tab)} disabled>
+              History <span className={cx('caption', styles.soon)}>SOON</span>
+            </button>
+          </div>
+          <ChangesView path={project.path} branch={repo.branch} onCommitted={() => setTick((value) => value + 1)} />
+        </>
       ) : (
         <div className={styles.notRepo}>
           <span className="label accent">// No git yet</span>

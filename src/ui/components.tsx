@@ -118,10 +118,37 @@ interface TextFieldProps {
   placeholder?: string;
   /** Prompt glyph shown before the input, e.g. '>'. */
   prefix?: string;
+  /** The on-screen keyboard to show, e.g. 'email'. */
+  inputMode?: 'text' | 'email';
+  /** A multi-line field of this many rows (Enter adds a line; [onSubmit] is not called). */
+  rows?: number;
 }
 
-export function TextField({ label, value, onChange, error, autoFocus, onSubmit, placeholder, prefix }: TextFieldProps) {
+export function TextField({
+  label,
+  value,
+  onChange,
+  error,
+  autoFocus,
+  onSubmit,
+  placeholder,
+  prefix,
+  inputMode,
+  rows,
+}: TextFieldProps) {
   const id = useId();
+  const shared = {
+    id,
+    value,
+    placeholder,
+    autoFocus,
+    'data-autofocus': autoFocus || undefined,
+    autoCapitalize: 'off',
+    autoCorrect: 'off',
+    autoComplete: 'off',
+    spellCheck: false,
+    'aria-invalid': Boolean(error),
+  };
   return (
     <div className={styles.field}>
       <label htmlFor={id} className="label muted">
@@ -133,27 +160,28 @@ export function TextField({ label, value, onChange, error, autoFocus, onSubmit, 
             {prefix}
           </span>
         )}
-        <input
-          id={id}
-          className={cx('body', styles.input)}
-          value={value}
-          placeholder={placeholder}
-          onChange={(event) => onChange(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && onSubmit) {
-              event.preventDefault();
-              onSubmit();
-            }
-          }}
-          autoFocus={autoFocus}
-          data-autofocus={autoFocus || undefined}
-          autoCapitalize="off"
-          autoCorrect="off"
-          autoComplete="off"
-          spellCheck={false}
-          enterKeyHint="done"
-          aria-invalid={Boolean(error)}
-        />
+        {rows ? (
+          <textarea
+            {...shared}
+            rows={rows}
+            className={cx('body', styles.input, styles.multiline)}
+            onChange={(event) => onChange(event.target.value)}
+          />
+        ) : (
+          <input
+            {...shared}
+            inputMode={inputMode}
+            className={cx('body', styles.input)}
+            onChange={(event) => onChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && onSubmit) {
+                event.preventDefault();
+                onSubmit();
+              }
+            }}
+            enterKeyHint="done"
+          />
+        )}
       </div>
       {error && <span className={cx('label', styles.fieldError)}>✕ {error}</span>}
     </div>

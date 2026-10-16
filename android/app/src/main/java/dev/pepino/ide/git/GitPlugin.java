@@ -1,11 +1,14 @@
 package dev.pepino.ide.git;
 
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -26,6 +29,11 @@ public class GitPlugin extends Plugin {
 
     private File projectSpace() {
         return new File(getContext().getFilesDir(), "projects");
+    }
+
+    /** The app's own git config (the home folder is the app's files dir, see MainActivity). */
+    private File configFile() {
+        return new File(getContext().getFilesDir(), ".gitconfig");
     }
 
     private File folder(PluginCall call) throws Exception {
@@ -70,6 +78,63 @@ public class GitPlugin extends Plugin {
             JSObject result = new JSObject();
             result.put("info", info == null ? JSObject.NULL : toJson(info));
             return result;
+        });
+    }
+
+    @PluginMethod
+    public void status(PluginCall call) {
+        run(call, () -> {
+            JSArray changes = new JSArray();
+            for (GitOps.FileChange change : GitOps.status(folder(call))) {
+                JSObject json = new JSObject();
+                json.put("path", change.path());
+                json.put("kind", change.kind());
+                changes.put(json);
+            }
+            JSObject result = new JSObject();
+            result.put("changes", changes);
+            return result;
+        });
+    }
+
+    @PluginMethod
+    public void commit(PluginCall call) {
+        run(call, () -> {
+            GitOps.Identity who = GitOps.identity(configFile());
+            if (who == null) throw new IllegalStateException("Set your name and email for commits first");
+            JSArray rawPaths = call.getArray("paths", new JSArray());
+            List<String> paths = new ArrayList<>();
+            for (int i = 0; i < rawPaths.length(); i++) paths.add(rawPaths.getString(i));
+            GitOps.CommitResult commit = GitOps.commit(folder(call), call.getString("message"), paths, who);
+            JSObject result = new JSObject();
+            result.put("id", commit.id());
+            result.put("summary", commit.summary());
+            return result;
+        });
+    }
+
+    @PluginMethod
+    public void identity(PluginCall call) {
+        run(call, () -> {
+            GitOps.Identity identity = GitOps.identity(configFile());
+            JSObject result = new JSObject();
+            if (identity == null) {
+                result.put("identity", JSObject.NULL);
+            } else {
+                JSObject json = new JSObject();
+                json.put("name", identity.name());
+                json.put("email", identity.email());
+                result.put("identity", json);
+            }
+            return result;
+        });
+    }
+
+    @PluginMethod
+    public void setIdentity(PluginCall call) {
+        run(call, () -> {
+            GitOps.setIdentity(configFile(), new GitOps.Identity(call.getString("name", ""), call.getString("email", "")));
+            return new JSObject();
         });
     }
 
