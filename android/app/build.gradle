@@ -53,6 +53,11 @@ dependencies {
 
 apply from: 'capacitor.build.gradle'
 
+// JGit in JUnit as on the phone: without the machine's git config (Git for Windows sets core.autocrlf=true)
+tasks.withType(Test).configureEach {
+    environment 'GIT_CONFIG_NOSYSTEM', '1'
+}
+
 try {
     def servicesJSON = file('google-services.json')
     if (servicesJSON.text) {

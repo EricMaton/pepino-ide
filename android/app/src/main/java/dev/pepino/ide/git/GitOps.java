@@ -37,6 +37,7 @@ import org.eclipse.jgit.dircache.DirCacheIterator;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.CoreConfig.EolStreamType;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
@@ -55,9 +56,12 @@ import org.eclipse.jgit.transport.CredentialsProvider;
 import org.eclipse.jgit.treewalk.EmptyTreeIterator;
 import org.eclipse.jgit.treewalk.FileTreeIterator;
 import org.eclipse.jgit.treewalk.TreeWalk;
+import org.eclipse.jgit.treewalk.WorkingTreeOptions;
 import org.eclipse.jgit.treewalk.filter.NotIgnoredFilter;
+import org.eclipse.jgit.treewalk.filter.PathFilter;
 import org.eclipse.jgit.treewalk.filter.TreeFilter;
 import org.eclipse.jgit.util.FS;
+import org.eclipse.jgit.util.io.EolStreamTypeUtil;
 import org.eclipse.jgit.util.RawParseUtils;
 
 /**
@@ -527,8 +531,37 @@ public final class GitOps {
             }
         }
         if (file.length() > DIFF_MAX_BYTES) return new Sides(old, old, mode, text, true);
-        byte[] now = file.isFile() ? Files.readAllBytes(file.toPath()) : new byte[0];
+        byte[] now = file.isFile() ? checkedIn(repository, path, file) : new byte[0];
         return new Sides(old, now, mode, text && !RawText.isBinary(old) && !RawText.isBinary(now), false);
+    }
+
+    /**
+     * [file] as a commit would store it: with .gitattributes' line endings
+     * applied (`*.bat text eol=crlf` is CRLF on disk, LF in git), so a diff
+     * shows what changed, not every line of a CRLF file.
+     */
+    private static byte[] checkedIn(Repository repository, String path, File file) throws IOException {
+        try (TreeWalk walk = new TreeWalk(repository)) {
+            walk.setOperationType(TreeWalk.OperationType.CHECKIN_OP);
+            walk.addTree(new FileTreeIterator(repository));
+            walk.setFilter(PathFilter.create(path));
+            walk.setRecursive(true);
+            while (walk.next()) {
+                if (!walk.getPathString().equals(path)) continue;
+                EolStreamType eol = EolStreamTypeUtil.detectStreamType(
+                    TreeWalk.OperationType.CHECKIN_OP,
+                    repository.getConfig().get(WorkingTreeOptions.KEY),
+                    walk.getAttributes()
+                );
+                try (InputStream in = EolStreamTypeUtil.wrapInputStream(Files.newInputStream(file.toPath()), eol)) {
+                    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+                    byte[] buffer = new byte[8192];
+                    for (int n; (n = in.read(buffer)) != -1; ) bytes.write(buffer, 0, n);
+                    return bytes.toByteArray();
+                }
+            }
+        }
+        return Files.readAllBytes(file.toPath());
     }
 
     /**
@@ -1026,12 +1059,32 @@ public final class GitOps {
             } catch (CheckoutConflictException e) {
                 throw new ConflictException(e.getConflictingPaths());
             }
-            return new Switched(
-                info(repository),
-                new ArrayList<>(checkout.getResult().getModifiedList()),
-                new ArrayList<>(checkout.getResult().getRemovedList())
-            );
+            List<String> written = new ArrayList<>(checkout.getResult().getModifiedList());
+            List<String> removed = new ArrayList<>(checkout.getResult().getRemovedList());
+            rewriteWithNewAttributes(git, written, removed);
+            return new Switched(info(repository), written, removed);
         }
+    }
+
+    /**
+     * JGit writes a branch's files with the line endings of the .gitattributes
+     * on disk before the switch, git with the new branch's: going to a branch
+     * without `*.bat eol=crlf` wrote its .bat files CRLF, and they showed as
+     * changed. When a switch changes a .gitattributes, the files it wrote are
+     * written again from the index, now under the new rules. They are the
+     * branch's own, never the user's changes.
+     */
+    private static void rewriteWithNewAttributes(Git git, List<String> written, List<String> removed) throws GitAPIException {
+        boolean attributesChanged = false;
+        for (List<String> paths : List.of(written, removed)) {
+            for (String path : paths) {
+                if (path.equals(Constants.DOT_GIT_ATTRIBUTES) || path.endsWith("/" + Constants.DOT_GIT_ATTRIBUTES)) {
+                    attributesChanged = true;
+                }
+            }
+        }
+        if (!attributesChanged || written.isEmpty()) return;
+        git.checkout().addPaths(written).call();
     }
 
     /** Deletes branch [name], never the current one; with commits on no other branch it needs [force]. */
