@@ -82,8 +82,14 @@ El código del spike está en la rama
   paquetes (habría que reempaquetar una y llevar dos motores en el APK), y
   Play no admite código distinto por versión de Android dentro de un AAB.
   Lo que se pierde es el clone superficial (`setDepth`, desde JGit 6.3), con el
-  que se tomaron las medidas de clone de arriba. Se revisa en el Sprint 4 (#29,
-  #31), y la salida sería subir minSdk a 33 y volver a JGit 6.
+  que se tomaron las medidas de clone de arriba. **Clonar (#32) trae el
+  historial entero** y todas las ramas como `origin/…`. Se mantiene así:
+  un clone completo además deja ver History y cambiar de rama sin red. Si
+  los repos grandes tardan demasiado, la salida sería subir minSdk a 33 y
+  volver a JGit 6.
+- Clonar usa el token del Keystore como contraseña (`x-access-token`) solo
+  hacia `https://github.com/`; nunca va en la URL ni pasa por el WebView.
+  Un clone fallido o cancelado borra lo que había escrito.
 - El APK de depuración pasa de 5,1 a 9,9 MB. En release, R8 recortará la
   parte de JGit que no se use; hay que añadir reglas `-keep` para lo que se
   carga por reflexión.

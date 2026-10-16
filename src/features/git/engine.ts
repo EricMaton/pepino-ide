@@ -1,6 +1,6 @@
-import { registerPlugin } from '@capacitor/core';
+import { type PluginListenerHandle, registerPlugin } from '@capacitor/core';
 import { ProjectSpaceError } from '../projects/errors';
-import { isWithin, joinPath, parentPath, resolveInRoot } from '../projects/paths';
+import { basename, isWithin, joinPath, parentPath, resolveInRoot } from '../projects/paths';
 import { canBeProject, GIT_DIR, isRepository, MARKER_DIR } from '../projects/projects';
 import type { FsEvents } from '../projects/observed';
 import type { ProjectSpace } from '../projects/projectSpace';
@@ -78,12 +78,33 @@ export interface Branch {
 
 /**
  * A git failure the UI handles: switching branch would overwrite uncommitted
- * changes to [paths], a branch to delete has commits on no other branch, or
- * [paths] changed after their lines were picked for a commit.
+ * changes to [paths] (CONFLICT), a branch to delete has commits on no other
+ * branch (NOT_MERGED), [paths] changed after their lines were picked for a
+ * commit (STALE); or talking to GitHub (#32): the user stopped it
+ * (CANCELLED), GitHub refused the sign-in (UNAUTHORIZED), no connection
+ * (NETWORK).
  */
+export type GitErrorCode = 'CONFLICT' | 'NOT_MERGED' | 'STALE' | 'CANCELLED' | 'UNAUTHORIZED' | 'NETWORK';
+
+const GIT_ERROR_CODES: readonly GitErrorCode[] = [
+  'CONFLICT',
+  'NOT_MERGED',
+  'STALE',
+  'CANCELLED',
+  'UNAUTHORIZED',
+  'NETWORK',
+];
+
+/** How a clone goes: the step git is on ("Receiving objects"…), and how far; [total] is 0 when unknown. */
+export interface CloneProgress {
+  task: string;
+  done: number;
+  total: number;
+}
+
 export class GitError extends Error {
   constructor(
-    readonly code: 'CONFLICT' | 'NOT_MERGED' | 'STALE',
+    readonly code: GitErrorCode,
     message: string,
     readonly paths: readonly string[] = [],
   ) {
@@ -144,6 +165,14 @@ export interface GitEngine {
   checkout(path: string, name: string): Promise<RepoInfo>;
   /** Deletes [name] (never the current branch); NOT_MERGED unless [force] when its commits are on no other branch. */
   deleteBranch(path: string, name: string, options?: { force?: boolean }): Promise<void>;
+  /**
+   * Clones the GitHub repository at [url] into [path], a new or empty folder,
+   * on its default branch, with the signed-in user's token (which stays
+   * native). [onProgress] follows it. A failed or cancelled clone leaves
+   * nothing behind; [cancelClone] makes it reject with CANCELLED.
+   */
+  clone(path: string, url: string, onProgress?: (progress: CloneProgress) => void): Promise<RepoInfo>;
+  cancelClone(): Promise<void>;
 }
 
 interface GitPlugin {
@@ -170,6 +199,9 @@ interface GitPlugin {
   createBranch(options: { path: string; name: string }): Promise<RepoInfo>;
   checkout(options: { path: string; name: string }): Promise<{ info: RepoInfo; written: string[]; removed: string[] }>;
   deleteBranch(options: { path: string; name: string; force: boolean }): Promise<void>;
+  clone(options: { path: string; url: string }): Promise<RepoInfo>;
+  cancelClone(): Promise<void>;
+  addListener(event: 'cloneProgress', listener: (progress: CloneProgress) => void): Promise<PluginListenerHandle>;
 }
 
 const project = (path: string): string => {
@@ -185,9 +217,8 @@ type Announce = <K extends keyof FsEvents>(topic: K, payload: FsEvents[K]) => vo
 /** A plugin rejection with a code the UI handles, as a [GitError]; anything else as it is. */
 function gitError(error: unknown): unknown {
   const { code, message, data } = (error ?? {}) as { code?: string; message?: string; data?: { paths?: string[] } };
-  if (code === 'CONFLICT' || code === 'NOT_MERGED' || code === 'STALE') {
-    return new GitError(code, message ?? code, data?.paths ?? []);
-  }
+  const known = GIT_ERROR_CODES.find((candidate) => candidate === code);
+  if (known) return new GitError(known, message ?? known, data?.paths ?? []);
   return error;
 }
 
@@ -270,6 +301,22 @@ export function createNativeGitEngine(announce: Announce): GitEngine {
         throw gitError(error);
       });
     },
+    async clone(path, url, onProgress) {
+      const folder = project(path);
+      const listening = onProgress ? await git.addListener('cloneProgress', onProgress) : null;
+      try {
+        const info = await git.clone({ path: folder, url }).catch((error: unknown) => {
+          throw gitError(error);
+        });
+        announce('fs.created', { path: folder });
+        return info;
+      } finally {
+        await listening?.remove();
+      }
+    },
+    cancelClone() {
+      return git.cancelClone();
+    },
   };
 }
 
@@ -298,9 +345,10 @@ const hashOf = (text: string): string => {
  * in `.git/pepino-refs.json`. Enough to try the GIT screens with
  * `npm run dev`; the real thing is JGit, tested in JUnit (ADR-006).
  */
-export function createMemoryGitEngine(space: ProjectSpace): GitEngine {
+export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 } = {}): GitEngine {
   let identity: Identity | null = null;
   let commits = 0;
+  let cloneCancelled = false;
   const gitPath = (folder: string, name: string) => joinPath(joinPath(folder, GIT_DIR), name);
 
   const readRefs = async (folder: string): Promise<Record<string, Snapshot>> => {
@@ -597,6 +645,40 @@ export function createMemoryGitEngine(space: ProjectSpace): GitEngine {
       const log = await readLog(folder);
       delete log[name];
       await writeLog(folder, log);
+    },
+
+    async clone(path, url, onProgress) {
+      const folder = project(path);
+      const existing = await space.listDirectory(folder).catch(() => null);
+      if (existing && existing.length > 0) throw new Error(`Already exists and is not empty: ${basename(folder)}`);
+      // The steps JGit goes through, at a pace to watch; cancelling writes nothing
+      cloneCancelled = false;
+      for (const task of ['Receiving objects', 'Resolving deltas', 'Checking out files']) {
+        for (let done = 0; done <= 100; done += 20) {
+          if (cloneCancelled) throw new GitError('CANCELLED', 'Clone cancelled');
+          onProgress?.({ task, done, total: 100 });
+          await new Promise((resolve) => setTimeout(resolve, cloneStepMs));
+        }
+      }
+      const name = basename(url).replace(/\.git$/, '');
+      const owner = basename(parentPath(new URL(url).pathname));
+      const files: Snapshot = {
+        'README.md': `# ${name}\n\nCloned from ${url}\n`,
+        'src/index.ts': `export const hello = '${name}';\n`,
+      };
+      if (!existing) await space.createDirectory(folder);
+      for (const [file, text] of Object.entries(files)) await writeFile(folder, file, text);
+      await engine.init(folder);
+      await writeRefs(folder, { [DEFAULT_BRANCH]: files });
+      const time = Date.now();
+      const id = hashOf(`${url}:${time}`).padStart(8, '0').repeat(5);
+      const entry = { id, summary: 'Initial commit', description: '', author: owner, email: '', time, files };
+      await writeLog(folder, { [DEFAULT_BRANCH]: [entry] });
+      return { branch: DEFAULT_BRANCH, hasCommits: true };
+    },
+
+    async cancelClone() {
+      cloneCancelled = true;
     },
   };
   return engine;

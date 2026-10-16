@@ -85,3 +85,79 @@
 .error p {
   margin: 0;
 }
+
+/* Where the clone goes, as in New repository */
+.location {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding: var(--space-2) 0 var(--space-2) var(--space-3);
+  border: var(--border);
+  background: var(--surface-variant);
+}
+
+.location > svg {
+  flex: none;
+  color: var(--primary);
+}
+
+.locationText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.note {
+  margin: var(--space-3) 0 0;
+}
+
+/* The clone under way: the step, and a bar that fills */
+.cloning {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.cloning p {
+  margin: 0;
+}
+
+.bar {
+  height: 12px;
+  border: var(--border);
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.bar span {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+  transition: width 150ms linear;
+}
+
+/* No total yet: a block that sweeps across */
+.barUnknown span {
+  width: 30%;
+  animation: sweep 1.2s linear infinite;
+}
+
+@keyframes sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(340%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .barUnknown span {
+    width: 100%;
+    animation: none;
+    opacity: 0.4;
+  }
+}

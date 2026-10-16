@@ -21,6 +21,7 @@ import org.eclipse.jgit.api.errors.CheckoutConflictException;
 import org.eclipse.jgit.api.errors.EmptyCommitException;
 import org.eclipse.jgit.api.errors.NotMergedException;
 import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.api.errors.TransportException;
 import org.eclipse.jgit.diff.DiffAlgorithm;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.diff.Edit;
@@ -40,6 +41,7 @@ import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.ObjectLoader;
 import org.eclipse.jgit.lib.PersonIdent;
+import org.eclipse.jgit.lib.ProgressMonitor;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
@@ -48,6 +50,7 @@ import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevTree;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileBasedConfig;
+import org.eclipse.jgit.transport.CredentialsProvider;
 import org.eclipse.jgit.treewalk.EmptyTreeIterator;
 import org.eclipse.jgit.treewalk.FileTreeIterator;
 import org.eclipse.jgit.treewalk.TreeWalk;
@@ -196,6 +199,132 @@ public final class GitOps {
     /** True when [folder] holds a git repository (its own .git, not one of a parent folder). */
     public static boolean isRepository(File folder) {
         return RepositoryCache.FileKey.isGitRepository(new File(folder, Constants.DOT_GIT), FS.DETECTED);
+    }
+
+    /**
+     * Talking to a remote went wrong (#32): "CANCELLED" (the user stopped
+     * it), "UNAUTHORIZED" (the remote refused the credentials), "NETWORK"
+     * (no connection) or "FAILED".
+     */
+    public static final class RemoteException extends IOException {
+        public final String code;
+
+        RemoteException(String code, String message, Throwable cause) {
+            super(message, cause);
+            this.code = code;
+        }
+    }
+
+    /** How a clone goes: [update] as each step advances ([total] 0 when unknown), and whether to stop. */
+    public interface Progress {
+        void update(String task, int done, int total);
+
+        boolean cancelled();
+    }
+
+    /**
+     * Clones [url] into [folder], which must not exist or be empty, checking
+     * out the remote's default branch; every remote branch comes along as
+     * origin/…. JGit 5.13 has no shallow clone (ADR-006): the whole history
+     * comes. A failed or cancelled clone leaves nothing behind.
+     */
+    public static RepoInfo clone(File folder, String url, CredentialsProvider credentials, Progress progress)
+        throws IOException, GitAPIException {
+        String[] existing = folder.list();
+        if (folder.exists() && (existing == null || existing.length > 0)) {
+            throw new IOException("Already exists and is not empty: " + folder.getName());
+        }
+        boolean created = !folder.exists();
+        try (
+            Git git = Git.cloneRepository()
+                .setURI(url)
+                .setDirectory(folder)
+                .setCloneAllBranches(true)
+                .setCredentialsProvider(credentials)
+                .setProgressMonitor(monitor(progress))
+                .call()
+        ) {
+            excludePepino(git.getRepository());
+            return info(git.getRepository());
+        } catch (IOException | GitAPIException | RuntimeException e) {
+            // JGit cleans up after itself too; this also covers a failure after its clone (the exclude)
+            deleteContents(folder);
+            if (created) folder.delete();
+            if (progress.cancelled()) throw new RemoteException("CANCELLED", "Clone cancelled", e);
+            throw remoteFailure(e);
+        }
+    }
+
+    /** JGit's progress as [Progress], at most every 150 ms per step (every object would flood the bridge). */
+    private static ProgressMonitor monitor(Progress progress) {
+        return new ProgressMonitor() {
+            private String task = "";
+            private int total;
+            private int done;
+            private long shown;
+
+            @Override
+            public void start(int totalTasks) {}
+
+            @Override
+            public void beginTask(String title, int totalWork) {
+                task = title;
+                total = totalWork == UNKNOWN ? 0 : totalWork;
+                done = 0;
+                shown = System.currentTimeMillis();
+                progress.update(task, 0, total);
+            }
+
+            @Override
+            public void update(int completed) {
+                done += completed;
+                long now = System.currentTimeMillis();
+                if (now - shown >= 150) {
+                    shown = now;
+                    progress.update(task, done, total);
+                }
+            }
+
+            @Override
+            public void endTask() {
+                progress.update(task, total > 0 ? total : done, total);
+            }
+
+            @Override
+            public boolean isCancelled() {
+                return progress.cancelled();
+            }
+        };
+    }
+
+    /** What a failed fetch or clone was, by what JGit says. */
+    static IOException remoteFailure(Exception e) {
+        if (e instanceof RemoteException) return (RemoteException) e;
+        String message = String.valueOf(e.getMessage());
+        if (e instanceof TransportException) {
+            if (message.contains("not authorized") || message.contains("Authentication is required") || message.contains("401")) {
+                return new RemoteException("UNAUTHORIZED", "GitHub refused the sign-in", e);
+            }
+            for (Throwable cause = e.getCause(); cause != null; cause = cause.getCause()) {
+                if (cause instanceof java.net.UnknownHostException
+                    || cause instanceof java.net.ConnectException
+                    || cause instanceof java.net.SocketTimeoutException
+                    || cause instanceof java.net.NoRouteToHostException) {
+                    return new RemoteException("NETWORK", "Cannot reach GitHub", e);
+                }
+            }
+        }
+        return new RemoteException("FAILED", message, e);
+    }
+
+    /** Deletes what is inside [folder]; a symlink goes, never what it points to. */
+    private static void deleteContents(File folder) {
+        File[] children = folder.listFiles();
+        if (children == null) return;
+        for (File child : children) {
+            if (child.isDirectory() && !Files.isSymbolicLink(child.toPath())) deleteContents(child);
+            child.delete();
+        }
     }
 
     /** Makes [folder] a repository on [DEFAULT_BRANCH]. An existing repository is left as it is. */
