@@ -147,14 +147,75 @@ public class GitHubPlugin extends Plugin {
         int page = call.getInt("page", 1);
         int perPage = call.getInt("perPage", 50);
         run(call, () -> {
-            String token = tokens.read(TOKEN);
-            if (token == null) throw new GitHubAuth.LoginException("UNAUTHORIZED", "Not signed in to GitHub");
-            GitHubApi.Page found = api.repos(token, page, perPage);
+            GitHubApi.Page found = api.repos(signedIn(), page, perPage);
             JSArray repos = new JSArray();
             for (GitHubApi.Repo repo : found.repos()) repos.put(toJson(repo));
             JSObject result = new JSObject();
             result.put("repos", repos);
             result.put("hasMore", found.hasMore());
+            return result;
+        });
+    }
+
+    /** The signed-in user's token; UNAUTHORIZED when signed out. */
+    private String signedIn() throws GitHubAuth.LoginException {
+        String token = tokens.read(TOKEN);
+        if (token == null) throw new GitHubAuth.LoginException("UNAUTHORIZED", "Not signed in to GitHub");
+        return token;
+    }
+
+    private static Object toJson(GitHubApi.PullRequest pull) {
+        if (pull == null) return JSObject.NULL;
+        JSObject json = new JSObject();
+        json.put("number", pull.number());
+        json.put("title", pull.title());
+        json.put("url", pull.url());
+        json.put("draft", pull.draft());
+        return json;
+    }
+
+    /**
+     * For a branch of a GitHub repository (#34): the repository's default
+     * branch, and the branch's open pull request (null when there is none).
+     */
+    @PluginMethod
+    public void pullRequestFor(PluginCall call) {
+        String owner = call.getString("owner", "");
+        String name = call.getString("repo", "");
+        String branch = call.getString("branch", "");
+        run(call, () -> {
+            String token = signedIn();
+            JSObject result = new JSObject();
+            result.put("defaultBranch", api.defaultBranch(token, owner, name));
+            result.put("pullRequest", toJson(api.openPullRequest(token, owner, name, branch)));
+            return result;
+        });
+    }
+
+    /** The repository's branches on GitHub: where a pull request can go. */
+    @PluginMethod
+    public void remoteBranches(PluginCall call) {
+        String owner = call.getString("owner", "");
+        String name = call.getString("repo", "");
+        run(call, () -> {
+            JSObject result = new JSObject();
+            result.put("branches", new JSArray(api.branches(signedIn(), owner, name)));
+            return result;
+        });
+    }
+
+    @PluginMethod
+    public void createPullRequest(PluginCall call) {
+        String owner = call.getString("owner", "");
+        String name = call.getString("repo", "");
+        String head = call.getString("head", "");
+        String base = call.getString("base", "");
+        String title = call.getString("title", "");
+        String body = call.getString("body", "");
+        boolean draft = Boolean.TRUE.equals(call.getBoolean("draft", false));
+        run(call, () -> {
+            JSObject result = new JSObject();
+            result.put("pullRequest", toJson(api.createPullRequest(signedIn(), owner, name, head, base, title, body, draft)));
             return result;
         });
     }

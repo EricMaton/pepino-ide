@@ -130,3 +130,62 @@
 .files li {
   padding: 2px 0;
 }
+
+.action:disabled {
+  cursor: default;
+}
+
+.action:disabled > svg {
+  color: var(--outline);
+}
+
+/* A pull request: where it goes */
+.merge {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0 var(--space-2) var(--space-3);
+  border: var(--border);
+  background: var(--surface-variant);
+}
+
+.merge > svg {
+  flex: none;
+  color: var(--primary);
+}
+
+.error {
+  color: var(--error);
+}
+
+.bases {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--hairline);
+}
+
+.base {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 48px;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-bottom: 1px solid var(--hairline);
+  background: none;
+  color: var(--fg);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.base > svg {
+  flex: none;
+  color: var(--primary);
+}
+
+.base:active,
+.baseCurrent {
+  background: var(--surface-variant);
+  box-shadow: inset 4px 0 0 var(--primary);
+}

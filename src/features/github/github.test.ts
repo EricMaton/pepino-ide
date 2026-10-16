@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createMemoryGitHub, createNativeGitHub, GitHubError, REPOS_PER_PAGE } from './github';
+import { createMemoryGitHub, createNativeGitHub, GitHubError, parseGitHubUrl, REPOS_PER_PAGE } from './github';
 
 const plugin = vi.hoisted(() => ({
   account: vi.fn(),
@@ -9,6 +9,9 @@ const plugin = vi.hoisted(() => ({
   logout: vi.fn(),
   openUrl: vi.fn(),
   repos: vi.fn(),
+  pullRequestFor: vi.fn(),
+  remoteBranches: vi.fn(),
+  createPullRequest: vi.fn(),
 }));
 
 vi.mock('@capacitor/core', () => ({ registerPlugin: () => plugin }));
@@ -88,5 +91,58 @@ describe('memory GitHub (web stand-in)', () => {
     await github.logout();
     expect(await github.account()).toBeNull();
     vi.useRealTimers();
+  });
+});
+
+describe('pull requests', () => {
+  it('reads owner and repository from a GitHub https URL, and nothing else', () => {
+    expect(parseGitHubUrl('https://github.com/EricMaton/pepino-ide.git')).toEqual({
+      owner: 'EricMaton',
+      repo: 'pepino-ide',
+    });
+    expect(parseGitHubUrl('https://github.com/octocat/hello')).toEqual({ owner: 'octocat', repo: 'hello' });
+    expect(parseGitHubUrl('https://github.com/octocat/hello.js/')).toEqual({ owner: 'octocat', repo: 'hello.js' });
+    expect(parseGitHubUrl('https://gitlab.com/octocat/hello.git')).toBeNull();
+    expect(parseGitHubUrl('git@github.com:octocat/hello.git')).toBeNull();
+    expect(parseGitHubUrl(null)).toBeNull();
+  });
+
+  it('the native one asks the plugin, never as a draft, and keeps GitHub’s refusals', async () => {
+    const pull = { number: 12, title: 'Add login', url: 'https://github.com/o/r/pull/12', draft: false };
+    plugin.pullRequestFor.mockResolvedValue({ defaultBranch: 'main', pullRequest: pull });
+    plugin.remoteBranches.mockResolvedValue({ branches: ['main', 'develop'] });
+    plugin.createPullRequest.mockResolvedValue({ pullRequest: pull });
+    const github = createNativeGitHub('client1');
+    const repo = { owner: 'o', repo: 'r' };
+
+    expect(await github.pullRequestFor(repo, 'feature')).toEqual({ defaultBranch: 'main', pullRequest: pull });
+    expect(plugin.pullRequestFor).toHaveBeenCalledWith({ owner: 'o', repo: 'r', branch: 'feature' });
+    expect(await github.remoteBranches(repo)).toEqual(['main', 'develop']);
+    const request = { ...repo, head: 'feature', base: 'main', title: 'Add login', body: '' };
+    expect(await github.createPullRequest(request)).toEqual(pull);
+    expect(plugin.createPullRequest).toHaveBeenCalledWith({ ...request, draft: false });
+
+    plugin.createPullRequest.mockRejectedValue({
+      code: 'INVALID',
+      message: 'A pull request already exists for o:feature.',
+    });
+    await expect(github.createPullRequest(request)).rejects.toMatchObject({
+      code: 'INVALID',
+      message: 'A pull request already exists for o:feature.',
+    });
+  });
+
+  it('the stand-in opens one per branch, and refuses a second', async () => {
+    const github = createMemoryGitHub(0, 0, 0);
+    const repo = { owner: 'octocat', repo: 'hello' };
+    await expect(github.pullRequestFor(repo, 'feature')).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    await github.finishLogin();
+
+    expect(await github.pullRequestFor(repo, 'feature')).toEqual({ defaultBranch: 'main', pullRequest: null });
+    const request = { ...repo, head: 'feature', base: 'main', title: 'Add login', body: 'Why' };
+    const pull = await github.createPullRequest(request);
+    expect(pull).toMatchObject({ number: 1, title: 'Add login' });
+    expect((await github.pullRequestFor(repo, 'feature')).pullRequest).toEqual(pull);
+    await expect(github.createPullRequest(request)).rejects.toBeInstanceOf(GitHubError);
   });
 });
