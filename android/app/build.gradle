@@ -44,6 +44,8 @@ dependencies {
     implementation "org.eclipse.jgit:org.eclipse.jgit:$jgitVersion"
     coreLibraryDesugaring "com.android.tools:desugar_jdk_libs_nio:$desugarJdkLibsVersion"
     testImplementation "junit:junit:$junitVersion"
+    // The real org.json for JUnit: android.jar only has stubs that throw
+    testImplementation "org.json:json:20240303"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')

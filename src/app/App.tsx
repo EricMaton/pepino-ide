@@ -3,6 +3,7 @@ import { Capacitor } from '@capacitor/core';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { folderLabelFor } from '../features/editor/labels';
 import { GitScreen } from '../features/git/GitScreen';
+import { SettingsScreen } from '../features/settings/SettingsScreen';
 import { errorMessage } from '../features/projects/errors';
 import { FileExplorer } from '../features/projects/FileExplorer';
 import { basename, isWithin } from '../features/projects/paths';
@@ -424,6 +425,8 @@ export function App() {
         <main className={styles.content}>
           {destination === 'git' && state === 'ready' ? (
             <GitScreen project={project} onOpen={openProject} />
+          ) : destination === 'settings' ? (
+            <SettingsScreen subtitle={BRAND} />
           ) : current.teaser ? (
             <ComingSoon label={current.label} {...current.teaser} />
           ) : state === 'ready' && showProject && project ? (
