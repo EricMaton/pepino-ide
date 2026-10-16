@@ -26,8 +26,12 @@ const plugin = vi.hoisted(() => ({
   checkout: vi.fn(),
   deleteBranch: vi.fn(),
   clone: vi.fn(),
-  cancelClone: vi.fn(),
+  cancelRemote: vi.fn(),
   addListener: vi.fn(),
+  sync: vi.fn(),
+  fetch: vi.fn(),
+  pull: vi.fn(),
+  push: vi.fn(),
 }));
 
 vi.mock('@capacitor/core', () => ({ registerPlugin: () => plugin }));
@@ -58,11 +62,40 @@ describe('native git engine', () => {
       branch: 'main',
       hasCommits: true,
     });
-    expect(plugin.addListener).toHaveBeenCalledWith('cloneProgress', onProgress);
+    expect(plugin.addListener).toHaveBeenCalledWith('remoteProgress', onProgress);
     expect(plugin.clone).toHaveBeenCalledWith({ path: 'work/hello', url: 'https://github.com/octocat/hello.git' });
     expect(onProgress).toHaveBeenCalledWith({ task: 'Receiving objects', done: 5, total: 10 });
     expect(announce).toHaveBeenCalledWith('fs.created', { path: 'work/hello' });
     expect(remove).toHaveBeenCalled();
+  });
+
+  it('pulls, announcing the files it rewrote, and follows the progress only while it lasts', async () => {
+    const remove = vi.fn();
+    plugin.addListener.mockResolvedValue({ remove });
+    const state = { remote: true, upstream: 'origin/main', ahead: 0, behind: 0 };
+    plugin.pull.mockResolvedValue({ state, written: ['src/a.ts'], removed: ['old.ts'] });
+
+    expect(await git.pull('work/app', vi.fn())).toEqual(state);
+    expect(plugin.pull).toHaveBeenCalledWith({ path: 'work/app' });
+    expect(announce).toHaveBeenCalledWith('fs.written', { path: 'work/app/src/a.ts' });
+    expect(announce).toHaveBeenCalledWith('fs.deleted', { path: 'work/app/old.ts' });
+    expect(remove).toHaveBeenCalled();
+  });
+
+  it('fetch, push and sync go to the plugin; their refusals become GitErrors', async () => {
+    const state = { remote: true, upstream: 'origin/main', ahead: 1, behind: 0 };
+    plugin.sync.mockResolvedValue(state);
+    plugin.fetch.mockResolvedValue(state);
+    expect(await git.sync('app')).toEqual(state);
+    expect(await git.fetch('app')).toEqual(state);
+    expect(plugin.addListener).not.toHaveBeenCalled(); // no progress asked for
+
+    plugin.push.mockRejectedValueOnce({ code: 'REJECTED', message: 'pull first' });
+    await expect(git.push('app')).rejects.toMatchObject({ code: 'REJECTED' });
+    plugin.pull.mockRejectedValueOnce({ code: 'MERGE_CONFLICT', message: 'same lines', data: { paths: ['a.txt'] } });
+    const conflict = await git.pull('app').catch((error: unknown) => error);
+    expect(conflict).toBeInstanceOf(GitError);
+    expect(conflict).toMatchObject({ code: 'MERGE_CONFLICT', paths: ['a.txt'] });
   });
 
   it('turns a failed clone into a GitError, still removing the listener', async () => {

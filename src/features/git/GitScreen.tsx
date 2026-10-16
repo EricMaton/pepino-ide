@@ -21,6 +21,7 @@ import styles from './GitScreen.module.css';
 import { HistoryView } from './HistoryView';
 import { GitMark, LocationDialog } from './LocationDialog';
 import { isGitDir, nameError, shown } from './locations';
+import { SyncBar } from './SyncBar';
 
 /*
  * GIT works like GitHub Desktop on the one active project, which the editor
@@ -568,6 +569,14 @@ function GitProject({ project, onOpen }: { project: ProjectInfo; onOpen: (path: 
           </button>
         )}
       </div>
+      {repo?.hasCommits && (
+        <SyncBar
+          path={project.path}
+          branch={repo.branch}
+          refreshKey={tick}
+          onPulled={() => setTick((value) => value + 1)}
+        />
+      )}
       {repo === undefined ? (
         <span hidden data-loading />
       ) : repo ? (

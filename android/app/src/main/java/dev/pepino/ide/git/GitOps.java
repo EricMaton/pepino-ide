@@ -17,6 +17,8 @@ import java.util.TreeMap;
 import org.eclipse.jgit.api.CheckoutCommand;
 import org.eclipse.jgit.api.CreateBranchCommand;
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.MergeCommand;
+import org.eclipse.jgit.api.MergeResult;
 import org.eclipse.jgit.api.Status;
 import org.eclipse.jgit.api.errors.CheckoutConflictException;
 import org.eclipse.jgit.api.errors.EmptyCommitException;
@@ -35,6 +37,7 @@ import org.eclipse.jgit.dircache.DirCacheEditor;
 import org.eclipse.jgit.dircache.DirCacheEntry;
 import org.eclipse.jgit.dircache.DirCacheIterator;
 import org.eclipse.jgit.errors.ConfigInvalidException;
+import org.eclipse.jgit.lib.BranchTrackingStatus;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.CoreConfig.EolStreamType;
@@ -48,11 +51,17 @@ import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.RepositoryCache;
+import org.eclipse.jgit.lib.StoredConfig;
+import org.eclipse.jgit.merge.MergeStrategy;
+import org.eclipse.jgit.merge.ResolveMerger;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevTree;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileBasedConfig;
 import org.eclipse.jgit.transport.CredentialsProvider;
+import org.eclipse.jgit.transport.PushResult;
+import org.eclipse.jgit.transport.RefSpec;
+import org.eclipse.jgit.transport.RemoteRefUpdate;
 import org.eclipse.jgit.treewalk.EmptyTreeIterator;
 import org.eclipse.jgit.treewalk.FileTreeIterator;
 import org.eclipse.jgit.treewalk.TreeWalk;
@@ -128,16 +137,21 @@ public final class GitOps {
     /** After switching branch: where HEAD is now, and the files the switch wrote or removed (repo-relative). */
     public record Switched(RepoInfo info, List<String> written, List<String> removed) {}
 
-    /** Switching would overwrite uncommitted changes to these files. */
+    /** Switching (or pulling) would overwrite uncommitted changes to these files. */
     public static final class ConflictException extends IllegalStateException {
         public final List<String> paths;
 
         ConflictException(List<String> paths) {
-            super("Commit your changes to " + describe(paths) + " before switching branch");
+            this(paths, "switching branch");
+        }
+
+        /** Uncommitted changes in the way of [action] ("pulling"). */
+        ConflictException(List<String> paths, String action) {
+            super("Commit your changes to " + describe(paths) + " before " + action);
             this.paths = paths;
         }
 
-        private static String describe(List<String> paths) {
+        static String describe(List<String> paths) {
             String first = new File(paths.get(0)).getName();
             return paths.size() == 1 ? first : first + " and " + (paths.size() - 1) + " more";
         }
@@ -337,6 +351,223 @@ public final class GitOps {
         for (File child : children) {
             if (child.isDirectory() && !Files.isSymbolicLink(child.toPath())) deleteContents(child);
             child.delete();
+        }
+    }
+
+    /**
+     * Where the current branch stands against GitHub's (#33): whether the
+     * repository has GitHub as its origin, the branch it follows there
+     * ("origin/main"; null when it is not on GitHub yet), and how many
+     * commits each side has that the other does not, as of the last fetch.
+     */
+    public record SyncState(boolean remote, String upstream, int ahead, int behind) {}
+
+    /** What a pull did: the state after, and the files it wrote or removed (repo-relative). */
+    public record Pulled(SyncState state, List<String> written, List<String> removed) {}
+
+    /** Pulling would merge GitHub's changes into the same lines as this branch's: nothing was changed. */
+    public static final class MergeConflictException extends IllegalStateException {
+        public final List<String> paths;
+
+        MergeConflictException(List<String> paths) {
+            super("GitHub's changes and yours touch the same lines in " + ConflictException.describe(paths));
+            this.paths = paths;
+        }
+    }
+
+    public static SyncState syncState(File folder) throws IOException {
+        try (Git git = Git.open(folder)) {
+            return syncState(git.getRepository());
+        }
+    }
+
+    private static SyncState syncState(Repository repository) throws IOException {
+        boolean remote = repository.getConfig().getSubsections("remote").contains(ORIGIN);
+        BranchTrackingStatus tracking = remote && repository.resolve(Constants.HEAD) != null
+            ? BranchTrackingStatus.of(repository, repository.getBranch())
+            : null;
+        if (tracking == null) return new SyncState(remote, null, 0, 0);
+        return new SyncState(
+            true,
+            Repository.shortenRefName(tracking.getRemoteTrackingBranch()),
+            tracking.getAheadCount(),
+            tracking.getBehindCount()
+        );
+    }
+
+    /** The URL of the repository's origin, or null when it has none. */
+    public static String originUrl(File folder) throws IOException {
+        try (Git git = Git.open(folder)) {
+            return git.getRepository().getConfig().getString("remote", ORIGIN, "url");
+        }
+    }
+
+    private static void requireOrigin(Repository repository) {
+        if (!repository.getConfig().getSubsections("remote").contains(ORIGIN)) {
+            throw new IllegalStateException("This repository is not connected to GitHub");
+        }
+    }
+
+    /** Brings GitHub's branches up to date (origin/…), touching no local branch or file. */
+    public static SyncState fetch(File folder, CredentialsProvider credentials, Progress progress) throws IOException {
+        try (Git git = Git.open(folder)) {
+            requireOrigin(git.getRepository());
+            fetch(git, credentials, progress);
+            return syncState(git.getRepository());
+        }
+    }
+
+    private static void fetch(Git git, CredentialsProvider credentials, Progress progress) throws IOException {
+        try {
+            git.fetch()
+                .setRemote(ORIGIN)
+                .setRemoveDeletedRefs(true)
+                .setCredentialsProvider(credentials)
+                .setProgressMonitor(monitor(progress))
+                .call();
+        } catch (GitAPIException | RuntimeException e) {
+            if (progress.cancelled()) throw new RemoteException("CANCELLED", "Cancelled", e);
+            throw remoteFailure(e);
+        }
+    }
+
+    /**
+     * Fetches and brings GitHub's new commits into the current branch: a
+     * fast-forward, or a merge commit by [who] when both sides have commits.
+     * Nothing changes when the merge would conflict ([MergeConflictException],
+     * tried in memory first) or when uncommitted changes are in the way
+     * ([ConflictException]). The files are snapshotted before they change.
+     */
+    public static Pulled pull(File folder, CredentialsProvider credentials, Progress progress, Identity who)
+        throws IOException, GitAPIException {
+        try (Git git = Git.open(folder)) {
+            Repository repository = git.getRepository();
+            requireOrigin(repository);
+            clearStaleLocks(repository);
+            fetch(git, credentials, progress);
+            SyncState state = syncState(repository);
+            if (state.upstream() == null) throw new IllegalStateException("This branch is not on GitHub yet: publish it first");
+            if (state.behind() == 0) return new Pulled(state, Collections.emptyList(), Collections.emptyList());
+            Ref theirs = repository.exactRef(Constants.R_REMOTES + state.upstream());
+            ObjectId before = repository.resolve(Constants.HEAD);
+            if (state.ahead() > 0) {
+                ResolveMerger trial = (ResolveMerger) MergeStrategy.RECURSIVE.newMerger(repository, true);
+                if (!trial.merge(before, theirs.getObjectId())) {
+                    List<String> paths = new ArrayList<>(new java.util.TreeSet<>(trial.getUnmergedPaths()));
+                    if (paths.isEmpty()) paths.addAll(trial.getFailingPaths().keySet());
+                    throw new MergeConflictException(paths);
+                }
+                if (who == null) throw new IllegalStateException("Set your name and email for commits first: this pull makes a merge commit");
+            }
+            snapshot(repository, "Before pulling " + state.upstream());
+            String message = "Merge " + state.upstream() + " into " + repository.getBranch();
+            MergeResult merged;
+            try {
+                merged = git.merge()
+                    .include(theirs)
+                    .setFastForward(MergeCommand.FastForwardMode.FF)
+                    .setCommit(false)
+                    .setMessage(message)
+                    .call();
+            } catch (CheckoutConflictException e) {
+                // A fast-forward says it this way
+                throw new ConflictException(e.getConflictingPaths(), "pulling");
+            }
+            switch (merged.getMergeStatus()) {
+                case FAST_FORWARD:
+                case ALREADY_UP_TO_DATE:
+                    break;
+                case MERGED_NOT_COMMITTED: {
+                    PersonIdent ident = new PersonIdent(who.name(), who.email());
+                    git.commit().setMessage(message + "\n").setAuthor(ident).setCommitter(ident).call();
+                    break;
+                }
+                case CHECKOUT_CONFLICT:
+                    throw new ConflictException(merged.getCheckoutConflicts(), "pulling");
+                case FAILED:
+                    throw new ConflictException(new ArrayList<>(merged.getFailingPaths().keySet()), "pulling");
+                default:
+                    throw new IllegalStateException("The pull could not finish: " + merged.getMergeStatus());
+            }
+            List<String> written = new ArrayList<>();
+            List<String> removed = new ArrayList<>();
+            changedFiles(repository, before, repository.resolve(Constants.HEAD), written, removed);
+            rewriteWithNewAttributes(git, written, removed);
+            return new Pulled(syncState(repository), written, removed);
+        }
+    }
+
+    /** The files that differ between commits [before] and [after], as written or removed. */
+    private static void changedFiles(Repository repository, ObjectId before, ObjectId after, List<String> written, List<String> removed)
+        throws IOException {
+        try (RevWalk walk = new RevWalk(repository); TreeWalk tree = new TreeWalk(repository)) {
+            tree.addTree(walk.parseCommit(before).getTree());
+            tree.addTree(walk.parseCommit(after).getTree());
+            tree.setRecursive(true);
+            tree.setFilter(TreeFilter.ANY_DIFF);
+            while (tree.next()) {
+                if (tree.getFileMode(1) == FileMode.MISSING) removed.add(tree.getPathString());
+                else written.add(tree.getPathString());
+            }
+        }
+    }
+
+    /**
+     * Pushes the current branch to the one it follows on GitHub. A branch
+     * not there yet is published under its own name and follows it from
+     * then on. When GitHub has commits this branch does not, nothing is
+     * pushed (REJECTED: pull first); any other refusal says GitHub's reason.
+     */
+    public static SyncState push(File folder, CredentialsProvider credentials, Progress progress) throws IOException {
+        try (Git git = Git.open(folder)) {
+            Repository repository = git.getRepository();
+            requireOrigin(repository);
+            if (repository.resolve(Constants.HEAD) == null) throw new IllegalStateException("Make the first commit before pushing");
+            String branch = repository.getBranch();
+            StoredConfig config = repository.getConfig();
+            String merge = ORIGIN.equals(config.getString("branch", branch, "remote"))
+                ? config.getString("branch", branch, "merge")
+                : null;
+            String target = merge != null ? merge : Constants.R_HEADS + branch;
+            Iterable<PushResult> results;
+            try {
+                results = git.push()
+                    .setRemote(ORIGIN)
+                    .setRefSpecs(new RefSpec(Constants.R_HEADS + branch + ":" + target))
+                    .setCredentialsProvider(credentials)
+                    .setProgressMonitor(monitor(progress))
+                    .call();
+            } catch (GitAPIException | RuntimeException e) {
+                if (progress.cancelled()) throw new RemoteException("CANCELLED", "Cancelled", e);
+                throw remoteFailure(e);
+            }
+            for (PushResult result : results) {
+                for (RemoteRefUpdate update : result.getRemoteUpdates()) {
+                    switch (update.getStatus()) {
+                        case OK:
+                        case UP_TO_DATE:
+                            break;
+                        case REJECTED_NONFASTFORWARD:
+                        case REJECTED_REMOTE_CHANGED:
+                            throw new RemoteException("REJECTED", "GitHub has commits this branch does not: pull first, then push", null);
+                        default:
+                            throw new RemoteException(
+                                "FAILED",
+                                update.getMessage() != null
+                                    ? "GitHub refused the push: " + update.getMessage()
+                                    : "GitHub refused the push (" + update.getStatus() + ")",
+                                null
+                            );
+                    }
+                }
+            }
+            if (merge == null) {
+                // Published: the branch follows GitHub's from now on
+                config.setString("branch", branch, "remote", ORIGIN);
+                config.setString("branch", branch, "merge", target);
+                config.save();
+            }
+            return syncState(repository);
         }
     }
 

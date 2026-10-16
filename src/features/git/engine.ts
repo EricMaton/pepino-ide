@@ -82,11 +82,15 @@ export interface Branch {
  * A git failure the UI handles: switching branch would overwrite uncommitted
  * changes to [paths] (CONFLICT), a branch to delete has commits on no other
  * branch (NOT_MERGED), [paths] changed after their lines were picked for a
- * commit (STALE); or talking to GitHub (#32): the user stopped it
+ * commit (STALE); or talking to GitHub (#32, #33): the user stopped it
  * (CANCELLED), GitHub refused the sign-in (UNAUTHORIZED), no connection
- * (NETWORK).
+ * (NETWORK), a pull would merge both sides' changes into the same lines of
+ * [paths] (MERGE_CONFLICT), a push found commits on GitHub this branch does
+ * not have (REJECTED). Pulling with uncommitted changes to [paths] in the
+ * way is a CONFLICT, as when switching branch.
  */
-export type GitErrorCode = 'CONFLICT' | 'NOT_MERGED' | 'STALE' | 'CANCELLED' | 'UNAUTHORIZED' | 'NETWORK';
+export type GitErrorCode =
+  'CONFLICT' | 'NOT_MERGED' | 'STALE' | 'CANCELLED' | 'UNAUTHORIZED' | 'NETWORK' | 'MERGE_CONFLICT' | 'REJECTED';
 
 const GIT_ERROR_CODES: readonly GitErrorCode[] = [
   'CONFLICT',
@@ -95,10 +99,25 @@ const GIT_ERROR_CODES: readonly GitErrorCode[] = [
   'CANCELLED',
   'UNAUTHORIZED',
   'NETWORK',
+  'MERGE_CONFLICT',
+  'REJECTED',
 ];
 
-/** How a clone goes: the step git is on ("Receiving objects"…), and how far; [total] is 0 when unknown. */
-export interface CloneProgress {
+/**
+ * Where the current branch stands against GitHub's, as of the last fetch:
+ * whether the repository has GitHub as its origin ([remote]), the branch it
+ * follows there ("origin/main"; null when it is not on GitHub yet), and how
+ * many commits each side has that the other does not.
+ */
+export interface SyncState {
+  remote: boolean;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+}
+
+/** How a clone, fetch, pull or push goes: the step git is on ("Receiving objects"…), and how far; [total] is 0 when unknown. */
+export interface RemoteProgress {
   task: string;
   done: number;
   total: number;
@@ -175,10 +194,27 @@ export interface GitEngine {
    * Clones the GitHub repository at [url] into [path], a new or empty folder,
    * on its default branch, with the signed-in user's token (which stays
    * native). [onProgress] follows it. A failed or cancelled clone leaves
-   * nothing behind; [cancelClone] makes it reject with CANCELLED.
+   * nothing behind; [cancelRemote] makes it reject with CANCELLED.
    */
-  clone(path: string, url: string, onProgress?: (progress: CloneProgress) => void): Promise<RepoInfo>;
-  cancelClone(): Promise<void>;
+  clone(path: string, url: string, onProgress?: (progress: RemoteProgress) => void): Promise<RepoInfo>;
+  /** Stops the clone, fetch, pull or push in progress: it rejects with CANCELLED. */
+  cancelRemote(): Promise<void>;
+  /** Where the current branch stands against GitHub's, as of the last fetch (no network). */
+  sync(path: string): Promise<SyncState>;
+  /** Brings GitHub's branches up to date, touching no local branch or file. */
+  fetch(path: string, onProgress?: (progress: RemoteProgress) => void): Promise<SyncState>;
+  /**
+   * Fetches and brings GitHub's new commits into the current branch (a
+   * fast-forward, or a merge commit), rewriting the files that change
+   * (announced as fs.* events). Nothing changes when it would conflict
+   * (MERGE_CONFLICT) or uncommitted changes are in the way (CONFLICT).
+   */
+  pull(path: string, onProgress?: (progress: RemoteProgress) => void): Promise<SyncState>;
+  /**
+   * Pushes the current branch to GitHub; one not there yet is published and
+   * follows it from then on. REJECTED when GitHub has commits it does not.
+   */
+  push(path: string, onProgress?: (progress: RemoteProgress) => void): Promise<SyncState>;
 }
 
 interface GitPlugin {
@@ -206,8 +242,12 @@ interface GitPlugin {
   checkout(options: { path: string; name: string }): Promise<{ info: RepoInfo; written: string[]; removed: string[] }>;
   deleteBranch(options: { path: string; name: string; force: boolean }): Promise<void>;
   clone(options: { path: string; url: string }): Promise<RepoInfo>;
-  cancelClone(): Promise<void>;
-  addListener(event: 'cloneProgress', listener: (progress: CloneProgress) => void): Promise<PluginListenerHandle>;
+  cancelRemote(): Promise<void>;
+  sync(options: { path: string }): Promise<SyncState>;
+  fetch(options: { path: string }): Promise<SyncState>;
+  pull(options: { path: string }): Promise<{ state: SyncState; written: string[]; removed: string[] }>;
+  push(options: { path: string }): Promise<SyncState>;
+  addListener(event: 'remoteProgress', listener: (progress: RemoteProgress) => void): Promise<PluginListenerHandle>;
 }
 
 const project = (path: string): string => {
@@ -309,21 +349,44 @@ export function createNativeGitEngine(announce: Announce): GitEngine {
     },
     async clone(path, url, onProgress) {
       const folder = project(path);
-      const listening = onProgress ? await git.addListener('cloneProgress', onProgress) : null;
-      try {
-        const info = await git.clone({ path: folder, url }).catch((error: unknown) => {
-          throw gitError(error);
-        });
-        announce('fs.created', { path: folder });
-        return info;
-      } finally {
-        await listening?.remove();
-      }
+      const info = await remote(onProgress, () => git.clone({ path: folder, url }));
+      announce('fs.created', { path: folder });
+      return info;
     },
-    cancelClone() {
-      return git.cancelClone();
+    cancelRemote() {
+      return git.cancelRemote();
+    },
+    sync(path) {
+      return git.sync({ path: project(path) });
+    },
+    fetch(path, onProgress) {
+      const folder = project(path);
+      return remote(onProgress, () => git.fetch({ path: folder }));
+    },
+    async pull(path, onProgress) {
+      const folder = project(path);
+      const pulled = await remote(onProgress, () => git.pull({ path: folder }));
+      for (const file of pulled.written) announce('fs.written', { path: joinPath(folder, file) });
+      for (const file of pulled.removed) announce('fs.deleted', { path: joinPath(folder, file) });
+      return pulled.state;
+    },
+    push(path, onProgress) {
+      const folder = project(path);
+      return remote(onProgress, () => git.push({ path: folder }));
     },
   };
+
+  /** Runs a remote operation, following its progress while it lasts; its errors as [GitError]s. */
+  async function remote<T>(onProgress: ((progress: RemoteProgress) => void) | undefined, run: () => Promise<T>) {
+    const listening = onProgress ? await git.addListener('remoteProgress', onProgress) : null;
+    try {
+      return await run().catch((error: unknown) => {
+        throw gitError(error);
+      });
+    } finally {
+      await listening?.remove();
+    }
+  }
 }
 
 /** Folders the stand-in never looks into: git's and Pepino's own, and dependencies. */
@@ -354,7 +417,7 @@ const hashOf = (text: string): string => {
 export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 } = {}): GitEngine {
   let identity: Identity | null = null;
   let commits = 0;
-  let cloneCancelled = false;
+  let remoteCancelled = false;
   const gitPath = (folder: string, name: string) => joinPath(joinPath(folder, GIT_DIR), name);
 
   const readRefs = async (folder: string): Promise<Record<string, Snapshot>> => {
@@ -368,6 +431,8 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
     const raw = await space.readTextFile(gitPath(folder, 'pepino-remotes.json')).catch(() => '{}');
     return JSON.parse(raw) as Record<string, Snapshot>;
   };
+  const writeRemotes = (folder: string, remotes: Record<string, Snapshot>) =>
+    space.writeTextFile(gitPath(folder, 'pepino-remotes.json'), JSON.stringify(remotes));
 
   /** Each branch's commits, newest first, with the files as each one left them. */
   type Log = Record<string, (LogEntry & { files: Snapshot })[]>;
@@ -683,10 +748,10 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
       const existing = await space.listDirectory(folder).catch(() => null);
       if (existing && existing.length > 0) throw new Error(`Already exists and is not empty: ${basename(folder)}`);
       // The steps JGit goes through, at a pace to watch; cancelling writes nothing
-      cloneCancelled = false;
+      remoteCancelled = false;
       for (const task of ['Receiving objects', 'Resolving deltas', 'Checking out files']) {
         for (let done = 0; done <= 100; done += 20) {
-          if (cloneCancelled) throw new GitError('CANCELLED', 'Clone cancelled');
+          if (remoteCancelled) throw new GitError('CANCELLED', 'Clone cancelled');
           onProgress?.({ task, done, total: 100 });
           await new Promise((resolve) => setTimeout(resolve, cloneStepMs));
         }
@@ -706,7 +771,7 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
       const entry = { id, summary: 'Initial commit', description: '', author: owner, email: '', time, files };
       // and a branch only on GitHub, to switch to
       const develop: Snapshot = { ...files, 'CHANGELOG.md': '# Changelog\n\n- Work in progress\n' };
-      await space.writeTextFile(gitPath(folder, 'pepino-remotes.json'), JSON.stringify({ develop }));
+      await writeRemotes(folder, { [DEFAULT_BRANCH]: files, develop });
       const ahead = {
         ...entry,
         id: hashOf(`${url}:develop`).padStart(8, '0').repeat(5),
@@ -714,14 +779,175 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
       };
       await writeLog(folder, {
         [DEFAULT_BRANCH]: [entry],
+        [`origin/${DEFAULT_BRANCH}`]: [entry],
         'origin/develop': [{ ...ahead, time: time + 1, files: develop }, entry],
       });
       return { branch: DEFAULT_BRANCH, hasCommits: true };
     },
 
-    async cancelClone() {
-      cloneCancelled = true;
+    async cancelRemote() {
+      remoteCancelled = true;
+    },
+
+    async sync(path) {
+      return syncOf(await repository(path));
+    },
+
+    async fetch(path, onProgress) {
+      const folder = await repository(path);
+      await fetchInto(folder, onProgress);
+      return syncOf(folder);
+    },
+
+    async pull(path, onProgress) {
+      const folder = await repository(path);
+      await fetchInto(folder, onProgress);
+      const state = await syncOf(folder);
+      if (!state.upstream) throw new Error('This branch is not on GitHub yet: publish it first');
+      if (state.behind === 0) return state;
+      const branch = await currentBranch(folder);
+      const [refs, remotes, log, files] = await Promise.all([
+        readRefs(folder),
+        readRemotes(folder),
+        readLog(folder),
+        readFiles(folder),
+      ]);
+      const ours = refs[branch] ?? {};
+      const theirs = remotes[branch];
+      const remoteLog = log[`origin/${branch}`] ?? [];
+      const localIds = new Set((log[branch] ?? []).map((entry) => entry.id));
+      // The last commit both have: what each side changed since
+      const base = remoteLog.find((entry) => localIds.has(entry.id))?.files ?? {};
+      const changed = (side: Snapshot) =>
+        [...new Set([...Object.keys(side), ...Object.keys(base)])].filter((file) => side[file] !== base[file]);
+      const mine = changed(ours);
+      const clash = changed(theirs)
+        .filter((file) => mine.includes(file) && ours[file] !== theirs[file])
+        .sort();
+      if (clash.length > 0) {
+        throw new GitError('MERGE_CONFLICT', `GitHub's changes and yours touch the same lines in ${clash[0]}`, clash);
+      }
+      if (state.ahead > 0 && !identity) {
+        throw new Error('Set your name and email for commits first: this pull makes a merge commit');
+      }
+      const next: Snapshot = { ...theirs };
+      for (const file of mine) {
+        if (file in ours) next[file] = ours[file];
+        else delete next[file];
+      }
+      const differing = [...new Set([...Object.keys(ours), ...Object.keys(next)])].filter(
+        (file) => ours[file] !== next[file],
+      );
+      const inTheWay = differing.filter((file) => files.get(file) !== ours[file]).sort();
+      if (inTheWay.length > 0) {
+        throw new GitError('CONFLICT', `Commit your changes to ${inTheWay[0]} before pulling`, inTheWay);
+      }
+      await engine.snapshot(folder, `Before pulling ${state.upstream}`);
+      for (const file of differing) {
+        if (file in next) await writeFile(folder, file, next[file]);
+        else await space.delete(joinPath(folder, file));
+      }
+      await writeRefs(folder, { ...refs, [branch]: next });
+      const theirsOnly = remoteLog.filter((entry) => !localIds.has(entry.id));
+      const time = Date.now();
+      const entries =
+        state.ahead === 0
+          ? remoteLog
+          : [
+              {
+                id: hashOf(`merge:${folder}:${time}`).padStart(8, '0').repeat(5),
+                summary: `Merge ${state.upstream} into ${branch}`,
+                description: '',
+                author: identity!.name,
+                email: identity!.email,
+                time,
+                files: next,
+              },
+              ...(log[branch] ?? []),
+              ...theirsOnly,
+            ];
+      await writeLog(folder, { ...log, [branch]: entries });
+      return syncOf(folder);
+    },
+
+    async push(path, onProgress) {
+      const folder = await repository(path);
+      // As GitHub does: what it has now decides, not the last fetch
+      await fetchInto(folder, onProgress);
+      const state = await syncOf(folder);
+      if (state.behind > 0) {
+        throw new GitError('REJECTED', 'GitHub has commits this branch does not: pull first, then push');
+      }
+      await remoteSteps(['Counting objects', 'Writing objects'], onProgress);
+      const branch = await currentBranch(folder);
+      const [refs, remotes, log] = await Promise.all([readRefs(folder), readRemotes(folder), readLog(folder)]);
+      if (!(branch in refs)) throw new Error('Make the first commit before pushing');
+      await writeRemotes(folder, { ...remotes, [branch]: refs[branch] });
+      await writeLog(folder, { ...log, [`origin/${branch}`]: log[branch] ?? [] });
+      return syncOf(folder);
     },
   };
+
+  /** The stand-in's GitHub: a clone's branches there ([readRemotes]) and their history as `origin/…` in the log. */
+  async function syncOf(folder: string): Promise<SyncState> {
+    const remote = await space
+      .readTextFile(gitPath(folder, 'pepino-remotes.json'))
+      .then(() => true)
+      .catch(() => false);
+    const [branch, remotes, log] = await Promise.all([currentBranch(folder), readRemotes(folder), readLog(folder)]);
+    if (!remote || !(branch in remotes)) return { remote, upstream: null, ahead: 0, behind: 0 };
+    const local = (log[branch] ?? []).map((entry) => entry.id);
+    const there = (log[`origin/${branch}`] ?? []).map((entry) => entry.id);
+    return {
+      remote,
+      upstream: `origin/${branch}`,
+      ahead: local.filter((id) => !there.includes(id)).length,
+      behind: there.filter((id) => !local.includes(id)).length,
+    };
+  }
+
+  /** Steps at a pace to watch; cancelling stops before anything is written. */
+  async function remoteSteps(tasks: string[], onProgress?: (progress: RemoteProgress) => void) {
+    remoteCancelled = false;
+    for (const task of tasks) {
+      for (let done = 0; done <= 100; done += 25) {
+        if (remoteCancelled) throw new GitError('CANCELLED', 'Cancelled');
+        onProgress?.({ task, done, total: 100 });
+        await new Promise((resolve) => setTimeout(resolve, cloneStepMs));
+      }
+    }
+  }
+
+  /** The first fetch of a branch finds a teammate's commit on GitHub, to try Pull with. */
+  async function fetchInto(folder: string, onProgress?: (progress: RemoteProgress) => void) {
+    const state = await syncOf(folder);
+    if (!state.remote) throw new Error('This repository is not connected to GitHub');
+    await remoteSteps(['Receiving objects'], onProgress);
+    const branch = await currentBranch(folder);
+    const marker = gitPath(folder, `pepino-fetched-${branch.replaceAll('/', '_')}`);
+    if (
+      !state.upstream ||
+      (await space
+        .readTextFile(marker)
+        .then(() => true)
+        .catch(() => false))
+    )
+      return;
+    const [remotes, log] = await Promise.all([readRemotes(folder), readLog(folder)]);
+    const files = { ...remotes[branch], 'NOTES.md': '# Notes\n\nAdded on GitHub by a teammate.\n' };
+    const time = Date.now();
+    const entry = {
+      id: hashOf(`teammate:${folder}:${branch}`).padStart(8, '0').repeat(5),
+      summary: 'Add notes',
+      description: '',
+      author: 'teammate',
+      email: '',
+      time,
+      files,
+    };
+    await writeRemotes(folder, { ...remotes, [branch]: files });
+    await writeLog(folder, { ...log, [`origin/${branch}`]: [entry, ...(log[`origin/${branch}`] ?? [])] });
+    await space.writeTextFile(marker, String(time));
+  }
   return engine;
 }

@@ -13,7 +13,7 @@ import { joinPath } from '../projects/paths';
 import { formatAgo } from '../projects/recents';
 import { useDirectoryListing } from '../projects/useDirectoryListing';
 import styles from './CloneDialog.module.css';
-import { type CloneProgress, GitError } from './engine';
+import { type RemoteProgress, GitError } from './engine';
 import { LocationDialog } from './LocationDialog';
 import { nameError, shown } from './locations';
 
@@ -23,7 +23,7 @@ import { nameError, shown } from './locations';
  * out, the dialog offers to sign in right here.
  */
 
-type Cloning = { kind: 'cloning'; repo: GitHubRepo; path: string; progress: CloneProgress | null; error: unknown };
+type Cloning = { kind: 'cloning'; repo: GitHubRepo; path: string; progress: RemoteProgress | null; error: unknown };
 
 type Step = { kind: 'pick' } | { kind: 'where'; repo: GitHubRepo } | Cloning;
 
@@ -65,7 +65,7 @@ export function CloneRepositoryDialog({
 
   // Closing while cloning stops the clone, which leaves nothing behind
   const close = () => {
-    if (step.kind === 'cloning' && !step.error) void git.cancelClone();
+    if (step.kind === 'cloning' && !step.error) void git.cancelRemote();
     onClose();
   };
 
