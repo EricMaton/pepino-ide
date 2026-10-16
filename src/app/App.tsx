@@ -425,11 +425,7 @@ export function App() {
           <TopBarFrame onScreenSlot={onScreenSlot} onOverlaySlot={onOverlaySlot} />
           <main className={styles.content}>
             {destination === 'git' && state === 'ready' ? (
-              <GitScreen
-                project={project}
-                onOpen={openProject}
-                teaser={<Teaser label={current.label} {...current.teaser!} />}
-              />
+              <GitScreen project={project} onOpen={openProject} />
             ) : current.teaser ? (
               <ComingSoon label={current.label} {...current.teaser} />
             ) : state === 'ready' && showProject && project ? (
