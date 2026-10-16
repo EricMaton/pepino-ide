@@ -38,6 +38,9 @@ decidir cómo se navega entre ellas sin comprometer el futuro.
   (`useBackHandler(enabled, handler)`): los diálogos mientras están abiertos,
   el explorer mientras puede subir, la shell mientras no está en la home. El
   botón back ejecuta el último registrado; si no hay ninguno, sale de la app.
+  En el workspace, back sube un nivel (#122): de un archivo a su árbol (el
+  archivo sigue abierto como pestaña) y del árbol al explorador; cerrar un
+  archivo es siempre la ✕ de su pestaña.
 
 ### Alternativas consideradas
 
@@ -51,8 +54,8 @@ decidir cómo se navega entre ellas sin comprometer el futuro.
 ## Consecuencias
 
 - Cero dependencias nuevas; la shell de navegación es un componente.
-- El back de Android siempre deshace primero lo más interno (diálogo → cajón
-  → pestaña → árbol del workspace → explorador → carpeta → tab → salir), sin
+- El back de Android siempre deshace primero lo más interno (diálogo →
+  archivo → árbol del workspace → explorador → carpeta → tab → salir), sin
   que ninguna pantalla conozca a las demás.
 - Migrar a un router después será barato: `App.tsx` es el único punto de
   acoplamiento.

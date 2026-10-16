@@ -4,6 +4,7 @@ import { useBackHandler } from '../../ui/back';
 import { Button } from '../../ui/components';
 import { cx } from '../../ui/cx';
 import { CloseIcon, FolderIcon, MoreIcon, PlusIcon, TreeIcon } from '../../ui/icons';
+import { navigate } from '../../ui/motion';
 import { useSnackbar } from '../../ui/useSnackbar';
 import { errorMessage } from '../projects/errors';
 import {
@@ -39,11 +40,22 @@ function folderOf(path: string, root: string): string {
   return relative || '/';
 }
 
-/** Side panel laid over the editor with the workspace's file tree: the tree is a tap away from any tab. */
-export function WorkspaceDrawer({ onClose, onOpenFile }: { onClose: () => void; onOpenFile: (path: string) => void }) {
+/**
+ * Side panel laid over the editor with the workspace's file tree: the tree is a tap away from any tab.
+ * Back from it goes up a level ([onBack]: out to the explorer); its close button only hides it.
+ */
+export function WorkspaceDrawer({
+  onClose,
+  onBack,
+  onOpenFile,
+}: {
+  onClose: () => void;
+  onBack: () => void;
+  onOpenFile: (path: string) => void;
+}) {
   const { workspace } = useServices();
   const { root } = useWorkspaceState(workspace);
-  useBackHandler(true, onClose);
+  useBackHandler(true, onBack);
 
   return (
     <>
@@ -51,6 +63,7 @@ export function WorkspaceDrawer({ onClose, onOpenFile }: { onClose: () => void; 
       <aside className={styles.drawer} aria-label="Project files">
         <WorkspaceTree
           onOpenFile={onOpenFile}
+          empty={<EmptyFolder title="Empty project" />}
           header={(createAtRoot) => (
             <header className={styles.header}>
               <div className={styles.heading}>
@@ -71,26 +84,41 @@ export function WorkspaceDrawer({ onClose, onOpenFile }: { onClose: () => void; 
   );
 }
 
-/** The workspace with no file open: its tree takes the whole screen (like VS Code's explorer). */
-export function WorkspaceHome({ onOpenFile }: { onOpenFile: (path: string) => void }) {
+/**
+ * The workspace with no file open. The tree is only ever the panel over the
+ * editor, so here it starts open over an empty editor; closed, it leaves a
+ * way to open it again. Back leaves to the explorer, panel open or not.
+ */
+export function NoFileOpen({ onOpenFile, onLeave }: { onOpenFile: (path: string) => void; onLeave: () => void }) {
+  const [filesOpen, setFilesOpen] = useState(true);
+  // The panel registers its own back (the same) while it is open.
+  useBackHandler(!filesOpen, onLeave);
+  const showFiles = (open: boolean) => navigate('drawer', () => setFilesOpen(open));
+
   return (
-    <div className={styles.home}>
-      <WorkspaceTree
-        onOpenFile={onOpenFile}
-        empty={<EmptyFolder title="Empty project" />}
-        header={(createAtRoot) => (
-          <div className={styles.homeBar}>
-            <TreeIcon size={20} />
-            <span className="label muted">
-              <span className="accent">//</span> Files
-            </span>
-            <span className={styles.homeSpacer} />
-            <Button square aria-label="New file or folder" onClick={createAtRoot}>
-              <PlusIcon size={22} />
-            </Button>
-          </div>
-        )}
-      />
+    <div className={styles.noFile}>
+      <div className={styles.bar}>
+        <Button
+          variant="text"
+          square
+          className={styles.treeButton}
+          aria-label="Project files"
+          onClick={() => showFiles(true)}
+        >
+          <TreeIcon size={20} />
+        </Button>
+      </div>
+      <div className={styles.empty}>
+        <span className={styles.emptyIcon} aria-hidden>
+          <TreeIcon size={48} />
+        </span>
+        <p className="title">No file open</p>
+        <p className="caption muted">Open one from the project&apos;s files.</p>
+        <Button variant="filled" onClick={() => showFiles(true)}>
+          Project files
+        </Button>
+      </div>
+      {filesOpen && <WorkspaceDrawer onClose={() => showFiles(false)} onBack={onLeave} onOpenFile={onOpenFile} />}
     </div>
   );
 }

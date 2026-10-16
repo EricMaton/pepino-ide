@@ -10,7 +10,7 @@ import { type ProjectInfo, readProject } from '../features/projects/projects';
 import { RecentProjects } from '../features/projects/RecentProjects';
 import { useRecentProjects } from '../features/projects/useRecentProjects';
 import { useWorkspaceState } from '../features/workspace/useWorkspace';
-import { WorkspaceHome } from '../features/workspace/WorkspaceDrawer';
+import { NoFileOpen } from '../features/workspace/WorkspaceDrawer';
 import { dispatchBack, useBackHandler } from '../ui/back';
 import { cx } from '../ui/cx';
 import { Button } from '../ui/components';
@@ -198,7 +198,15 @@ export function App() {
       }),
     [],
   );
-  const leaveWorkspace = useCallback(() => navigate('sink', () => setShowProject(false)), []);
+  /** Out to the explorer; [alongside] changes the workspace in the same motion (the editor hiding its tree). */
+  const leaveWorkspace = useCallback(
+    (alongside?: () => void) =>
+      navigate('sink', () => {
+        alongside?.();
+        setShowProject(false);
+      }),
+    [],
+  );
 
   useEffect(() => {
     let active = true;
@@ -375,12 +383,11 @@ export function App() {
     return registry.register({ id: 'project.close', title: `Close project ${project.name}`, run: closeProject });
   }, [registry, project, openFile, closeProject]);
 
-  // Back: innermost handler first (dialogs, the drawer, the editor closing its file, the explorer
-  // going up), then these: the workspace's tree leaves to the explorer, the explorer returns to the
-  // workspace PROJECTS left, other tabs return to PROJECTS; with nothing left the app closes.
+  // Back: innermost handler first (dialogs; then up a level: a workspace file to its tree, the tree
+  // out to the explorer, a loose file closing, the explorer going up), then these: the explorer
+  // returns to the workspace PROJECTS left, other tabs return to PROJECTS; with nothing left the app closes.
   useBackHandler(destination !== HOME, () => setDestination(HOME));
   useBackHandler(inExplorer && homeReturn && project !== null && !looseFile, showWorkspace);
-  useBackHandler(inWorkspace && !openFile, leaveWorkspace);
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     const listener = CapacitorApp.addListener('backButton', () => {
@@ -420,7 +427,12 @@ export function App() {
           ) : current.teaser ? (
             <ComingSoon label={current.label} {...current.teaser} />
           ) : state === 'ready' && showProject && project ? (
-            <WorkspaceScreen project={project} hasOpenFile={tabEditor !== null} onOpenFile={activate} />
+            <WorkspaceScreen
+              project={project}
+              hasOpenFile={tabEditor !== null}
+              onOpenFile={activate}
+              onLeave={() => leaveWorkspace()}
+            />
           ) : state === 'ready' ? (
             <ExplorerScreen
               activeProject={project}
@@ -444,7 +456,12 @@ export function App() {
                 initialViewState={tabEditor.viewState}
                 onViewState={(state) => rememberViewState(tabEditor.path, state)}
                 visible={inWorkspace}
-                tabs={{ files: tabs, onSelect: activate, onClose: (path) => workspace.closeFile(path) }}
+                tabs={{
+                  files: tabs,
+                  onSelect: activate,
+                  onClose: (path) => workspace.closeFile(path),
+                  onLeave: leaveWorkspace,
+                }}
                 onClose={closeActiveTab}
               />
             )}
@@ -574,15 +591,18 @@ function ExplorerScreen({
   );
 }
 
-/** The active project: its tree, until a file opens (the editor lays its tabs over it). */
+/** The active project: an empty editor with its tree laid over it, until a file opens (the editor takes over). */
 function WorkspaceScreen({
   project,
   hasOpenFile,
   onOpenFile,
+  onLeave,
 }: {
   project: ProjectInfo;
   hasOpenFile: boolean;
   onOpenFile: (path: string) => void;
+  /** Out to the explorer (back with no file open). */
+  onLeave: () => void;
 }) {
   const files = useFileSource();
   return (
@@ -594,7 +614,7 @@ function WorkspaceScreen({
         label={`Search commands · ${project.name}`}
         files={files}
       />
-      {!hasOpenFile && <WorkspaceHome key={project.path} onOpenFile={onOpenFile} />}
+      {!hasOpenFile && <NoFileOpen key={project.path} onOpenFile={onOpenFile} onLeave={onLeave} />}
     </>
   );
 }
