@@ -22,7 +22,6 @@ import styles from './App.module.css';
 import { restoreSession } from './restoreSession';
 import { type EditorViewState, withEditorState } from './session';
 import { type AppDestination, DESTINATIONS, HOME } from './destinations';
-import { type Navigation, NavigationContext } from './navigation';
 import { useServices } from './services';
 import { TopBar, TopBarFrame } from './TopBar';
 import { type TopBarSlots, TopBarSlotsContext } from './topBarSlots';
@@ -67,7 +66,7 @@ export function App() {
   const [project, setProject] = useState<ProjectInfo | null>(null);
   // PROJECTS shows the active project's workspace, or the explorer.
   const [showProject, setShowProject] = useState(false);
-  // Reached the explorer with the logo: the system back returns to the workspace.
+  // Reached the explorer from the workspace with PROJECTS: the system back returns to the workspace.
   const [homeReturn, setHomeReturn] = useState(false);
   // The workspace's active tab; the only tab with an editor.
   const [openFile, setOpenFile] = useState<OpenFile | null>(null);
@@ -180,17 +179,16 @@ export function App() {
     else change();
   }, [workspace, syncEditor]);
 
-  /** The logo: the explorer, from anywhere. The active project stays active (and sinks into its strip). */
-  const goHome = useCallback(() => {
-    const fromWorkspace = destination === 'projects' && showProject && project !== null;
+  /** PROJECTS tapped again: the explorer. The active project stays active (and sinks into its strip). */
+  const showExplorer = useCallback(() => {
+    if (!showProject) return;
     const change = () => {
-      setHomeReturn(fromWorkspace);
-      setDestination(HOME);
+      setHomeReturn(project !== null);
       setShowProject(false);
     };
-    if (fromWorkspace) navigate('sink', change);
+    if (project) navigate('sink', change);
     else change();
-  }, [destination, showProject, project]);
+  }, [showProject, project]);
   /** Back into the active project's workspace, rising out of the explorer's strip. */
   const showWorkspace = useCallback(
     () =>
@@ -201,10 +199,6 @@ export function App() {
     [],
   );
   const leaveWorkspace = useCallback(() => navigate('sink', () => setShowProject(false)), []);
-  const navigation = useMemo<Navigation>(
-    () => ({ atHome: destination === HOME && !showProject, goHome }),
-    [destination, showProject, goHome],
-  );
 
   useEffect(() => {
     let active = true;
@@ -383,7 +377,7 @@ export function App() {
 
   // Back: innermost handler first (dialogs, the drawer, the editor closing its file, the explorer
   // going up), then these: the workspace's tree leaves to the explorer, the explorer returns to the
-  // workspace the logo left, other tabs return to PROJECTS; with nothing left the app closes.
+  // workspace PROJECTS left, other tabs return to PROJECTS; with nothing left the app closes.
   useBackHandler(destination !== HOME, () => setDestination(HOME));
   useBackHandler(inExplorer && homeReturn && project !== null && !looseFile, showWorkspace);
   useBackHandler(inWorkspace && !openFile, leaveWorkspace);
@@ -417,78 +411,77 @@ export function App() {
   const tabEditor = openFile && openFile.path !== looseFile?.path ? openFile : null;
 
   return (
-    <NavigationContext value={navigation}>
-      <TopBarSlotsContext value={slots}>
-        <div className={styles.app} data-keyboard-open={keyboardOpen || undefined}>
-          <TopBarFrame onScreenSlot={onScreenSlot} onOverlaySlot={onOverlaySlot} />
-          <main className={styles.content}>
-            {destination === 'git' && state === 'ready' ? (
-              <GitScreen project={project} onOpen={openProject} />
-            ) : current.teaser ? (
-              <ComingSoon label={current.label} {...current.teaser} />
-            ) : state === 'ready' && showProject && project ? (
-              <WorkspaceScreen project={project} hasOpenFile={tabEditor !== null} onOpenFile={activate} />
-            ) : state === 'ready' ? (
-              <ExplorerScreen
-                activeProject={project}
-                activeFile={openFile?.path ?? null}
-                initialStack={initialStacks['']}
-                onStackChange={(stack) => rememberStack('', stack)}
-                onOpenFolder={openProject}
-                onOpenFile={openLoose}
-                onReturn={showWorkspace}
-                onCloseProject={() => navigate('dismiss', closeProject)}
+    <TopBarSlotsContext value={slots}>
+      <div className={styles.app} data-keyboard-open={keyboardOpen || undefined}>
+        <TopBarFrame onScreenSlot={onScreenSlot} onOverlaySlot={onOverlaySlot} />
+        <main className={styles.content}>
+          {destination === 'git' && state === 'ready' ? (
+            <GitScreen project={project} onOpen={openProject} />
+          ) : current.teaser ? (
+            <ComingSoon label={current.label} {...current.teaser} />
+          ) : state === 'ready' && showProject && project ? (
+            <WorkspaceScreen project={project} hasOpenFile={tabEditor !== null} onOpenFile={activate} />
+          ) : state === 'ready' ? (
+            <ExplorerScreen
+              activeProject={project}
+              activeFile={openFile?.path ?? null}
+              initialStack={initialStacks['']}
+              onStackChange={(stack) => rememberStack('', stack)}
+              onOpenFolder={openProject}
+              onOpenFile={openLoose}
+              onReturn={showWorkspace}
+              onCloseProject={() => navigate('dismiss', closeProject)}
+            />
+          ) : (
+            <SpaceStatus state={state} />
+          )}
+          <Suspense fallback={<span hidden data-loading />}>
+            {tabEditor && (
+              <EditorScreen
+                key={tabEditor.id}
+                path={tabEditor.path}
+                folderLabel={tabEditor.folderLabel}
+                initialViewState={tabEditor.viewState}
+                onViewState={(state) => rememberViewState(tabEditor.path, state)}
+                visible={inWorkspace}
+                tabs={{ files: tabs, onSelect: activate, onClose: (path) => workspace.closeFile(path) }}
+                onClose={closeActiveTab}
               />
-            ) : (
-              <SpaceStatus state={state} />
             )}
-            <Suspense fallback={<span hidden data-loading />}>
-              {tabEditor && (
-                <EditorScreen
-                  key={tabEditor.id}
-                  path={tabEditor.path}
-                  folderLabel={tabEditor.folderLabel}
-                  initialViewState={tabEditor.viewState}
-                  onViewState={(state) => rememberViewState(tabEditor.path, state)}
-                  visible={inWorkspace}
-                  tabs={{ files: tabs, onSelect: activate, onClose: (path) => workspace.closeFile(path) }}
-                  onClose={closeActiveTab}
-                />
-              )}
-              {looseFile && (
-                <EditorScreen
-                  key={looseFile.id}
-                  path={looseFile.path}
-                  folderLabel={looseFile.folderLabel}
-                  initialViewState={looseFile.viewState}
-                  onViewState={(state) => rememberViewState(looseFile.path, state)}
-                  visible={inExplorer}
-                  tabs={null}
-                  onClose={closeLoose}
-                />
-              )}
-            </Suspense>
-          </main>
-          <nav className={styles.nav}>
-            {DESTINATIONS.map(({ id, label }) => {
-              const NavIcon = NAV_ICONS[id];
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  className={styles.navItem}
-                  aria-current={id === destination ? 'page' : undefined}
-                  onClick={() => setDestination(id)}
-                >
-                  <NavIcon size={22} />
-                  <span className="label">{label}</span>
-                </button>
-              );
-            })}
-          </nav>
-        </div>
-      </TopBarSlotsContext>
-    </NavigationContext>
+            {looseFile && (
+              <EditorScreen
+                key={looseFile.id}
+                path={looseFile.path}
+                folderLabel={looseFile.folderLabel}
+                initialViewState={looseFile.viewState}
+                onViewState={(state) => rememberViewState(looseFile.path, state)}
+                visible={inExplorer}
+                tabs={null}
+                onClose={closeLoose}
+              />
+            )}
+          </Suspense>
+        </main>
+        <nav className={styles.nav}>
+          {DESTINATIONS.map(({ id, label }) => {
+            const NavIcon = NAV_ICONS[id];
+            return (
+              <button
+                key={id}
+                type="button"
+                className={styles.navItem}
+                aria-current={id === destination ? 'page' : undefined}
+                // PROJECTS again, from inside PROJECTS, goes out to the explorer; any other tap only navigates.
+                onClick={() => (id === HOME && destination === HOME ? showExplorer() : setDestination(id))}
+              >
+                <NavIcon size={22} />
+                <span className="label">{label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      </div>
+    </TopBarSlotsContext>
   );
 }
 
