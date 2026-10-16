@@ -618,6 +618,77 @@ public class GitOpsTest {
         assertEquals("Before switching to main", versions.get(0).reason());
     }
 
+    /** Sprint 3, criterion 1: edit → pick what goes in → commit → see it in History, end to end. */
+    @Test
+    public void theWholeFlowFromAnEditToHistory() throws Exception {
+        File app = project("app");
+        GitOps.init(app);
+        StringBuilder lines = new StringBuilder();
+        for (int i = 1; i <= 20; i++) lines.append("line ").append(i).append('\n');
+        write(app, "a.txt", lines.toString());
+        GitOps.commit(app, "First", Collections.singletonList("a.txt"), ME);
+
+        // Two edits far apart (two hunks), and a new file
+        write(app, "a.txt", lines.toString().replace("line 2\n", "line two\n").replace("line 18\n", "line eighteen\n"));
+        write(app, "notes.txt", "todo\n");
+        assertEquals(changes("a.txt", "modified", "notes.txt", "new"), GitOps.status(app));
+        GitOps.FileDiff diff = GitOps.diff(app, "a.txt");
+        assertEquals(2, diff.hunks().size());
+
+        // Commit only a.txt, and of it only the first hunk
+        java.util.Set<Integer> secondHunk = new java.util.HashSet<>();
+        for (GitOps.DiffLine line : diff.hunks().get(1).lines()) if (line.index() >= 0) secondHunk.add(line.index());
+        GitOps.CommitResult result = GitOps.commit(
+            app,
+            "Rename line two\n\nOnly the first change.",
+            Collections.singletonList("a.txt"),
+            Collections.singletonMap("a.txt", new GitOps.LineExclusion(diff.version(), secondHunk)),
+            ME
+        );
+
+        // History has it, with what it changed
+        List<GitOps.LogEntry> log = GitOps.log(app, 0, 50);
+        assertEquals(2, log.size());
+        GitOps.LogEntry last = log.get(0);
+        assertTrue(last.id().startsWith(result.id()));
+        assertEquals("Rename line two", last.summary());
+        assertEquals("Only the first change.", last.description());
+        assertEquals("Pepino", last.author());
+        assertEquals(changes("a.txt", "modified"), GitOps.commitChanges(app, last.id()));
+        List<GitOps.Hunk> committed = GitOps.commitDiff(app, last.id(), "a.txt").hunks();
+        assertEquals(1, committed.size());
+        assertTrue(committed.get(0).lines().stream().anyMatch(line -> line.text().equals("line two")));
+        assertTrue(committed.get(0).lines().stream().noneMatch(line -> line.text().equals("line eighteen")));
+
+        // What was left out is still a change, the new file untouched
+        assertEquals(changes("a.txt", "modified", "notes.txt", "new"), GitOps.status(app));
+        assertEquals(1, GitOps.diff(app, "a.txt").hunks().size());
+        assertTrue(GitOps.diff(app, "a.txt").hunks().get(0).lines().stream().anyMatch(line -> line.text().equals("line eighteen")));
+    }
+
+    @Test
+    public void locksLeftByAKilledAppDoNotBlockTheNextOperations() throws Exception {
+        File app = repoWithACommit();
+        GitOps.createBranch(app, "feature");
+        GitOps.checkout(app, "main");
+        // What JGit leaves behind when the process dies mid-write.
+        File git = new File(app, ".git");
+        for (String lock : new String[] {"index.lock", "HEAD.lock", "refs/heads/main.lock", "refs/heads/feature.lock"}) {
+            write(git, lock, "half written");
+        }
+        write(app, "a.txt", "after the crash");
+
+        GitOps.commit(app, "after the crash", Collections.singletonList("a.txt"), ME);
+        GitOps.checkout(app, "feature");
+        GitOps.checkout(app, "main");
+        GitOps.snapshot(app, "after the crash");
+
+        assertEquals("after the crash", GitOps.log(app, 0, 1).get(0).summary());
+        for (String lock : new String[] {"index.lock", "HEAD.lock", "refs/heads/main.lock", "refs/heads/feature.lock"}) {
+            assertFalse(lock, new File(git, lock).exists());
+        }
+    }
+
     private static int countCommits(Git git) throws Exception {
         int count = 0;
         for (Object ignored : git.log().call()) count++;

@@ -519,6 +519,7 @@ public final class GitOps {
         if (message == null || message.trim().isEmpty()) throw new IllegalArgumentException("A commit needs a summary");
         try (Git git = Git.open(folder)) {
             Repository repository = git.getRepository();
+            clearStaleLocks(repository);
             excludePepino(repository);
             // Files with some (not all, not none) of their lines picked: committed as built from those lines.
             Map<String, Partial> partials = new TreeMap<>();
@@ -705,6 +706,7 @@ public final class GitOps {
     }
 
     private static String snapshot(Repository repository, String reason) throws IOException {
+        clearStaleLocks(repository);
         excludePepino(repository);
         try (ObjectInserter inserter = repository.newObjectInserter(); RevWalk walk = new RevWalk(repository)) {
             ObjectId tree = workingTree(repository, inserter);
@@ -840,6 +842,7 @@ public final class GitOps {
         }
         try (Git git = Git.open(folder)) {
             Repository repository = git.getRepository();
+            clearStaleLocks(repository);
             if (repository.resolve(Constants.HEAD) == null) {
                 throw new IllegalStateException("Make the first commit before creating branches");
             }
@@ -859,6 +862,7 @@ public final class GitOps {
     public static Switched checkout(File folder, String name) throws IOException, GitAPIException {
         try (Git git = Git.open(folder)) {
             Repository repository = git.getRepository();
+            clearStaleLocks(repository);
             if (name.equals(repository.getBranch())) return new Switched(info(repository), Collections.emptyList(), Collections.emptyList());
             if (repository.exactRef(Constants.R_HEADS + name) == null) {
                 throw new IllegalArgumentException("No branch named " + name);
@@ -882,6 +886,7 @@ public final class GitOps {
     /** Deletes branch [name], never the current one; with commits on no other branch it needs [force]. */
     public static void deleteBranch(File folder, String name, boolean force) throws IOException, GitAPIException {
         try (Git git = Git.open(folder)) {
+            clearStaleLocks(git.getRepository());
             if (name.equals(git.getRepository().getBranch())) {
                 throw new IllegalArgumentException("Switch to another branch before deleting " + name);
             }
@@ -926,6 +931,31 @@ public final class GitOps {
     }
 
     /** Keeps Pepino's own folder out of every change list, without touching the project's .gitignore. */
+    /**
+     * Removes the lock files a killed app left behind (`index.lock`,
+     * `HEAD.lock`, a branch's `.lock`…). JGit writes through them and renames
+     * them into place, so one still there when an operation starts belongs to
+     * a write that never finished, and it would block every later one (Sprint
+     * 3, criterion 3). Safe because Pepino is the only git on its files and
+     * runs one operation at a time (GitPlugin's single git thread).
+     */
+    static void clearStaleLocks(Repository repository) {
+        File dir = repository.getDirectory();
+        for (String name : new String[] {"index.lock", "HEAD.lock", "config.lock", "packed-refs.lock"}) {
+            new File(dir, name).delete();
+        }
+        deleteLocks(new File(dir, Constants.R_REFS));
+    }
+
+    private static void deleteLocks(File folder) {
+        File[] children = folder.listFiles();
+        if (children == null) return;
+        for (File child : children) {
+            if (child.isDirectory()) deleteLocks(child);
+            else if (child.getName().endsWith(".lock")) child.delete();
+        }
+    }
+
     private static void excludePepino(Repository repository) throws IOException {
         File exclude = new File(repository.getDirectory(), "info/exclude");
         String current = exclude.exists() ? new String(Files.readAllBytes(exclude.toPath()), StandardCharsets.UTF_8) : "";

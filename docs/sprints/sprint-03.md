@@ -12,7 +12,7 @@
 - [x] Diff viewer táctil (cambios por archivo, antes/después) y stage por líneas tocando el diff (#25)
 - [x] History: log de commits con autor, fecha, mensaje; cada commit abre sus archivos y su diff (#26)
 - [x] Snapshot automático pre-cambio + integración con el autosave del editor: snapshots en `refs/pepino/snapshots` antes del primer guardado y de cambiar de rama, y "Earlier versions" en el editor para restaurarlos (#27)
-- [ ] Tests de las operaciones core de git
+- [x] Tests de las operaciones core de git (#28): JUnit sobre JGit en la JVM, incluido el flujo completo y matar la app a mitad de commit (`CommitCrashTest`); `GitOpsDeviceTest` en Android (API 26 y 35, a mano: `adb shell am instrument`), y el puente TS al plugin en Vitest
 
 ## Criterios de aceptación
 
