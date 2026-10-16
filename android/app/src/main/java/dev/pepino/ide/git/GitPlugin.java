@@ -341,6 +341,7 @@ public class GitPlugin extends Plugin {
                 JSObject json = new JSObject();
                 json.put("name", branch.name());
                 json.put("current", branch.current());
+                if (branch.remote()) json.put("remote", true);
                 branches.put(json);
             }
             JSObject result = new JSObject();

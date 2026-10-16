@@ -74,6 +74,8 @@ export interface Branch {
   name: string;
   /** The branch HEAD is on. */
   current: boolean;
+  /** Only on GitHub (origin/[name]) so far: switching to it makes the local branch. */
+  remote?: true;
 }
 
 /**
@@ -153,14 +155,18 @@ export interface GitEngine {
   /** The identity commits are made with, or null until it is set. */
   identity(): Promise<Identity | null>;
   setIdentity(identity: Identity): Promise<void>;
-  /** The local branches by name (with no commits yet, just the unborn current one). */
+  /**
+   * The local branches by name (with no commits yet, just the unborn current
+   * one), then GitHub's that are not local yet ([Branch.remote]).
+   */
   branches(path: string): Promise<Branch[]>;
   /** Creates [name] at the current commit and switches to it; uncommitted changes come along. */
   createBranch(path: string, name: string): Promise<RepoInfo>;
   /**
-   * Switches to [name], rewriting the files that differ (announced as fs.*
-   * events). Rejects with a CONFLICT [GitError] when uncommitted changes would
-   * be overwritten; nothing changes then.
+   * Switches to [name] (a remote one gets its local branch first), rewriting
+   * the files that differ (announced as fs.* events). Rejects with a CONFLICT
+   * [GitError] when uncommitted changes would be overwritten; nothing changes
+   * then.
    */
   checkout(path: string, name: string): Promise<RepoInfo>;
   /** Deletes [name] (never the current branch); NOT_MERGED unless [force] when its commits are on no other branch. */
@@ -357,6 +363,11 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
   };
   const writeRefs = (folder: string, refs: Record<string, Snapshot>) =>
     space.writeTextFile(gitPath(folder, 'pepino-refs.json'), JSON.stringify(refs));
+  /** GitHub's branches (origin/…) in a clone, as each one's files. */
+  const readRemotes = async (folder: string): Promise<Record<string, Snapshot>> => {
+    const raw = await space.readTextFile(gitPath(folder, 'pepino-remotes.json')).catch(() => '{}');
+    return JSON.parse(raw) as Record<string, Snapshot>;
+  };
 
   /** Each branch's commits, newest first, with the files as each one left them. */
   type Log = Record<string, (LogEntry & { files: Snapshot })[]>;
@@ -585,9 +596,18 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
 
     async branches(path) {
       const folder = await repository(path);
-      const [refs, current] = await Promise.all([readRefs(folder), currentBranch(folder)]);
+      const [refs, current, remotes] = await Promise.all([
+        readRefs(folder),
+        currentBranch(folder),
+        readRemotes(folder),
+      ]);
       const names = [...new Set([...Object.keys(refs), current])].sort();
-      return names.map((name) => ({ name, current: name === current }));
+      const local: Branch[] = names.map((name) => ({ name, current: name === current }));
+      const remote: Branch[] = Object.keys(remotes)
+        .filter((name) => !names.includes(name))
+        .sort()
+        .map((name) => ({ name, current: false, remote: true }));
+      return [...local, ...remote];
     },
 
     async createBranch(path, rawName) {
@@ -606,9 +626,14 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
 
     async checkout(path, name) {
       const folder = await repository(path);
-      const [refs, current, files] = await Promise.all([readRefs(folder), currentBranch(folder), readFiles(folder)]);
+      const [refs, current, files, remotes] = await Promise.all([
+        readRefs(folder),
+        currentBranch(folder),
+        readFiles(folder),
+        readRemotes(folder),
+      ]);
       if (name === current) return { branch: name, hasCommits: name in refs };
-      const target = refs[name];
+      const target = refs[name] ?? remotes[name];
       if (!target) throw new Error(`No branch named ${name}`);
       const source = refs[current] ?? {};
       const differing = [...new Set([...Object.keys(source), ...Object.keys(target)])].filter(
@@ -624,6 +649,12 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
       for (const file of differing) {
         if (file in target) await writeFile(folder, file, target[file]);
         else await space.delete(joinPath(folder, file));
+      }
+      if (!(name in refs)) {
+        // GitHub's branch gets its local one, with origin's history
+        await writeRefs(folder, { ...refs, [name]: target });
+        const log = await readLog(folder);
+        await writeLog(folder, { ...log, [name]: log[`origin/${name}`] ?? [] });
       }
       await setCurrentBranch(folder, name);
       return { branch: name, hasCommits: true };
@@ -673,7 +704,18 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
       const time = Date.now();
       const id = hashOf(`${url}:${time}`).padStart(8, '0').repeat(5);
       const entry = { id, summary: 'Initial commit', description: '', author: owner, email: '', time, files };
-      await writeLog(folder, { [DEFAULT_BRANCH]: [entry] });
+      // and a branch only on GitHub, to switch to
+      const develop: Snapshot = { ...files, 'CHANGELOG.md': '# Changelog\n\n- Work in progress\n' };
+      await space.writeTextFile(gitPath(folder, 'pepino-remotes.json'), JSON.stringify({ develop }));
+      const ahead = {
+        ...entry,
+        id: hashOf(`${url}:develop`).padStart(8, '0').repeat(5),
+        summary: 'Start the changelog',
+      };
+      await writeLog(folder, {
+        [DEFAULT_BRANCH]: [entry],
+        'origin/develop': [{ ...ahead, time: time + 1, files: develop }, entry],
+      });
       return { branch: DEFAULT_BRANCH, hasCommits: true };
     },
 

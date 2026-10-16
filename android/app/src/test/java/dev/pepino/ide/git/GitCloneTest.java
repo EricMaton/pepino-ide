@@ -108,6 +108,34 @@ public class GitCloneTest {
     }
 
     @Test
+    public void gitHubsOtherBranchesShowAndSwitchingMakesTheLocalOne() throws Exception {
+        File hello = new File(space, "hello");
+        GitOps.clone(hello, origin, null, progress(-1));
+
+        assertEquals(
+            List.of(new GitOps.Branch("trunk", true), new GitOps.Branch("feature", false, true)),
+            GitOps.branches(hello)
+        );
+
+        GitOps.Switched switched = GitOps.checkout(hello, "feature");
+
+        assertEquals(new GitOps.RepoInfo("feature", true), switched.info());
+        assertEquals("wip\n", read(new File(hello, "feature.txt")));
+        assertEquals(3, GitOps.log(hello, 0, 50).size());
+        assertEquals(List.of(new GitOps.Branch("feature", true), new GitOps.Branch("trunk", false)), GitOps.branches(hello));
+        try (Git git = Git.open(hello)) {
+            // It follows GitHub's, for pull and push (#33)
+            assertEquals("origin", git.getRepository().getConfig().getString("branch", "feature", "remote"));
+            assertEquals("refs/heads/feature", git.getRepository().getConfig().getString("branch", "feature", "merge"));
+        }
+
+        // Back and forth, as with any local branch
+        assertEquals("trunk", GitOps.checkout(hello, "trunk").info().branch());
+        assertFalse(new File(hello, "feature.txt").exists());
+        assertThrows(IllegalArgumentException.class, () -> GitOps.checkout(hello, "nowhere"));
+    }
+
+    @Test
     public void clonesIntoAnEmptyFolderButNeverOverAnything() throws Exception {
         File empty = new File(space, "empty");
         assertTrue(empty.mkdirs());

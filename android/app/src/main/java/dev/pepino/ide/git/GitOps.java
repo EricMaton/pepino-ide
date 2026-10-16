@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import org.eclipse.jgit.api.CheckoutCommand;
+import org.eclipse.jgit.api.CreateBranchCommand;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.Status;
 import org.eclipse.jgit.api.errors.CheckoutConflictException;
@@ -110,7 +111,15 @@ public final class GitOps {
     public record SnapshotVersion(String id, String reason, long time) {}
 
     /** A local branch; [current] is the one HEAD is on. */
-    public record Branch(String name, boolean current) {}
+    /** A branch; [remote] when it is only on GitHub (origin/[name]), with no local branch yet. */
+    public record Branch(String name, boolean current, boolean remote) {
+        public Branch(String name, boolean current) {
+            this(name, current, false);
+        }
+    }
+
+    /** The remote a clone sets up, whose branches show next to the local ones. */
+    static final String ORIGIN = "origin";
 
     /** After switching branch: where HEAD is now, and the files the switch wrote or removed (repo-relative). */
     public record Switched(RepoInfo info, List<String> written, List<String> removed) {}
@@ -959,6 +968,12 @@ public final class GitOps {
             names.put(current, true);
             List<Branch> branches = new ArrayList<>();
             names.forEach((name, isCurrent) -> branches.add(new Branch(name, isCurrent)));
+            // GitHub's branches not here yet (after a clone, all but the default one), as GitHub Desktop lists them
+            String prefix = Constants.R_REMOTES + ORIGIN + "/";
+            for (Ref ref : git.getRepository().getRefDatabase().getRefsByPrefix(prefix)) {
+                String name = ref.getName().substring(prefix.length());
+                if (!name.equals(Constants.HEAD) && !names.containsKey(name)) branches.add(new Branch(name, false, true));
+            }
             return branches;
         }
     }
@@ -986,19 +1001,26 @@ public final class GitOps {
     /**
      * Switches to [name]. Uncommitted changes come along when the two branches
      * agree on those files; when they do not, nothing changes and the conflict
-     * names the files (commit them first).
+     * names the files (commit them first). A branch only on GitHub
+     * (origin/[name]) gets its local branch first, tracking it, like
+     * `git checkout name`.
      */
     public static Switched checkout(File folder, String name) throws IOException, GitAPIException {
         try (Git git = Git.open(folder)) {
             Repository repository = git.getRepository();
             clearStaleLocks(repository);
             if (name.equals(repository.getBranch())) return new Switched(info(repository), Collections.emptyList(), Collections.emptyList());
-            if (repository.exactRef(Constants.R_HEADS + name) == null) {
+            boolean local = repository.exactRef(Constants.R_HEADS + name) != null;
+            String remote = Constants.R_REMOTES + ORIGIN + "/" + name;
+            if (!local && repository.exactRef(remote) == null) {
                 throw new IllegalArgumentException("No branch named " + name);
             }
             // The files are about to be rewritten: keep how they are first.
             snapshot(repository, "Before switching to " + name);
             CheckoutCommand checkout = git.checkout().setName(name);
+            if (!local) {
+                checkout.setCreateBranch(true).setStartPoint(remote).setUpstreamMode(CreateBranchCommand.SetupUpstreamMode.TRACK);
+            }
             try {
                 checkout.call();
             } catch (CheckoutConflictException e) {

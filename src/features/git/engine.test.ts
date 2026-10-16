@@ -29,6 +29,24 @@ describe('memory git engine', () => {
     await expect(quick.clone('app', 'https://github.com/octocat/hello.git')).rejects.toThrow(/not empty/);
   });
 
+  it('lists GitHub’s other branches after a clone, and switching makes the local one', async () => {
+    const quick = createMemoryGitEngine(space, { cloneStepMs: 0 });
+    await quick.clone('hello', 'https://github.com/octocat/hello.git');
+    expect(await quick.branches('hello')).toEqual([
+      { name: 'main', current: true },
+      { name: 'develop', current: false, remote: true },
+    ]);
+
+    expect(await quick.checkout('hello', 'develop')).toEqual({ branch: 'develop', hasCommits: true });
+    expect(await space.readTextFile('hello/CHANGELOG.md')).toContain('Work in progress');
+    expect((await quick.log('hello')).map((entry) => entry.summary)).toEqual(['Start the changelog', 'Initial commit']);
+    expect(await quick.branches('hello')).toEqual([
+      { name: 'develop', current: true },
+      { name: 'main', current: false },
+    ]);
+    expect(await quick.status('hello')).toEqual([]);
+  });
+
   it('a cancelled clone writes nothing', async () => {
     const slow = createMemoryGitEngine(space, { cloneStepMs: 5 });
     const cloning = slow.clone('hello', 'https://github.com/octocat/hello.git', () => void slow.cancelClone());

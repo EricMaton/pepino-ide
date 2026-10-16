@@ -473,6 +473,11 @@
   color: var(--error);
 }
 
+/* "// On GitHub": the branches not local yet */
+.branchHeading {
+  margin: var(--space-2) 0 0;
+}
+
 .branchRow {
   display: flex;
   align-items: center;
