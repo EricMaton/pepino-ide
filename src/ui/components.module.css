@@ -69,6 +69,12 @@
   color: var(--error);
 }
 
+/* A filled danger button is the error colour itself, with the text on it */
+.filled.danger:not(:disabled) {
+  background: var(--error);
+  color: var(--on-primary);
+}
+
 /* Full-width row inside a list; text lines up with the surrounding content */
 .listItem {
   justify-content: flex-start;
