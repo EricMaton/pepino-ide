@@ -6,7 +6,11 @@ import { lazy, StrictMode, Suspense } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './app/App';
 import { createServices, ServicesContext } from './app/services';
+import { installMarquee } from './ui/marquee';
 import { SnackbarProvider } from './ui/snackbar';
+
+// Truncated text anywhere shows the rest when held
+installMarquee();
 
 // Component catalog for iterating on the design system: `npm run dev`, then open /#catalog.
 const Catalog = import.meta.env.DEV && location.hash === '#catalog' ? lazy(() => import('./dev/Catalog')) : null;

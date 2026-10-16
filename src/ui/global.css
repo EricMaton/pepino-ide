@@ -98,6 +98,11 @@ input {
   text-overflow: ellipsis;
 }
 
+/* Held to read the rest (ui/marquee.ts): it slides, so no "…" in the way */
+.ellipsis.marquee {
+  text-overflow: clip;
+}
+
 .muted {
   color: var(--outline);
 }
