@@ -23,6 +23,7 @@ final class FakeHttpServer implements AutoCloseable {
     record Response(int status, String body) {}
 
     interface Handler {
+        /** The answer, or null to drop the connection unanswered (no network). */
         Response handle(Request request);
     }
 
@@ -35,6 +36,7 @@ final class FakeHttpServer implements AutoCloseable {
             while (!socket.isClosed()) {
                 try (Socket client = socket.accept()) {
                     Response response = handler.handle(read(client.getInputStream()));
+                    if (response == null) continue;
                     byte[] body = response.body().getBytes(StandardCharsets.UTF_8);
                     OutputStream out = client.getOutputStream();
                     out.write((

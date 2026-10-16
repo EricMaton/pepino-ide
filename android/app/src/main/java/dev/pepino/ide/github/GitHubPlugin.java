@@ -122,7 +122,7 @@ public class GitHubPlugin extends Plugin {
             if (code == null) throw new GitHubAuth.LoginException("FAILED", "No sign-in in progress");
             try {
                 String token = auth.waitForToken(pendingClientId, code, () -> cancelled, Thread::sleep);
-                GitHubAuth.Account account = auth.account(token);
+                GitHubAuth.Account account = auth.accountRetrying(token, () -> cancelled, Thread::sleep);
                 tokens.save(TOKEN, token);
                 accountPrefs()
                     .edit()

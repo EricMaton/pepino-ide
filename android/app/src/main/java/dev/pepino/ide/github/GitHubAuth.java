@@ -92,6 +92,9 @@ public final class GitHubAuth {
      * Step 2: asks GitHub every [DeviceCode.interval] seconds (more after a
      * "slow_down") until the user approves, and returns the token. Gives up
      * when the code expires, the user denies it or [cancelled] says so.
+     * A poll that cannot reach GitHub is not the end: Pepino waits in the
+     * background while the user approves in the browser, and Android (One UI
+     * above all) may cut the network of background apps meanwhile.
      */
     public String waitForToken(String clientId, DeviceCode code, Cancelled cancelled, Sleeper sleeper)
         throws IOException, LoginException, InterruptedException {
@@ -105,18 +108,25 @@ public final class GitHubAuth {
             sleeper.sleep(interval);
             waited += interval;
             if (cancelled.get()) throw new LoginException("CANCELLED", "Sign-in cancelled");
-            JSONObject json = postForm(web + "/login/oauth/access_token", form);
-            String token = json.optString("access_token", "");
-            if (!token.isEmpty()) return token;
-            switch (json.optString("error", "")) {
-                case "authorization_pending":
-                    break;
-                case "slow_down":
-                    // GitHub says how long to wait now; without it, 5 more seconds
-                    interval = json.has("interval") ? json.optInt("interval") * 1000L : interval + 5000;
-                    break;
-                default:
-                    throw failure(json);
+            JSONObject json;
+            try {
+                json = postForm(web + "/login/oauth/access_token", form);
+            } catch (IOException offline) {
+                json = null; // the next poll tries again
+            }
+            if (json != null) {
+                String token = json.optString("access_token", "");
+                if (!token.isEmpty()) return token;
+                switch (json.optString("error", "")) {
+                    case "authorization_pending":
+                        break;
+                    case "slow_down":
+                        // GitHub says how long to wait now; without it, 5 more seconds
+                        interval = json.has("interval") ? json.optInt("interval") * 1000L : interval + 5000;
+                        break;
+                    default:
+                        throw failure(json);
+                }
             }
             if (waited >= code.expiresIn() * 1000L) throw new LoginException("EXPIRED", "The code expired");
         }
@@ -140,6 +150,25 @@ public final class GitHubAuth {
             throw new IOException("Unexpected answer from GitHub");
         }
     }
+
+    /**
+     * [account] right after signing in, tried again for a minute while GitHub
+     * cannot be reached (the network may still be cut, as in [waitForToken]).
+     */
+    public Account accountRetrying(String token, Cancelled cancelled, Sleeper sleeper)
+        throws IOException, LoginException, InterruptedException {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                return account(token);
+            } catch (IOException offline) {
+                if (attempt >= ACCOUNT_ATTEMPTS) throw offline;
+            }
+            sleeper.sleep(5000);
+            if (cancelled.get()) throw new LoginException("CANCELLED", "Sign-in cancelled");
+        }
+    }
+
+    private static final int ACCOUNT_ATTEMPTS = 12;
 
     private static LoginException failure(JSONObject json) {
         String error = json.optString("error", "");

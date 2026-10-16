@@ -18,6 +18,8 @@ import org.junit.Test;
 public class GitHubAuthTest {
 
     private static final String TOKEN = "gho_secret123";
+    /** A poll whose connection drops unanswered, as when Android cuts the network. */
+    private static final String DROP = "DROP";
 
     private FakeHttpServer server;
     private GitHubAuth auth;
@@ -26,6 +28,8 @@ public class GitHubAuthTest {
     /** What each request sent: "METHOD path body-or-authorization". */
     private final List<String> requests = new ArrayList<>();
     private int userStatus = 200;
+    /** How many /user requests drop unanswered before one is. */
+    private int userDrops = 0;
     private String user = "{\"login\":\"octocat\",\"name\":null,\"avatar_url\":\"https://avatars/1\"}";
     private final List<Long> sleeps = new ArrayList<>();
 
@@ -38,9 +42,14 @@ public class GitHubAuthTest {
                     return new FakeHttpServer.Response(200, "{\"device_code\":\"dev123\",\"user_code\":\"WDJB-MJHT\",\"verification_uri\":\"https://github.com/login/device\",\"expires_in\":900,\"interval\":5}");
                 case "/login/oauth/access_token":
                     requests.add(request.method() + " " + request.path() + " " + request.body());
-                    return new FakeHttpServer.Response(200, polls.isEmpty() ? "{\"error\":\"authorization_pending\"}" : polls.removeFirst());
+                    String poll = polls.isEmpty() ? "{\"error\":\"authorization_pending\"}" : polls.removeFirst();
+                    return poll.equals(DROP) ? null : new FakeHttpServer.Response(200, poll);
                 case "/user":
                     requests.add(request.method() + " /user " + request.headers().get("authorization"));
+                    if (userDrops > 0) {
+                        userDrops--;
+                        return null;
+                    }
                     return new FakeHttpServer.Response(userStatus, userStatus == 200 ? user : "{\"message\":\"Bad credentials\"}");
                 default:
                     return new FakeHttpServer.Response(404, "{}");
@@ -149,6 +158,38 @@ public class GitHubAuthTest {
             );
             assertEquals("FAILED", refused.code);
         }
+    }
+
+    @Test
+    public void keepsPollingWhileTheNetworkIsCut() throws Exception {
+        polls.add(DROP);
+        polls.add(DROP);
+        polls.add("{\"access_token\":\"" + TOKEN + "\"}");
+        assertEquals(TOKEN, waitForToken(code(900)));
+        assertEquals(3, requests.size());
+    }
+
+    @Test
+    public void aCodeThatRunsOutWhileOfflineExpires() {
+        for (int i = 0; i < 3; i++) polls.add(DROP);
+        GitHubAuth.LoginException error = assertThrows(GitHubAuth.LoginException.class, () -> waitForToken(code(10)));
+        assertEquals("EXPIRED", error.code);
+    }
+
+    @Test
+    public void readsTheAccountOnceTheNetworkIsBack() throws Exception {
+        // (HttpURLConnection already retries a dropped GET once by itself)
+        userDrops = 4;
+        GitHubAuth.Account account = auth.accountRetrying(TOKEN, () -> false, sleeps::add);
+        assertEquals("octocat", account.login());
+        assertFalse(sleeps.isEmpty());
+    }
+
+    @Test
+    public void givesUpOnTheAccountAfterAMinuteOffline() {
+        userDrops = 100;
+        assertThrows(IOException.class, () -> auth.accountRetrying(TOKEN, () -> false, sleeps::add));
+        assertEquals(11, sleeps.size());
     }
 
     @Test
