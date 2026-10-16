@@ -159,17 +159,28 @@ export function DiffView({
     overscan: 20,
   });
 
-  const counts = `+${added} −${changed.length - added}`;
+  const counts = (
+    <>
+      <span className={styles.countAdded}>+{added}</span>{' '}
+      <span className={styles.countRemoved}>−{changed.length - added}</span>
+    </>
+  );
   const lineText =
-    diff && !diff.binary && !diff.tooLarge && changed.length > 0
-      ? readOnly
-        ? counts
-        : `${counts} · committing ${changed.length - excluded.size} of ${changed.length}`
-      : readOnly
-        ? parentPath(file) || 'In this commit'
-        : selection === 'none'
-          ? 'Not in the commit'
-          : 'In the commit';
+    diff && !diff.binary && !diff.tooLarge && changed.length > 0 ? (
+      readOnly ? (
+        counts
+      ) : (
+        <>
+          {counts} · committing {changed.length - excluded.size} of {changed.length}
+        </>
+      )
+    ) : readOnly ? (
+      parentPath(file) || 'In this commit'
+    ) : selection === 'none' ? (
+      'Not in the commit'
+    ) : (
+      'In the commit'
+    );
 
   return (
     <div className={styles.diff}>

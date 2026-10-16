@@ -381,18 +381,25 @@
 }
 
 .kind-new {
-  border-color: var(--fg);
-  color: var(--fg);
+  border-color: var(--git-added);
+  color: var(--git-added);
 }
 
 .kind-modified {
-  color: var(--outline);
+  border-color: var(--git-modified);
+  color: var(--git-modified);
 }
 
-.kind-deleted,
+.kind-deleted {
+  border-color: var(--git-removed);
+  color: var(--git-removed);
+}
+
+/* Needs a hand: filled, so it never reads as just deleted */
 .kind-conflicted {
-  border-color: var(--primary);
-  color: var(--primary);
+  border-color: var(--git-removed);
+  background: var(--git-removed);
+  color: var(--on-git);
 }
 
 .noChanges {
@@ -657,17 +664,30 @@ button.line {
 
 /* In the commit: the number column fills, like GitHub Desktop's selected gutter */
 .line-added .lineNumber {
-  background: var(--fg);
-  color: var(--bg);
+  background: var(--git-added);
+  color: var(--on-git);
 }
 
 .line-removed .lineNumber {
-  background: var(--primary);
-  color: var(--on-primary);
+  background: var(--git-removed);
+  color: var(--on-git);
+}
+
+.line-added .lineMark {
+  color: var(--git-added);
 }
 
 .line-removed .lineMark {
-  color: var(--primary);
+  color: var(--git-removed);
+}
+
+/* "+3 −1" in a diff's header */
+.countAdded {
+  color: var(--git-added);
+}
+
+.countRemoved {
+  color: var(--git-removed);
 }
 
 /* Left out: no fill, dimmed, struck through so it reads as "not this one" */
