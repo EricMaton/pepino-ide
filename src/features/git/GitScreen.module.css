@@ -924,3 +924,25 @@ button.line {
   min-height: 48px;
   border-bottom: 1px solid var(--hairline);
 }
+
+/* The last commit, to undo (#140): a row above the commit box */
+.lastCommit {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 52px;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-4);
+  border-top: 1px solid var(--hairline);
+}
+
+.undoCommit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.undoCommit p {
+  margin: 0;
+}

@@ -1233,6 +1233,75 @@ public final class GitOps {
         }
     }
 
+    /** The branch's last commit (#140): whether GitHub has it (it can no longer be undone) and whether it is a merge. */
+    public record LastCommit(LogEntry commit, boolean onGitHub, boolean merge) {}
+
+    /** The commit to undo is on GitHub already: undoing it would need a force push. */
+    public static final class PushedException extends IllegalStateException {
+        PushedException(String summary) {
+            super("\"" + summary + "\" is on GitHub already: undoing it there needs a force push");
+        }
+    }
+
+    /** Whether [commit] is on any of GitHub's branches (origin/…), as of the last fetch. */
+    private static boolean onGitHub(Repository repository, RevWalk walk, RevCommit commit) throws IOException {
+        for (Ref ref : repository.getRefDatabase().getRefsByPrefix(Constants.R_REMOTES + ORIGIN + "/")) {
+            if (ref.getObjectId() == null) continue;
+            if (walk.isMergedInto(commit, walk.parseCommit(ref.getObjectId()))) return true;
+        }
+        return false;
+    }
+
+    /** The current branch's last commit, or null before the first one. */
+    public static LastCommit lastCommit(File folder) throws IOException {
+        try (Git git = Git.open(folder); RevWalk walk = new RevWalk(git.getRepository())) {
+            Repository repository = git.getRepository();
+            ObjectId head = repository.resolve(Constants.HEAD);
+            if (head == null) return null;
+            RevCommit commit = walk.parseCommit(head);
+            return new LastCommit(entryOf(commit), onGitHub(repository, walk, commit), commit.getParentCount() > 1);
+        }
+    }
+
+    /**
+     * GitHub Desktop's Undo (#140): the branch goes back to the commit before
+     * its last one, whose changes are uncommitted again, the files as they
+     * are (`git reset --mixed HEAD^`). Undoing the first commit leaves the
+     * branch with none. Never a commit on GitHub ([PushedException]) or a
+     * merge. Returns the commit undone, for its message.
+     */
+    public static LogEntry undoCommit(File folder) throws IOException, GitAPIException {
+        try (Git git = Git.open(folder); RevWalk walk = new RevWalk(git.getRepository())) {
+            Repository repository = git.getRepository();
+            ObjectId head = repository.resolve(Constants.HEAD);
+            if (head == null) throw new IllegalStateException("There is no commit to undo");
+            clearStaleLocks(repository);
+            RevCommit commit = walk.parseCommit(head);
+            if (onGitHub(repository, walk, commit)) throw new PushedException(entryOf(commit).summary());
+            if (commit.getParentCount() > 1) throw new IllegalStateException("A merge commit cannot be undone");
+            if (commit.getParentCount() == 1) {
+                git.reset().setMode(ResetCommand.ResetType.MIXED).setRef(commit.getParent(0).name()).call();
+            } else {
+                // The first commit: the branch goes back to having none. JGit never deletes
+                // the branch HEAD is on, so HEAD steps aside meanwhile.
+                String branch = repository.getFullBranch();
+                RefUpdate aside = repository.updateRef(Constants.HEAD);
+                aside.disableRefLog();
+                aside.link(Constants.R_HEADS + "pepino-undo");
+                RefUpdate delete = repository.updateRef(branch);
+                delete.setForceUpdate(true);
+                RefUpdate.Result deleted = delete.delete();
+                repository.updateRef(Constants.HEAD).link(branch);
+                if (deleted != RefUpdate.Result.FORCED) throw new IOException("Cannot undo the commit: " + deleted);
+                DirCache index = repository.lockDirCache();
+                index.clear();
+                index.write();
+                index.commit();
+            }
+            return entryOf(commit);
+        }
+    }
+
     /** A branch's stashed changes (#139): when they were stashed, and the files. */
     public record Stash(String branch, long time, List<FileChange> files) {}
 
