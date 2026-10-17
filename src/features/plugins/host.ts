@@ -139,7 +139,12 @@ export class PluginHost {
     disposers.push(() => connection.terminate());
 
     try {
-      await connection.init(plugin.main, settingsOf(manifest), this.deps.options ?? DEFAULT_SANDBOX_OPTIONS);
+      await connection.init(
+        plugin.main,
+        settingsOf(manifest),
+        this.deps.options ?? DEFAULT_SANDBOX_OPTIONS,
+        manifest.permissions.filter((permission) => this.may(manifest, permission)),
+      );
       await connection.activate();
     } catch (failure) {
       running.stop();
@@ -205,6 +210,22 @@ export class PluginHost {
         run: async ([id]) => {
           const own = commandId(manifest, String(id));
           await this.deps.dispatcher.execute(this.deps.registry.find(own) ? own : String(id));
+        },
+      },
+      'network.fetch': {
+        permission: 'network',
+        run: async ([url, init]) => {
+          const options = (init ?? {}) as { method?: string; headers?: Record<string, string>; body?: string };
+          const response = await fetch(String(url), {
+            method: options.method ?? 'GET',
+            headers: options.headers,
+            body: options.body,
+          });
+          return {
+            status: response.status,
+            headers: Object.fromEntries(response.headers.entries()),
+            text: await response.text(),
+          };
         },
       },
       'window.showMessage': {

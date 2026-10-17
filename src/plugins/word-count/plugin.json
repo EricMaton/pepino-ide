@@ -1,0 +1,11 @@
+{
+  "id": "dev.pepino.word-count",
+  "name": "Word count",
+  "version": "1.0.0",
+  "apiVersion": "1",
+  "description": "Counts the words and lines of the open file.",
+  "permissions": ["editor.read"],
+  "contributes": {
+    "commands": [{ "id": "count", "title": "Count words" }]
+  }
+}

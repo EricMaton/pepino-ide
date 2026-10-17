@@ -10,7 +10,12 @@ import { createSandbox, PluginError, type Sandbox, type SandboxHost, type Sandbo
  */
 
 export interface PluginConnection {
-  init(main: string, settings: Record<string, SettingValue>, options: SandboxOptions): Promise<void>;
+  init(
+    main: string,
+    settings: Record<string, SettingValue>,
+    options: SandboxOptions,
+    capabilities?: string[],
+  ): Promise<void>;
   activate(): Promise<void>;
   deactivate(): Promise<void>;
   runCommand(id: string): Promise<void>;
@@ -45,7 +50,7 @@ export function serveSandbox(port: Port<WorkerMessage, HostMessage>) {
     const answer = async (): Promise<unknown> => {
       if (message.type === 'init') {
         sandbox?.dispose();
-        sandbox = await createSandbox(message.main, message.settings, host, message.options);
+        sandbox = await createSandbox(message.main, message.settings, host, message.options, message.capabilities);
         return undefined;
       }
       if (!sandbox) throw new PluginError('The plugin has not started');
@@ -126,7 +131,8 @@ export function connect(
   };
 
   return {
-    init: (main, settings, options) => request({ type: 'init', main, settings, options }),
+    init: (main, settings, options, capabilities = []) =>
+      request({ type: 'init', main, settings, options, capabilities }),
     activate: () => request({ type: 'activate' }),
     deactivate: () => request({ type: 'deactivate' }),
     runCommand: (id) => request({ type: 'command', id }),
