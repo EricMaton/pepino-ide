@@ -59,4 +59,55 @@ describe('themes (#44)', () => {
     expect(dispatchEvent).toHaveBeenCalledTimes(2);
     expect((dispatchEvent.mock.calls[1][0] as CustomEvent).type).toBe(THEME_EVENT);
   });
+
+  describe('a plugin’s theme (#52)', () => {
+    const night = { id: 'dev.p.themes.night', base: 'dark' as const, colors: { bg: '#101820', primary: '#f2a516' } };
+    const contributed = [{ ...night, label: 'Night', plugin: 'Themes', colors: { bg: '#0f1720', primary: '#f2a516' } }];
+
+    it('is saved with a copy of its colours, and read back with only valid ones', () => {
+      expect(parseThemeChoice(JSON.stringify({ mode: 'plugin', ...night }))).toEqual({ mode: 'plugin', ...night });
+      expect(
+        parseThemeChoice(
+          JSON.stringify({ mode: 'plugin', ...night, colors: { bg: 'url(x)', primary: '#F2A516', margin: '#000000' } }),
+        ),
+      ).toEqual({ mode: 'plugin', ...night, colors: { primary: '#f2a516' } });
+      expect(parseThemeChoice(JSON.stringify({ mode: 'plugin', id: '', base: 'dark' }))).toEqual({ mode: 'dark' });
+    });
+
+    it('shows its saved copy until the plugins load, then the plugin’s own; its plugin gone, its bare base', () => {
+      const choice = { mode: 'plugin' as const, ...night };
+      expect(resolveTheme(choice, false, null)).toEqual({ base: 'dark', accent: null, colors: night.colors });
+      expect(resolveTheme(choice, false, contributed)).toEqual({
+        base: 'dark',
+        accent: null,
+        colors: contributed[0].colors,
+      });
+      expect(resolveTheme(choice, false, [])).toEqual({ base: 'dark', accent: null });
+    });
+
+    it('puts its colours on the page, text on its accent that reads, and takes them all off again', () => {
+      const properties = new Map<string, string>();
+      const meta = { setAttribute: vi.fn() };
+      const root = {
+        dataset: {} as Record<string, string>,
+        style: {
+          setProperty: (name: string, value: string) => properties.set(name, value),
+          removeProperty: (name: string) => properties.delete(name),
+        },
+        ownerDocument: { querySelector: () => meta, defaultView: { dispatchEvent: vi.fn() } },
+      } as unknown as HTMLElement;
+
+      applyTheme({ base: 'dark', accent: null, colors: night.colors }, root);
+      expect(Object.fromEntries(properties)).toEqual({
+        '--bg': '#101820',
+        '--primary': '#f2a516',
+        '--on-primary': '#0a0a0a',
+      });
+      expect(meta.setAttribute).toHaveBeenLastCalledWith('content', '#101820');
+
+      applyTheme({ base: 'light', accent: null }, root);
+      expect(properties.size).toBe(0);
+      expect(meta.setAttribute).toHaveBeenLastCalledWith('content', '#f4f2ec');
+    });
+  });
 });

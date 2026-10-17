@@ -31,7 +31,7 @@ describe('plugin loader (#46)', () => {
     expect(result.rejected).toEqual([
       { origin: 'old', errors: ['apiVersion "0" is not one this Pepino runs (1)'] },
       { origin: 'twin', errors: ['id "dev.pepino.a" is already loaded'] },
-      { origin: 'empty', errors: ['main.js is empty'] },
+      { origin: 'empty', errors: ['main.js is empty, and the plugin has commands'] },
     ]);
   });
 

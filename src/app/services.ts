@@ -129,6 +129,15 @@ export function createServices(): Services {
     allowed: (plugin, permission) => pluginPermissions.allowed(plugin, permission),
   });
   const plugins = new PluginManager(pluginHost, pluginPermissions, () => [builtinSource()]);
+  const theme = createThemeStore(preferences);
+  // The themes plugins bring (#52), as they load, start and stop
+  let pluginThemes = '';
+  plugins.subscribe(() => {
+    const themes = plugins.themes();
+    if (themes === null || JSON.stringify(themes) === pluginThemes) return;
+    pluginThemes = JSON.stringify(themes);
+    theme.setContributed(themes);
+  });
 
   return {
     registry,
@@ -143,7 +152,7 @@ export function createServices(): Services {
     fileHistory,
     github,
     terminal: Capacitor.getPlatform() === 'android' ? createNativeTerminal() : createUnavailableTerminal(),
-    theme: createThemeStore(preferences),
+    theme,
     editorSettings: createEditorSettingsStore(preferences),
     activeEditor,
     pluginHost,

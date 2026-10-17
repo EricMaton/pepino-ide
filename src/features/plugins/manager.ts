@@ -1,3 +1,4 @@
+import type { ContributedTheme } from '../../ui/theme';
 import type { PluginHost, PluginLogEntry } from './host';
 import { type LoadedPlugin, loadPlugins, type PluginSource } from './loader';
 import type { Permission } from './manifest';
@@ -23,6 +24,7 @@ export interface PluginEntry {
 export class PluginManager {
   private catalog: LoadedPlugin[] = [];
   private rejectedPlugins: { origin: string; errors: string[] }[] = [];
+  private loaded = false;
   private readonly listeners = new Set<() => void>();
 
   constructor(
@@ -51,6 +53,30 @@ export class PluginManager {
     for (const { origin, errors } of rejected) console.error(`Plugin ${origin} not loaded`, errors);
     this.changed();
     await Promise.all(plugins.filter((plugin) => this.startable(plugin)).map((plugin) => this.host.start(plugin)));
+    this.loaded = true;
+    this.changed();
+  }
+
+  /** The themes the running plugins bring (#52); null until the plugins have loaded. */
+  themes(): ContributedTheme[] | null {
+    if (!this.loaded) return null;
+    const running = new Set(
+      this.host
+        .list()
+        .filter((status) => status.state === 'running')
+        .map((status) => status.manifest.id),
+    );
+    return this.catalog
+      .filter((plugin) => running.has(plugin.manifest.id))
+      .flatMap(({ manifest }) =>
+        manifest.contributes.themes.map((theme) => ({
+          id: `${manifest.id}.${theme.id}`,
+          label: theme.label,
+          plugin: manifest.name,
+          base: theme.base,
+          colors: theme.colors,
+        })),
+      );
   }
 
   private startable(plugin: LoadedPlugin) {

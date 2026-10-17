@@ -14,6 +14,7 @@ export interface PluginPackage {
   /** "builtin:hello-world", or an install's folder. */
   origin: string;
   manifest: string;
+  /** Empty for a plugin with nothing to run, such as one that only brings themes. */
   main: string;
   /** Comes with Pepino: it can be turned off, not uninstalled. */
   builtin: boolean;
@@ -46,8 +47,8 @@ export async function loadPlugins(sources: readonly PluginSource[]): Promise<Loa
         result.rejected.push({ origin: found.origin, errors: parsed.errors });
       } else if (result.plugins.some((plugin) => plugin.manifest.id === parsed.manifest.id)) {
         result.rejected.push({ origin: found.origin, errors: [`id "${parsed.manifest.id}" is already loaded`] });
-      } else if (found.main.trim() === '') {
-        result.rejected.push({ origin: found.origin, errors: ['main.js is empty'] });
+      } else if (found.main.trim() === '' && parsed.manifest.contributes.commands.length > 0) {
+        result.rejected.push({ origin: found.origin, errors: ['main.js is empty, and the plugin has commands'] });
       } else {
         result.plugins.push({
           manifest: parsed.manifest,
