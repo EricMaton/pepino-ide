@@ -193,3 +193,44 @@
   flex-direction: column;
   gap: 2px;
 }
+
+/* MORE (#171): the destinations not in the bar */
+.moreList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.moreItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 60px;
+  padding: var(--space-2) var(--space-3);
+  border: var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+.moreItem svg {
+  color: var(--primary);
+}
+
+.moreItemCurrent {
+  box-shadow: var(--shadow-primary);
+}
+
+.moreText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.navItem {
+  -webkit-touch-callout: none;
+  user-select: none;
+}
