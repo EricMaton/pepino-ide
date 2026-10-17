@@ -95,6 +95,8 @@ export function ChangesView({
   const [summary, setSummary] = useState('');
   const [description, setDescription] = useState('');
   const [committing, setCommitting] = useState(false);
+  // The message fields, folded to one row by default: the changed files get the room
+  const [composing, setComposing] = useState(false);
   // The last commit, confirmed where it was made (a snackbar would cover the commit box)
   const [lastCommit, setLastCommit] = useState<CommitResult | null>(null);
   const [identity, setIdentity] = useState<Identity | null | undefined>(undefined);
@@ -162,6 +164,7 @@ export function ChangesView({
     try {
       const result = await git.commit(path, { message, paths, excluded: lines });
       setLastCommit(result);
+      setComposing(false);
       setSummary('');
       setDescription('');
       setExcluded(new Set());
@@ -187,6 +190,18 @@ export function ChangesView({
   }, [identity]);
 
   const count = changes?.length ?? 0;
+  const commitLabel =
+    ticked.length > 0
+      ? `Commit ${ticked.length} ${ticked.length === 1 ? 'file' : 'files'} to ${branch}`
+      : `Commit to ${branch}`;
+  // What the folded row says: the message so far, else the last commit, else what a commit would take
+  const folded = summary.trim()
+    ? summary.trim()
+    : lastCommit
+      ? `✓ Committed ${lastCommit.id} · ${lastCommit.summary}`
+      : count === 0
+        ? 'Nothing to commit'
+        : commitLabel;
 
   return (
     <div className={styles.changes}>
@@ -259,36 +274,59 @@ export function ChangesView({
       </div>
 
       <form
-        className={styles.commitBox}
+        className={cx(styles.commitBox, !composing && styles.commitBoxFolded)}
         inert={opened !== null}
         onSubmit={(event) => {
           event.preventDefault();
           void commit();
         }}
       >
-        <TextField label="Summary" placeholder="What changed" value={summary} onChange={setSummary} />
-        <TextField
-          label="Description"
-          placeholder="Why (optional)"
-          value={description}
-          onChange={setDescription}
-          rows={2}
-        />
-        <Button type="submit" variant="filled" className={cx(committing && 'cursor')} disabled={!canCommit}>
-          {committing
-            ? 'Committing'
-            : ticked.length > 0
-              ? `Commit ${ticked.length} ${ticked.length === 1 ? 'file' : 'files'} to ${branch}`
-              : `Commit to ${branch}`}
-        </Button>
-        {lastCommit && (
-          <p className={cx('caption', styles.committed)} role="status">
-            <span className="accent">✓</span> Committed <strong>{lastCommit.id}</strong> · {lastCommit.summary}
-          </p>
-        )}
-        <button type="button" className={cx('caption', 'muted', styles.author)} onClick={() => setAskingIdentity(true)}>
-          {identity ? `As ${identity.name} <${identity.email}> · change` : 'Set who commits'}
+        <button
+          type="button"
+          className={styles.commitToggle}
+          aria-expanded={composing}
+          onClick={() => setComposing((open) => !open)}
+        >
+          <span className={cx('title', 'accent')} aria-hidden>
+            {composing ? '▾' : '▴'}
+          </span>
+          <span className={styles.changeText}>
+            <span className="label">Commit message</span>
+            {!composing && (
+              <span className="caption muted ellipsis" role={lastCommit && !summary.trim() ? 'status' : undefined}>
+                {folded}
+              </span>
+            )}
+          </span>
+          <span className="caption muted">{composing ? 'Hide' : 'Write'}</span>
         </button>
+        {composing && (
+          <>
+            <TextField label="Summary" placeholder="What changed" value={summary} onChange={setSummary} autoFocus />
+            <TextField
+              label="Description"
+              placeholder="Why (optional)"
+              value={description}
+              onChange={setDescription}
+              rows={2}
+            />
+            <Button type="submit" variant="filled" className={cx(committing && 'cursor')} disabled={!canCommit}>
+              {committing ? 'Committing' : commitLabel}
+            </Button>
+            {lastCommit && (
+              <p className={cx('caption', styles.committed)} role="status">
+                <span className="accent">✓</span> Committed <strong>{lastCommit.id}</strong> · {lastCommit.summary}
+              </p>
+            )}
+            <button
+              type="button"
+              className={cx('caption', 'muted', styles.author)}
+              onClick={() => setAskingIdentity(true)}
+            >
+              {identity ? `As ${identity.name} <${identity.email}> · change` : 'Set who commits'}
+            </button>
+          </>
+        )}
       </form>
 
       {opened !== null && visible && (
