@@ -6,6 +6,7 @@ import { EventBus } from '../core/events';
 import { createFileHistory, type FileHistory } from '../features/editor/fileHistory';
 import { createMemoryGitEngine, createNativeGitEngine, type GitEngine } from '../features/git/engine';
 import { createNativeTerminal, createUnavailableTerminal, type TerminalBackend } from '../features/terminal/terminal';
+import { createThemeStore, type ThemeStore } from '../ui/themeStore';
 import { createRepositories, type Repositories } from '../features/git/repositories';
 import { createMemoryGitHub, createNativeGitHub, type GitHub } from '../features/github/github';
 import { createCapacitorBackend } from '../features/projects/capacitorBackend';
@@ -44,6 +45,8 @@ export interface Services {
   github: GitHub;
   /** Shells on a PTY (#37): Android only; iOS and the web have none. */
   terminal: TerminalBackend;
+  /** The theme (#44): dark, light, the phone's, or custom; applied to the whole page. */
+  theme: ThemeStore;
   /** Small user preferences (editor font size…), persisted across restarts. */
   preferences: KeyValueStore;
 }
@@ -110,6 +113,7 @@ export function createServices(): Services {
     fileHistory,
     github,
     terminal: Capacitor.getPlatform() === 'android' ? createNativeTerminal() : createUnavailableTerminal(),
+    theme: createThemeStore(preferences),
     preferences,
   };
 }

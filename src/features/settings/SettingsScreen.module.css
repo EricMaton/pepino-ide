@@ -78,3 +78,58 @@
 .expired {
   color: var(--error);
 }
+
+/* Appearance (#44): the theme's options, two by two, and a custom one's accents */
+.options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+
+.option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-height: 56px;
+  padding: var(--space-2) var(--space-3);
+  border: var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.optionSmall {
+  min-height: var(--touch-target);
+  justify-content: center;
+}
+
+.optionChosen {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.optionChosen :global(.muted) {
+  color: inherit;
+  opacity: 0.8;
+}
+
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.swatch {
+  width: 40px;
+  height: 40px;
+  border: var(--border);
+  cursor: pointer;
+}
+
+.swatchChosen {
+  box-shadow:
+    0 0 0 3px var(--bg),
+    0 0 0 5px var(--fg);
+}

@@ -7,11 +7,12 @@ import { useSnackbar } from '../../ui/useSnackbar';
 import { type GitHubAccount, GitHubError } from '../github/github';
 import { GitHubLoginDialog } from '../github/GitHubLoginDialog';
 import { useGitHubAccount } from '../github/useGitHubAccount';
+import { Appearance } from './Appearance';
 import styles from './SettingsScreen.module.css';
 
 /**
- * Settings. For now the accounts: GitHub (#29), which clone, push and pull
- * requests need. Themes, editor preferences and plugins come in Sprint 6.
+ * Settings: the accounts (GitHub, #29, which clone, push and pull requests
+ * need) and the appearance (#44). Editor preferences and plugins come next.
  */
 export function SettingsScreen({ subtitle }: { subtitle: string }) {
   const account = useGitHubAccount();
@@ -24,9 +25,9 @@ export function SettingsScreen({ subtitle }: { subtitle: string }) {
         </h2>
         <GitHubAccountCard account={account} />
         <h2 className={cx('label', 'muted', styles.heading)}>
-          <span className="accent">//</span> Coming in Sprint 6
+          <span className="accent">//</span> Appearance
         </h2>
-        <p className={cx('caption', 'muted', styles.note)}>Themes, editor preferences and plugins.</p>
+        <Appearance />
       </div>
     </div>
   );
