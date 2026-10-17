@@ -275,7 +275,7 @@
   background: var(--fg);
   color: var(--bg);
   box-shadow: var(--shadow-primary);
-  animation: snackbar-in var(--motion-enter) var(--ease-out) both;
+  animation: snackbar-in var(--motion-enter) var(--ease-out) backwards;
 }
 
 .snackbarText {
@@ -294,6 +294,46 @@
   color: var(--primary);
   font-weight: 700;
   cursor: pointer;
+}
+
+/* Its ✕ (#173): on the dark snackbar, quiet until pressed */
+.snackbarClose {
+  flex: none;
+  display: grid;
+  place-content: center;
+  width: 36px;
+  height: 36px;
+  margin: calc(var(--space-2) * -1) calc(var(--space-2) * -1) calc(var(--space-2) * -1) 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--bg);
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+.snackbarClose:active {
+  opacity: 1;
+  color: var(--primary);
+}
+
+/* Swiped down (#173): it follows the finger, and slides out once let go far enough */
+.snackbar {
+  touch-action: none;
+  user-select: none;
+  transition: transform var(--motion-exit) var(--ease-out);
+}
+
+.snackbarHeld {
+  transition: none;
+}
+
+.snackbarLeaving {
+  transform: translateY(160%);
+  opacity: 0;
+  transition:
+    transform 160ms var(--ease-out),
+    opacity 160ms var(--ease-out);
 }
 
 .snackbar::before {
