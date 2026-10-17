@@ -10,12 +10,13 @@ AI agent assistance in the future.
 
 ## Key decisions
 
-| Decision | Choice                                     | Why                                                 |
-| -------- | ------------------------------------------ | --------------------------------------------------- |
-| Platform | Android-first, iOS with reduced scope      | iOS allows neither a real terminal nor JIT          |
-| Stack    | TypeScript + React + Vite, Capacitor shell | Full control over design, web tooling, one codebase |
-| Plugins  | Interpreted JS scripts (QuickJS)           | Legal on iOS, sandboxable, portable                 |
-| Git      | isomorphic-git (to be confirmed, #21)      | Pure JS, runs on top of the project space           |
+| Decision | Choice                                                                                | Why                                                 |
+| -------- | ------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Platform | Android-first, iOS with reduced scope                                                 | iOS allows neither a real terminal nor JIT          |
+| Stack    | TypeScript + React + Vite, Capacitor shell                                            | Full control over design, web tooling, one codebase |
+| Plugins  | Interpreted JS scripts (QuickJS)                                                      | Legal on iOS, sandboxable, portable                 |
+| Git      | JGit in a native plugin ([ADR-006](docs/decisions/ADR-006-git.md))                    | Full git (merge, stash, revert…) on the device      |
+| Terminal | Own PTY in C + xterm.js, Android only ([ADR-008](docs/decisions/ADR-008-terminal.md)) | A real shell; iOS lets no app start processes       |
 
 See [docs/decisions](docs/decisions) for the ADRs (stack: [ADR-004](docs/decisions/ADR-004-typescript.md)),
 [docs/roadmap.md](docs/roadmap.md) for the full sprint plan and
@@ -23,11 +24,12 @@ See [docs/decisions](docs/decisions) for the ADRs (stack: [ADR-004](docs/decisio
 
 ## Status
 
-🚧 Sprint 1 in progress, after migrating from Kotlin Multiplatform to TypeScript.
+🚧 Sprint 5 (Terminal v1) in progress: projects, editor, git and GitHub are in place.
 
 ## Setup
 
-Requirements: Node 22+. For Android builds: Android SDK (API 36) and JDK 21.
+Requirements: Node 22+. For Android builds: Android SDK (API 36), JDK 21 and NDK 27.2.12479018
+(the terminal's PTY, built with ndk-build: `sdkmanager "ndk;27.2.12479018"`).
 iOS builds require macOS with Xcode.
 
 ```bash
