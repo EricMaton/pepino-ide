@@ -47,12 +47,33 @@ public class GitHubPlugin extends Plugin {
         return new TokenStore(context).read(TOKEN);
     }
 
+    /**
+     * GitHub refused the token (#36): it was revoked, or expired. It is
+     * forgotten, but who it was is kept: [account] answers that account as
+     * expired, to sign in again as, until a sign-in or a sign-out.
+     */
+    public static void tokenRejected(Context context) {
+        new TokenStore(context).delete(TOKEN);
+    }
+
     private interface Work {
         JSObject run() throws Exception;
     }
 
     private void run(PluginCall call, Work work) {
         run(executor, call, work);
+    }
+
+    /** A call to GitHub with the token: refused (401), the token is dead, and forgotten. */
+    private void runWithToken(PluginCall call, Work work) {
+        run(call, () -> {
+            try {
+                return work.run();
+            } catch (GitHubAuth.LoginException e) {
+                if ("UNAUTHORIZED".equals(e.code) && tokens.read(TOKEN) != null) tokenRejected(getContext());
+                throw e;
+            }
+        });
     }
 
     private void run(ExecutorService on, PluginCall call, Work work) {
@@ -63,7 +84,8 @@ public class GitHubPlugin extends Plugin {
                 call.reject(e.getMessage(), e.code);
             } catch (IOException e) {
                 // No connection, a timeout, an answer that is not GitHub's: never the request itself
-                call.reject("Cannot reach GitHub", "NETWORK");
+                String network = Network.describe(e);
+                call.reject(network != null ? network : "Cannot reach GitHub", "NETWORK");
             } catch (Exception e) {
                 call.reject(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName(), "FAILED");
             }
@@ -75,24 +97,34 @@ public class GitHubPlugin extends Plugin {
     }
 
     private static JSObject toJson(GitHubAuth.Account account) {
+        return toJson(account, false);
+    }
+
+    private static JSObject toJson(GitHubAuth.Account account, boolean expired) {
         JSObject json = new JSObject();
+        json.put("expired", expired);
         json.put("login", account.login());
         json.put("name", account.name() == null ? JSObject.NULL : account.name());
         json.put("avatarUrl", account.avatarUrl());
         return json;
     }
 
-    /** Who is signed in, as last seen (no network); null when signed out. */
+    /**
+     * Who is signed in, as last seen (no network); null when signed out. An
+     * account without its token (GitHub refused it, or the key that
+     * encrypted it is gone) is answered as expired: sign in again.
+     */
     @PluginMethod
     public void account(PluginCall call) {
         run(call, () -> {
             SharedPreferences prefs = accountPrefs();
             String login = prefs.getString("login", null);
             JSObject result = new JSObject();
-            if (login == null || tokens.read(TOKEN) == null) {
+            if (login == null) {
                 result.put("account", JSObject.NULL);
             } else {
-                result.put("account", toJson(new GitHubAuth.Account(login, prefs.getString("name", null), prefs.getString("avatarUrl", ""))));
+                GitHubAuth.Account account = new GitHubAuth.Account(login, prefs.getString("name", null), prefs.getString("avatarUrl", ""));
+                result.put("account", toJson(account, tokens.read(TOKEN) == null));
             }
             return result;
         });
@@ -146,7 +178,7 @@ public class GitHubPlugin extends Plugin {
     public void repos(PluginCall call) {
         int page = call.getInt("page", 1);
         int perPage = call.getInt("perPage", 50);
-        run(call, () -> {
+        runWithToken(call, () -> {
             GitHubApi.Page found = api.repos(signedIn(), page, perPage);
             JSArray repos = new JSArray();
             for (GitHubApi.Repo repo : found.repos()) repos.put(toJson(repo));
@@ -183,7 +215,7 @@ public class GitHubPlugin extends Plugin {
         String owner = call.getString("owner", "");
         String name = call.getString("repo", "");
         String branch = call.getString("branch", "");
-        run(call, () -> {
+        runWithToken(call, () -> {
             String token = signedIn();
             JSObject result = new JSObject();
             result.put("defaultBranch", api.defaultBranch(token, owner, name));
@@ -197,7 +229,7 @@ public class GitHubPlugin extends Plugin {
     public void remoteBranches(PluginCall call) {
         String owner = call.getString("owner", "");
         String name = call.getString("repo", "");
-        run(call, () -> {
+        runWithToken(call, () -> {
             JSObject result = new JSObject();
             result.put("branches", new JSArray(api.branches(signedIn(), owner, name)));
             return result;
@@ -213,7 +245,7 @@ public class GitHubPlugin extends Plugin {
         String title = call.getString("title", "");
         String body = call.getString("body", "");
         boolean draft = Boolean.TRUE.equals(call.getBoolean("draft", false));
-        run(call, () -> {
+        runWithToken(call, () -> {
             JSObject result = new JSObject();
             result.put("pullRequest", toJson(api.createPullRequest(signedIn(), owner, name, head, base, title, body, draft)));
             return result;

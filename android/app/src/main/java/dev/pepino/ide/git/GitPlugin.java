@@ -110,6 +110,25 @@ public class GitPlugin extends Plugin {
         return token == null ? null : new UsernamePasswordCredentialsProvider("x-access-token", token);
     }
 
+    private interface Remote<T> {
+        T run(CredentialsProvider credentials) throws Exception;
+    }
+
+    /**
+     * Runs a clone, fetch, pull or push with the token for [url]. GitHub
+     * refusing a token git sent means it is dead (#36): revoked, or expired.
+     * It is forgotten, and the account asks to sign in again.
+     */
+    private <T> T withToken(String url, Remote<T> work) throws Exception {
+        CredentialsProvider credentials = credentials(url);
+        try {
+            return work.run(credentials);
+        } catch (GitOps.RemoteException e) {
+            if (credentials != null && "UNAUTHORIZED".equals(e.code)) GitHubPlugin.tokenRejected(getContext());
+            throw e;
+        }
+    }
+
     /** A remote operation's progress, out as `remoteProgress` events ({ task, done, total }); [cancelRemote] stops it. */
     private GitOps.Progress remoteProgress() {
         remoteCancelled = false;
@@ -136,7 +155,8 @@ public class GitPlugin extends Plugin {
         String url = call.getString("url", "");
         run(call, () -> {
             if (!url.startsWith("https://github.com/")) throw new IllegalArgumentException("Only GitHub repositories can be cloned");
-            return toJson(GitOps.clone(folder(call), url, credentials(url), remoteProgress()));
+            GitOps.RepoInfo info = withToken(url, (credentials) -> GitOps.clone(folder(call), url, credentials, remoteProgress()));
+            return toJson(info);
         });
     }
 
@@ -210,7 +230,8 @@ public class GitPlugin extends Plugin {
     public void fetch(PluginCall call) {
         run(call, () -> {
             File folder = folder(call);
-            return toJson(GitOps.fetch(folder, credentials(GitOps.originUrl(folder)), remoteProgress()), folder);
+            GitOps.SyncState state = withToken(GitOps.originUrl(folder), (credentials) -> GitOps.fetch(folder, credentials, remoteProgress()));
+            return toJson(state, folder);
         });
     }
 
@@ -218,11 +239,10 @@ public class GitPlugin extends Plugin {
     public void pull(PluginCall call) {
         run(call, () -> {
             File folder = folder(call);
-            GitOps.Pulled pulled = GitOps.pull(
-                folder,
-                credentials(GitOps.originUrl(folder)),
-                remoteProgress(),
-                GitOps.identity(configFile())
+            GitOps.Identity who = GitOps.identity(configFile());
+            GitOps.Pulled pulled = withToken(
+                GitOps.originUrl(folder),
+                (credentials) -> GitOps.pull(folder, credentials, remoteProgress(), who)
             );
             JSObject result = new JSObject();
             result.put("state", toJson(pulled.state(), folder));
@@ -236,7 +256,8 @@ public class GitPlugin extends Plugin {
     public void push(PluginCall call) {
         run(call, () -> {
             File folder = folder(call);
-            return toJson(GitOps.push(folder, credentials(GitOps.originUrl(folder)), remoteProgress()), folder);
+            GitOps.SyncState state = withToken(GitOps.originUrl(folder), (credentials) -> GitOps.push(folder, credentials, remoteProgress()));
+            return toJson(state, folder);
         });
     }
 

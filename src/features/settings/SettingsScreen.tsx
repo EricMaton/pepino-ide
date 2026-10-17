@@ -56,12 +56,29 @@ function GitHubAccountCard({ account }: { account: GitHubAccount | null | undefi
               <span className="caption muted ellipsis">@{account.login} · GitHub</span>
             </span>
           </div>
-          <p className={cx('caption', 'muted', styles.cardNote)}>
-            Signed in. The token is kept encrypted in this phone&apos;s keystore, never in the clear.
-          </p>
-          <Button variant="text" tone="danger" className={styles.cardAction} onClick={() => setSigningOut(true)}>
-            Sign out
-          </Button>
+          {account.expired ? (
+            <>
+              <p className={cx('caption', styles.cardNote, styles.expired)} role="alert">
+                GitHub no longer accepts this sign-in: it was revoked, or it expired. Sign in again to clone, push and
+                open pull requests.
+              </p>
+              <Button variant="filled" className={styles.cardAction} onClick={() => setSigningIn(true)}>
+                Sign in again
+              </Button>
+              <Button variant="text" tone="danger" className={styles.cardAction} onClick={() => setSigningOut(true)}>
+                Sign out
+              </Button>
+            </>
+          ) : (
+            <>
+              <p className={cx('caption', 'muted', styles.cardNote)}>
+                Signed in. The token is kept encrypted in this phone&apos;s keystore, never in the clear.
+              </p>
+              <Button variant="text" tone="danger" className={styles.cardAction} onClick={() => setSigningOut(true)}>
+                Sign out
+              </Button>
+            </>
+          )}
         </>
       ) : (
         <>

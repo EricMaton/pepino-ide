@@ -102,7 +102,13 @@ function GitStart({ onOpen }: { onOpen: (path: string) => void }) {
           <ActionCard
             icon={<BranchIcon size={22} />}
             title="Clone a repository"
-            detail={account ? `From GitHub · @${account.login}` : 'From GitHub · Sign in first'}
+            detail={
+              account && !account.expired
+                ? `From GitHub · @${account.login}`
+                : account?.expired
+                  ? 'From GitHub · Sign in again'
+                  : 'From GitHub · Sign in first'
+            }
             onClick={() => setDialog({ kind: 'clone' })}
           />
           <ActionCard

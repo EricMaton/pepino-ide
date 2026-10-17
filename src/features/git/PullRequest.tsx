@@ -4,7 +4,7 @@ import { Button, Dialog, TextField } from '../../ui/components';
 import { cx } from '../../ui/cx';
 import { BranchIcon, OpenIcon, PlusIcon } from '../../ui/icons';
 import { useSnackbar } from '../../ui/useSnackbar';
-import { GitHubError, parseGitHubUrl, type PullRequest, type RepoRef } from '../github/github';
+import { GitHubError, isSignedIn, parseGitHubUrl, type PullRequest, type RepoRef } from '../github/github';
 import { GitHubLoginDialog } from '../github/GitHubLoginDialog';
 import { useGitHubAccount } from '../github/useGitHubAccount';
 import { errorMessage } from '../projects/errors';
@@ -29,13 +29,21 @@ export function PullRequestRow({ path, branch, state }: { path: string; branch: 
   const [failed, setFailed] = useState<GitHubError | null>(null);
   const [creating, setCreating] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
+  // Bumped to read again: a tap after no connection, or the connection coming back
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    const online = () => setAttempt((value) => value + 1);
+    window.addEventListener('online', online);
+    return () => window.removeEventListener('online', online);
+  }, []);
 
   // The repository on GitHub, its default branch and this branch's pull request; again once signed in
   useEffect(() => {
     let active = true;
     (async () => {
       const repo = parseGitHubUrl(await git.originUrl(path));
-      if (!repo || !account) return null;
+      if (!repo || !isSignedIn(account)) return null;
       return { repo, ...(await github.pullRequestFor(repo, branch)) };
     })().then(
       (found) => {
@@ -52,23 +60,37 @@ export function PullRequestRow({ path, branch, state }: { path: string; branch: 
     return () => {
       active = false;
     };
-  }, [git, github, path, branch, account]);
+  }, [git, github, path, branch, account, attempt]);
 
   if (signingIn)
     return <GitHubLoginDialog onClose={() => setSigningIn(false)} onSignedIn={() => setSigningIn(false)} />;
 
-  if (account === null || failed?.code === 'UNAUTHORIZED') {
+  if (account === null || account?.expired || failed?.code === 'UNAUTHORIZED') {
     return (
       <Row
         icon={<BranchIcon size={20} />}
         title="Pull requests"
-        detail="Sign in to GitHub to see and create them"
+        detail={
+          account?.expired || failed?.code === 'UNAUTHORIZED'
+            ? `GitHub no longer accepts your sign-in · sign in again${account ? ` as @${account.login}` : ''}`
+            : 'Sign in to GitHub to see and create them'
+        }
         onClick={() => setSigningIn(true)}
       />
     );
   }
+  if (failed?.code === 'NETWORK') {
+    return (
+      <Row
+        icon={<BranchIcon size={20} />}
+        title="Pull requests"
+        detail={`${failed.message} · tap to try again`}
+        onClick={() => setAttempt((value) => value + 1)}
+      />
+    );
+  }
   if (failed) {
-    return null; // not a repository GitHub shows (or no connection): no row rather than a wrong one
+    return null; // not a repository GitHub shows: no row rather than a wrong one
   }
   if (!known || branch === known.defaultBranch) return null;
 
@@ -155,7 +177,7 @@ function explain(error: unknown): string {
       case 'NOT_FOUND':
         return 'GitHub does not show this repository to you.';
       case 'NETWORK':
-        return 'No connection to GitHub. Try again.';
+        return `${error.message}. Try again.`;
       case 'RATE_LIMITED':
         return error.message;
     }
@@ -214,8 +236,18 @@ function CreatePullRequestDialog({
     }
   };
 
-  if (signingIn)
-    return <GitHubLoginDialog onClose={() => setSigningIn(false)} onSignedIn={() => setSigningIn(false)} />;
+  if (signingIn) {
+    // Signed in again (#36): the pull request GitHub refused is created now
+    return (
+      <GitHubLoginDialog
+        onClose={() => setSigningIn(false)}
+        onSignedIn={() => {
+          setSigningIn(false);
+          void create();
+        }}
+      />
+    );
+  }
   if (choosing) {
     return (
       <BaseDialog

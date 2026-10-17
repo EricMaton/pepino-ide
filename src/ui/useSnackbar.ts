@@ -1,6 +1,12 @@
 import { createContext, useContext } from 'react';
 
-export type ShowSnackbar = (message: string) => void;
+/** A button on the snackbar ("Retry"); tapping it also dismisses the snackbar. */
+export interface SnackbarAction {
+  label: string;
+  onAction: () => void;
+}
+
+export type ShowSnackbar = (message: string, action?: SnackbarAction) => void;
 
 export const SnackbarContext = createContext<ShowSnackbar | null>(null);
 
