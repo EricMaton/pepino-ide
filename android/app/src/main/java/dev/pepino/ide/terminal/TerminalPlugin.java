@@ -49,25 +49,6 @@ public class TerminalPlugin extends Plugin {
         }
     };
 
-    private File projectSpace() {
-        return new File(getContext().getFilesDir(), "projects");
-    }
-
-    /** The shell's environment: a terminal that speaks UTF-8, Android's own tools, the app's home. */
-    private String[] environment() {
-        File home = getContext().getFilesDir();
-        return new String[] {
-            "TERM=xterm-256color",
-            "COLORTERM=truecolor",
-            "LANG=en_US.UTF-8",
-            "HOME=" + home.getAbsolutePath(),
-            "TMPDIR=" + getContext().getCacheDir().getAbsolutePath(),
-            "PATH=" + getContext().getApplicationInfo().nativeLibraryDir + ":/system/bin:/system/xbin",
-            "ANDROID_DATA=/data",
-            "ANDROID_ROOT=/system",
-        };
-    }
-
     private TerminalSession session(PluginCall call) {
         Integer id = call.getInt("id");
         TerminalSession session = id == null ? null : sessions.get(id);
@@ -79,14 +60,15 @@ public class TerminalPlugin extends Plugin {
     @PluginMethod
     public void spawn(PluginCall call) {
         try {
-            File cwd = GitOps.resolve(projectSpace(), call.getString("cwd", ""));
-            if (!cwd.isDirectory()) cwd = projectSpace();
+            File projects = ShellEnvironment.projects(getContext());
+            File cwd = GitOps.resolve(projects, call.getString("cwd", ""));
+            if (!cwd.isDirectory()) cwd = projects;
             int id = nextId.getAndIncrement();
             TerminalSession session = TerminalSession.start(
                 id,
                 cwd.getCanonicalPath(),
-                new String[] { "/system/bin/sh", "-l" },
-                environment(),
+                ShellEnvironment.SHELL,
+                ShellEnvironment.of(getContext()),
                 call.getInt("rows", 24),
                 call.getInt("cols", 80),
                 listener
