@@ -115,6 +115,19 @@
   opacity: 0.8;
 }
 
+/* A plugin's theme (#52): its background, text and accent */
+.themePreview {
+  display: flex;
+  align-self: stretch;
+  height: 14px;
+  margin-bottom: var(--space-1);
+  border: var(--stroke) solid currentColor;
+}
+
+.themePreview > span {
+  flex: 1;
+}
+
 .swatches {
   display: flex;
   flex-wrap: wrap;

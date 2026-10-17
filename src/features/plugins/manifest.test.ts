@@ -28,6 +28,7 @@ describe('plugin manifest (#46)', () => {
           commands: [{ id: 'hello', title: 'Say hello' }],
           toolbar: [{ command: 'hello', icon: 'wave' }],
           settings: [{ key: 'greeting', type: 'string', default: 'Hola' }],
+          themes: [],
         },
       },
     });

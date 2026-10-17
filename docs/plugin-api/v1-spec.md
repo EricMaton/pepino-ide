@@ -8,7 +8,7 @@ Nunca binarios nativos: es lo que los hace portables (Android/iOS) y legales en 
 ```
 my-plugin/
 ├── plugin.json   ← manifest
-└── main.js       ← script
+└── main.js       ← script (opcional si el plugin no tiene comandos: p. ej. solo temas)
 ```
 
 ## Manifest (`plugin.json`)
@@ -62,6 +62,34 @@ plugin.onActivate(api => {
 | `console.log/warn/error` | — | Al log del plugin (SETTINGS → Plugins, #57) |
 
 Una llamada sin el permiso se rechaza en el host (la promesa falla con `Not allowed: <permiso>`) y queda en el log del plugin. `git.*`, `fs.*` y la red llegan con los plugins de ejemplo (#51–#53) y la gestión de plugins (Sprint 7).
+
+### Temas (#52)
+
+Un plugin puede traer temas en `contributes.themes`, sin código: solo colores sobre una base (`dark` o `light`). Salen en SETTINGS → Appearance mientras el plugin está encendido.
+
+```json
+"contributes": {
+  "themes": [
+    {
+      "id": "night",
+      "label": "Pickle night",
+      "base": "dark",
+      "colors": { "bg": "#0d1410", "fg": "#e6f2e8", "primary": "#3fbf5f", "onPrimary": "#0a0a0a" }
+    }
+  ]
+}
+```
+
+| Color | Qué pinta |
+|---|---|
+| `bg`, `fg` | Fondo y texto |
+| `surface`, `surfaceVariant` | Superficies y paneles (tarjetas, barras) |
+| `primary`, `onPrimary` | El acento y el texto sobre él (si falta `onPrimary`, se elige blanco o negro según el acento) |
+| `error`, `outline` | Errores y bordes/texto apagado |
+| `gitAdded`, `gitModified`, `gitRemoved`, `onGit` | Los colores de git y el texto sobre ellos |
+
+- Solo esos nombres y solo `#rrggbb`: un tema no puede meter CSS propio. Un color que falta queda como el de su base.
+- El tema elegido se guarda con una copia de sus colores, para pintarse bien desde el arranque. Si se apaga o desinstala el plugin, la app vuelve a la base del tema; si vuelve el plugin, vuelve el tema.
 
 ## Permisos (v1)
 

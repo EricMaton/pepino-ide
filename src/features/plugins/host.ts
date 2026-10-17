@@ -122,6 +122,13 @@ export class PluginHost {
     this.plugins.set(manifest.id, running);
     this.changed();
 
+    // Nothing to run (it only brings themes, say): no worker
+    if (plugin.main.trim() === '') {
+      running.status = { ...running.status, state: 'running' };
+      this.changed();
+      return;
+    }
+
     const handlers = this.handlers(manifest);
     const connection = this.deps.connect({
       call: async (method, args) => {

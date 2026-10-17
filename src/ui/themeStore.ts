@@ -1,19 +1,32 @@
 import { Capacitor, SystemBars, SystemBarsStyle } from '@capacitor/core';
 import type { KeyValueStore } from '../core/storage';
-import { applyTheme, parseThemeChoice, type ResolvedTheme, resolveTheme, THEME_KEY, type ThemeChoice } from './theme';
+import {
+  applyTheme,
+  type ContributedTheme,
+  parseThemeChoice,
+  type ResolvedTheme,
+  resolveTheme,
+  THEME_KEY,
+  type ThemeChoice,
+} from './theme';
 
 /**
  * The theme chosen (#44): kept in the preferences, applied to the page as
  * soon as the app starts, again when it changes, and when the phone's own
  * appearance does (System). A copy in localStorage is read before the first
  * paint, so a light theme does not flash dark while the preferences load.
+ * The themes plugins bring (#52) arrive once the plugins have loaded.
  */
 export interface ThemeStore {
   choice(): ThemeChoice;
   /** What it comes to now (System follows the phone). */
   resolved(): ResolvedTheme;
   set(choice: ThemeChoice): Promise<void>;
-  /** Called with the choice whenever it, or what it resolves to, changes. */
+  /** The themes of the running plugins; null until they have loaded. */
+  contributed(): readonly ContributedTheme[] | null;
+  /** The plugins have loaded, or started or stopped one: these are the themes they bring now. */
+  setContributed(themes: readonly ContributedTheme[]): void;
+  /** Called with the choice whenever it, what it resolves to, or the plugins' themes change. */
   subscribe(listener: (choice: ThemeChoice) => void): () => void;
 }
 
@@ -37,9 +50,10 @@ const mirror = {
 export function createThemeStore(preferences: KeyValueStore): ThemeStore {
   const dark = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null;
   let choice = parseThemeChoice(mirror.read());
+  let contributed: readonly ContributedTheme[] | null = null;
   const listeners = new Set<(choice: ThemeChoice) => void>();
 
-  const resolved = () => resolveTheme(choice, dark?.matches ?? true);
+  const resolved = () => resolveTheme(choice, dark?.matches ?? true, contributed);
   const apply = () => {
     const theme = resolved();
     applyTheme(theme);
@@ -77,6 +91,24 @@ export function createThemeStore(preferences: KeyValueStore): ThemeStore {
       mirror.write(raw);
       apply();
       await preferences.set(THEME_KEY, raw);
+    },
+    contributed: () => contributed,
+    setContributed(themes) {
+      contributed = themes;
+      // A plugin's theme chosen and still there: its saved copy follows it, for the next start
+      const chosen = choice;
+      const theme = chosen.mode === 'plugin' ? themes.find((candidate) => candidate.id === chosen.id) : undefined;
+      if (
+        chosen.mode === 'plugin' &&
+        theme &&
+        (theme.base !== chosen.base || JSON.stringify(theme.colors) !== JSON.stringify(chosen.colors))
+      ) {
+        choice = { mode: 'plugin', id: theme.id, base: theme.base, colors: theme.colors };
+        const raw = JSON.stringify(choice);
+        mirror.write(raw);
+        preferences.set(THEME_KEY, raw).catch(() => undefined);
+      }
+      apply();
     },
     subscribe(listener) {
       listeners.add(listener);

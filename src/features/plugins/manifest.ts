@@ -1,8 +1,10 @@
+import { parseThemeColors, type ThemeBase, type ThemeColors } from '../../ui/theme';
+
 /*
  * A plugin's manifest, plugin.json (#46, docs/plugin-api/v1-spec.md): who it
  * is, which API version it speaks, the permissions it asks for, and what it
- * contributes (commands, toolbar keys, settings). Read from untrusted JSON:
- * everything is checked, and a plugin whose manifest fails is not loaded.
+ * contributes (commands, toolbar keys, settings, themes). Read from untrusted
+ * JSON: everything is checked, and a plugin whose manifest fails is not loaded.
  */
 
 /** The API versions this Pepino runs. A plugin for another one is refused, never half-run. */
@@ -40,6 +42,15 @@ export interface SettingContribution {
   title?: string;
 }
 
+/** A theme (#52): colours over a base, only the semantic tokens, each #rrggbb (no CSS of its own). */
+export interface ThemeContribution {
+  /** Unique within the plugin; the app's id is `<plugin id>.<id>`. */
+  id: string;
+  label: string;
+  base: ThemeBase;
+  colors: ThemeColors;
+}
+
 export interface PluginManifest {
   /** Reverse-domain: "com.example.beautifier". */
   id: string;
@@ -54,6 +65,7 @@ export interface PluginManifest {
     commands: CommandContribution[];
     toolbar: ToolbarContribution[];
     settings: SettingContribution[];
+    themes: ThemeContribution[];
   };
 }
 
@@ -150,6 +162,27 @@ export function parseManifest(text: string): ManifestResult {
     }
   }
 
+  const themes: ThemeContribution[] = [];
+  for (const [i, theme] of list('themes').entries()) {
+    if (
+      !isObject(theme) ||
+      !isText(theme.id) ||
+      !LOCAL_ID.test(theme.id) ||
+      !isText(theme.label) ||
+      (theme.base !== 'dark' && theme.base !== 'light')
+    ) {
+      errors.push(`contributes.themes[${i}]: { id, label, base: dark|light, colors }`);
+      continue;
+    }
+    if (themes.some((other) => other.id === theme.id)) {
+      errors.push(`contributes.themes[${i}]: "${theme.id}" twice`);
+      continue;
+    }
+    const { colors, errors: wrong } = parseThemeColors(theme.colors ?? {});
+    for (const error of wrong) errors.push(`contributes.themes[${i}].colors: ${error}`);
+    themes.push({ id: theme.id, label: theme.label.trim(), base: theme.base, colors });
+  }
+
   if (errors.length > 0) return { ok: false, errors };
   return {
     ok: true,
@@ -161,7 +194,7 @@ export function parseManifest(text: string): ManifestResult {
       ...(typeof raw.description === 'string' && { description: raw.description }),
       permissions,
       ...(isText(raw.networkJustification) && { networkJustification: raw.networkJustification }),
-      contributes: { commands, toolbar, settings },
+      contributes: { commands, toolbar, settings, themes },
     },
   };
 }
