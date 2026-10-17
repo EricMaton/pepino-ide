@@ -340,3 +340,67 @@ describe('memory git engine: discarding (#138)', () => {
     expect(await git.status('app')).toEqual([]);
   });
 });
+
+describe('memory git engine: stash (#139)', () => {
+  beforeEach(async () => {
+    await git.init('app');
+    await git.setIdentity({ name: 'Pepino', email: 'me@pepino.dev' });
+    await space.writeTextFile('app/a.txt', 'one\n');
+    await space.writeTextFile('app/gone.txt', 'bye\n');
+    await git.commit('app', { message: 'first', paths: ['a.txt', 'gone.txt'] });
+  });
+
+  it('sets the changes aside for the branch, and restores them', async () => {
+    await space.writeTextFile('app/a.txt', 'mine\n');
+    await space.delete('app/gone.txt');
+    await space.writeTextFile('app/new.txt', 'fresh\n');
+    expect(await git.stash('app')).toBeNull();
+
+    const stash = await git.stashChanges('app');
+
+    expect(stash.branch).toBe('main');
+    expect(stash.files.map((file) => `${file.path}:${file.kind}`)).toEqual([
+      'a.txt:modified',
+      'gone.txt:deleted',
+      'new.txt:new',
+    ]);
+    expect(await git.status('app')).toEqual([]);
+    expect(await space.readTextFile('app/a.txt')).toBe('one\n');
+    expect(await git.stash('app')).toMatchObject({ branch: 'main' });
+    expect((await git.snapshotVersions('app', 'a.txt'))[0].reason).toBe('Before stashing changes on main');
+
+    await git.restoreStash('app');
+
+    expect(await space.readTextFile('app/a.txt')).toBe('mine\n');
+    expect(await space.readTextFile('app/new.txt')).toBe('fresh\n');
+    await expect(space.readTextFile('app/gone.txt')).rejects.toThrow();
+    expect(await git.stash('app')).toBeNull();
+  });
+
+  it('keeps one stash per branch; restoring needs a branch without changes', async () => {
+    await space.writeTextFile('app/a.txt', 'on main\n');
+    await git.stashChanges('app');
+    await git.createBranch('app', 'feature');
+    expect(await git.stash('app')).toBeNull();
+    await expect(git.stashChanges('app')).rejects.toThrow(/No changes/);
+
+    await git.checkout('app', 'main');
+    await space.writeTextFile('app/gone.txt', 'in the way\n');
+    await expect(git.restoreStash('app')).rejects.toMatchObject({ code: 'CONFLICT', paths: ['gone.txt'] });
+
+    await git.dropStash('app');
+    expect(await git.stash('app')).toBeNull();
+    await expect(git.dropStash('app')).rejects.toThrow(/No stashed changes/);
+  });
+
+  it('a stash that no longer fits the branch changes nothing and stays', async () => {
+    await space.writeTextFile('app/a.txt', 'mine\n');
+    await git.stashChanges('app');
+    await space.writeTextFile('app/a.txt', 'committed meanwhile\n');
+    await git.commit('app', { message: 'meanwhile', paths: ['a.txt'] });
+
+    await expect(git.restoreStash('app')).rejects.toThrow(/conflict/);
+    expect(await space.readTextFile('app/a.txt')).toBe('committed meanwhile\n');
+    expect(await git.stash('app')).not.toBeNull();
+  });
+});

@@ -32,6 +32,8 @@ export function BranchesDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<{ name: string; notMerged: boolean } | null>(null);
+  // Switching with uncommitted changes (#139): where they go
+  const [leaving, setLeaving] = useState<{ target: string; changes: number; stashed: boolean } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -59,6 +61,21 @@ export function BranchesDialog({
     }
   };
 
+  /** Switches to [target]; with changes, asks first whether they stay here (stashed) or come along. */
+  const switchTo = async (target: string) => {
+    setError(null);
+    try {
+      const [changes, stash] = await Promise.all([git.status(path), git.stash(path)]);
+      if (changes.length > 0) {
+        setLeaving({ target, changes: changes.length, stashed: stash !== null });
+        return;
+      }
+    } catch {
+      // Unknown: switch as before, which refuses when changes are in the way
+    }
+    void run(() => git.checkout(path, target));
+  };
+
   const taken = new Set(branches?.map((branch) => branch.name));
   const local = branches?.filter((branch) => !branch.remote) ?? [];
   const remote = branches?.filter((branch) => branch.remote) ?? [];
@@ -83,7 +100,63 @@ export function BranchesDialog({
     }
   };
 
-  return (
+  return leaving ? (
+    <Dialog title="You have changes" eyebrow={`${repo.branch} → ${leaving.target}`} onClose={() => setLeaving(null)}>
+      <div className={styles.branches}>
+        <p className="body">
+          {leaving.changes} changed {leaving.changes === 1 ? 'file' : 'files'} on {repo.branch}. Where should{' '}
+          {leaving.changes === 1 ? 'it' : 'they'} go?
+        </p>
+        <div className={styles.actionList}>
+          <Button
+            variant="text"
+            listItem
+            disabled={busy}
+            onClick={() => {
+              const { target } = leaving;
+              void run(async () => {
+                await git.stashChanges(path);
+                return git.checkout(path, target);
+              });
+            }}
+          >
+            <span className="accent" aria-hidden>
+              ›
+            </span>
+            <span className={styles.changeText}>
+              <span className="body">Leave them on {repo.branch}</span>
+              <span className="caption muted">
+                Stashed, to restore when you come back
+                {leaving.stashed ? ': replaces the changes stashed there before' : ''}
+              </span>
+            </span>
+          </Button>
+          <Button
+            variant="text"
+            listItem
+            disabled={busy}
+            onClick={() => {
+              const { target } = leaving;
+              void run(() => git.checkout(path, target));
+            }}
+          >
+            <span className="accent" aria-hidden>
+              ›
+            </span>
+            <span className={styles.changeText}>
+              <span className="body">Bring them to {leaving.target}</span>
+              <span className="caption muted">They stay in Changes, on the other branch</span>
+            </span>
+          </Button>
+        </div>
+        {error && (
+          <p className={cx('caption', styles.branchError)} role="alert">
+            ✕ {error}
+          </p>
+        )}
+      </div>
+    </Dialog>
+  ) : (
     <Dialog title="Branches" eyebrow={`CURRENT · ${repo.branch}`} onClose={onClose}>
       <div className={styles.branches}>
         <form
@@ -128,7 +201,7 @@ export function BranchesDialog({
                     className={styles.branchMain}
                     aria-current={branch.current ? 'true' : undefined}
                     disabled={branch.current || busy}
-                    onClick={() => void run(() => git.checkout(path, branch.name))}
+                    onClick={() => void switchTo(branch.name)}
                   >
                     <BranchIcon size={20} />
                     <span className={cx('body', 'ellipsis', styles.repoName)}>{branch.name}</span>
@@ -163,7 +236,7 @@ export function BranchesDialog({
                     className={styles.branchMain}
                     aria-label={`Switch to ${branch.name}, from GitHub`}
                     disabled={busy}
-                    onClick={() => void run(() => git.checkout(path, branch.name))}
+                    onClick={() => void switchTo(branch.name)}
                   >
                     <BranchIcon size={20} />
                     <span className={cx('body', 'ellipsis', styles.repoName)}>{branch.name}</span>

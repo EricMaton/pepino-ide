@@ -19,10 +19,12 @@ import org.eclipse.jgit.api.CreateBranchCommand;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.MergeCommand;
 import org.eclipse.jgit.api.MergeResult;
+import org.eclipse.jgit.api.ResetCommand;
 import org.eclipse.jgit.api.Status;
 import org.eclipse.jgit.api.errors.CheckoutConflictException;
 import org.eclipse.jgit.api.errors.EmptyCommitException;
 import org.eclipse.jgit.api.errors.NotMergedException;
+import org.eclipse.jgit.api.errors.StashApplyFailureException;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.api.errors.TransportException;
 import org.eclipse.jgit.diff.DiffAlgorithm;
@@ -1228,6 +1230,164 @@ public final class GitOps {
             }
             changes.sort((a, b) -> a.path().compareTo(b.path()));
             return changes;
+        }
+    }
+
+    /** A branch's stashed changes (#139): when they were stashed, and the files. */
+    public record Stash(String branch, long time, List<FileChange> files) {}
+
+    /** What stashing or restoring did: the stash (null once restored), and the files written and removed. */
+    public record Stashed(Stash stash, List<String> written, List<String> removed) {}
+
+    /**
+     * GitHub Desktop's stash marker: one stash per branch, named after it
+     * ("On main: !!GitHub_Desktop<main>", as `git stash push -m` writes it).
+     * The same, so Desktop on a computer shows a stash made in Pepino, and
+     * the other way round.
+     */
+    static String stashMessage(String branch) {
+        return "!!GitHub_Desktop<" + branch + ">";
+    }
+
+    /** The position (stash@{n}) of [branch]'s stash, or -1. */
+    private static int stashIndex(Git git, String branch) throws GitAPIException {
+        int index = 0;
+        for (RevCommit commit : git.stashList().call()) {
+            if (commit.getFullMessage().trim().endsWith(stashMessage(branch))) return index;
+            index++;
+        }
+        return -1;
+    }
+
+    /** [stash] as the files it holds: its changes on the commit it was made on, and the untracked files it took. */
+    private static Stash describeStash(Repository repository, String branch, ObjectId id) throws IOException {
+        try (RevWalk walk = new RevWalk(repository)) {
+            RevCommit stash = walk.parseCommit(id);
+            Map<String, String> files = new TreeMap<>();
+            try (TreeWalk trees = new TreeWalk(repository)) {
+                trees.addTree(walk.parseCommit(stash.getParent(0)).getTree());
+                trees.addTree(stash.getTree());
+                trees.setRecursive(true);
+                trees.setFilter(TreeFilter.ANY_DIFF);
+                for (DiffEntry entry : DiffEntry.scan(trees)) {
+                    switch (entry.getChangeType()) {
+                        case ADD -> files.put(entry.getNewPath(), "new");
+                        case DELETE -> files.put(entry.getOldPath(), "deleted");
+                        default -> files.put(entry.getNewPath(), "modified");
+                    }
+                }
+            }
+            // The untracked files: a third parent
+            if (stash.getParentCount() > 2) {
+                try (TreeWalk untracked = new TreeWalk(repository)) {
+                    untracked.addTree(walk.parseCommit(stash.getParent(2)).getTree());
+                    untracked.setRecursive(true);
+                    while (untracked.next()) files.put(untracked.getPathString(), "new");
+                }
+            }
+            List<FileChange> changes = new ArrayList<>();
+            for (Map.Entry<String, String> file : files.entrySet()) changes.add(new FileChange(file.getKey(), file.getValue()));
+            return new Stash(branch, stash.getCommitterIdent().getWhen().getTime(), changes);
+        }
+    }
+
+    /** The current branch's stashed changes, or null. */
+    public static Stash stash(File folder) throws IOException, GitAPIException {
+        try (Git git = Git.open(folder)) {
+            Repository repository = git.getRepository();
+            String branch = repository.getBranch();
+            int index = stashIndex(git, branch);
+            if (index < 0) return null;
+            return describeStash(repository, branch, repository.resolve("stash@{" + index + "}"));
+        }
+    }
+
+    /**
+     * GitHub Desktop's Stash all changes (#139): every uncommitted change,
+     * new files too, set aside for this branch, which is left as its last
+     * commit. A stash the branch had is replaced (Desktop asks first; so
+     * does Pepino's screen). A snapshot is taken first.
+     */
+    public static Stashed stashChanges(File folder, Identity who) throws IOException, GitAPIException {
+        try (Git git = Git.open(folder)) {
+            Repository repository = git.getRepository();
+            if (repository.resolve(Constants.HEAD) == null) throw new IllegalStateException("Make the first commit before stashing");
+            clearStaleLocks(repository);
+            excludePepino(repository);
+            List<FileChange> changes = status(folder);
+            if (changes.isEmpty()) throw new IllegalArgumentException("No changes to stash");
+            String branch = repository.getBranch();
+            snapshot(repository, "Before stashing changes on " + branch);
+            int old = stashIndex(git, branch);
+            if (old >= 0) git.stashDrop().setStashRef(old).call();
+            PersonIdent person = who != null ? new PersonIdent(who.name(), who.email()) : new PersonIdent("Pepino", "stash@pepino.dev");
+            RevCommit stash = git
+                .stashCreate()
+                .setIncludeUntracked(true)
+                // A MessageFormat pattern: the branch name goes in quoted, as is
+                .setWorkingDirectoryMessage("'" + ("On " + branch + ": " + stashMessage(branch)).replace("'", "''") + "'")
+                .setIndexMessage("'Index of " + stashMessage(branch).replace("'", "''") + "'")
+                .setPerson(person)
+                .call();
+            if (stash == null) throw new IllegalArgumentException("No changes to stash");
+            List<String> written = new ArrayList<>();
+            List<String> removed = new ArrayList<>();
+            for (FileChange change : changes) {
+                if ("new".equals(change.kind())) removed.add(change.path());
+                else written.add(change.path());
+            }
+            return new Stashed(describeStash(repository, branch, stash), written, removed);
+        }
+    }
+
+    /**
+     * Brings back the current branch's stashed changes and drops the stash.
+     * Like GitHub Desktop, only onto a branch without changes ([ConflictException]).
+     * When they no longer fit the branch's newer commits, nothing changes and
+     * the stash stays.
+     */
+    public static Stashed restoreStash(File folder) throws IOException, GitAPIException {
+        try (Git git = Git.open(folder)) {
+            Repository repository = git.getRepository();
+            String branch = repository.getBranch();
+            int index = stashIndex(git, branch);
+            if (index < 0) throw new IllegalStateException("No stashed changes on " + branch);
+            List<FileChange> changes = status(folder);
+            if (!changes.isEmpty()) {
+                List<String> paths = new ArrayList<>();
+                for (FileChange change : changes) paths.add(change.path());
+                throw new ConflictException(paths, "restoring the stash");
+            }
+            clearStaleLocks(repository);
+            Stash stash = describeStash(repository, branch, repository.resolve("stash@{" + index + "}"));
+            try {
+                git.stashApply().setStashRef("stash@{" + index + "}").setRestoreUntracked(true).call();
+            } catch (StashApplyFailureException e) {
+                // Back to the clean branch it was: the stash is still there
+                git.reset().setMode(ResetCommand.ResetType.HARD).call();
+                git.clean().setCleanDirectories(true).call();
+                throw new IllegalStateException(
+                    "The stashed changes conflict with commits made on " + branch + " since: nothing was changed, the stash is kept"
+                );
+            }
+            git.stashDrop().setStashRef(index).call();
+            List<String> written = new ArrayList<>();
+            List<String> removed = new ArrayList<>();
+            for (FileChange change : stash.files()) {
+                if ("deleted".equals(change.kind())) removed.add(change.path());
+                else written.add(change.path());
+            }
+            return new Stashed(null, written, removed);
+        }
+    }
+
+    /** Throws away the current branch's stashed changes. */
+    public static void dropStash(File folder) throws IOException, GitAPIException {
+        try (Git git = Git.open(folder)) {
+            String branch = git.getRepository().getBranch();
+            int index = stashIndex(git, branch);
+            if (index < 0) throw new IllegalStateException("No stashed changes on " + branch);
+            git.stashDrop().setStashRef(index).call();
         }
     }
 

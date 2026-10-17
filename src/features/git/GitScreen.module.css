@@ -885,3 +885,42 @@ button.line {
   border-top: var(--border);
   background: var(--surface-variant);
 }
+
+/* The branch's stash (#139): a row above the changed files */
+.stashHolder {
+  flex: none;
+}
+
+.stashRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 56px;
+  padding: var(--space-2) var(--space-4);
+  border: none;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface-variant);
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.stashRow:active {
+  background: var(--bg);
+}
+
+.stashFiles {
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--hairline);
+  list-style: none;
+}
+
+.stashFile {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 48px;
+  border-bottom: 1px solid var(--hairline);
+}

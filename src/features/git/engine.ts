@@ -57,6 +57,13 @@ export interface LogEntry {
   time: number;
 }
 
+/** A branch's stashed changes (#139): when they were stashed, and the files. */
+export interface StashInfo {
+  branch: string;
+  time: number;
+  files: FileChange[];
+}
+
 /** A snapshot holding one version of a file: when it was taken, and why. */
 export interface SnapshotVersion {
   id: string;
@@ -176,6 +183,22 @@ export interface GitEngine {
     path: string,
     change: { paths: readonly string[]; lines?: Readonly<Record<string, LineExclusion>> },
   ): Promise<void>;
+  /** The current branch's stashed changes (#139), or null. One per branch, as GitHub Desktop keeps them. */
+  stash(path: string): Promise<StashInfo | null>;
+  /**
+   * GitHub Desktop's Stash all changes: every uncommitted change, new files
+   * too, set aside for this branch, which is left as its last commit. It
+   * replaces a stash the branch had. A snapshot is taken first.
+   */
+  stashChanges(path: string): Promise<StashInfo>;
+  /**
+   * Brings the branch's stashed changes back and drops the stash. Only onto
+   * a branch without changes (CONFLICT, with the files in the way); when they
+   * no longer fit the branch's newer commits, nothing changes and the stash stays.
+   */
+  restoreStash(path: string): Promise<void>;
+  /** Throws the branch's stashed changes away. */
+  dropStash(path: string): Promise<void>;
   /** The commits reachable from HEAD, newest first: [limit] after skipping [skip]. None before the first commit. */
   log(path: string, page?: { skip?: number; limit?: number }): Promise<LogEntry[]>;
   /** The files [commit] changed against its first parent (all new in a first commit), sorted by path. */
@@ -260,6 +283,10 @@ interface GitPlugin {
     paths: string[];
     lines: Record<string, LineExclusion>;
   }): Promise<{ written: string[]; removed: string[] }>;
+  stash(options: { path: string }): Promise<{ stash: StashInfo | null }>;
+  stashChanges(options: { path: string }): Promise<{ stash: StashInfo; written: string[]; removed: string[] }>;
+  restoreStash(options: { path: string }): Promise<{ written: string[]; removed: string[] }>;
+  dropStash(options: { path: string }): Promise<void>;
   log(options: { path: string; skip: number; limit: number }): Promise<{ commits: LogEntry[] }>;
   commitChanges(options: { path: string; commit: string }): Promise<{ changes: FileChange[] }>;
   commitDiff(options: { path: string; commit: string; file: string }): Promise<FileDiff>;
@@ -345,6 +372,31 @@ export function createNativeGitEngine(announce: Announce): GitEngine {
         });
       for (const file of discarded.written) announce('fs.written', { path: joinPath(folder, file) });
       for (const file of discarded.removed) announce('fs.deleted', { path: joinPath(folder, file) });
+    },
+    async stash(path) {
+      return (await git.stash({ path: project(path) })).stash;
+    },
+    async stashChanges(path) {
+      const folder = project(path);
+      const stashed = await git.stashChanges({ path: folder }).catch((error: unknown) => {
+        throw gitError(error);
+      });
+      for (const file of stashed.written) announce('fs.written', { path: joinPath(folder, file) });
+      for (const file of stashed.removed) announce('fs.deleted', { path: joinPath(folder, file) });
+      return stashed.stash;
+    },
+    async restoreStash(path) {
+      const folder = project(path);
+      const restored = await git.restoreStash({ path: folder }).catch((error: unknown) => {
+        throw gitError(error);
+      });
+      for (const file of restored.written) announce('fs.written', { path: joinPath(folder, file) });
+      for (const file of restored.removed) announce('fs.deleted', { path: joinPath(folder, file) });
+    },
+    async dropStash(path) {
+      await git.dropStash({ path: project(path) }).catch((error: unknown) => {
+        throw gitError(error);
+      });
     },
     async log(path, { skip = 0, limit = LOG_PAGE } = {}) {
       return (await git.log({ path: project(path), skip, limit })).commits;
@@ -491,6 +543,20 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
   };
   const writeLog = (folder: string, log: Log) =>
     space.writeTextFile(gitPath(folder, 'pepino-log.json'), JSON.stringify(log));
+
+  /** Stashed changes by branch: each file as stashed (null: deleted), and as the branch had it then. */
+  type StashedFiles = {
+    time: number;
+    changes: FileChange[];
+    files: Record<string, string | null>;
+    base: Record<string, string | null>;
+  };
+  const readStashes = async (folder: string): Promise<Record<string, StashedFiles>> => {
+    const raw = await space.readTextFile(gitPath(folder, 'pepino-stashes.json')).catch(() => '{}');
+    return JSON.parse(raw) as Record<string, StashedFiles>;
+  };
+  const writeStashes = (folder: string, stashes: Record<string, StashedFiles>) =>
+    space.writeTextFile(gitPath(folder, 'pepino-stashes.json'), JSON.stringify(stashes));
 
   /** The snapshots, newest first, each with the files as they were. */
   type Snapshots = (SnapshotVersion & { files: Snapshot })[];
@@ -669,6 +735,77 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
         else if (file in head) await writeFile(folder, file, head[file]);
         else if (files.has(file)) await space.delete(joinPath(folder, file));
       }
+    },
+
+    async stash(path) {
+      const folder = await repository(path);
+      const [stashes, branch] = await Promise.all([readStashes(folder), currentBranch(folder)]);
+      const found = stashes[branch];
+      return found ? { branch, time: found.time, files: found.changes } : null;
+    },
+
+    async stashChanges(path) {
+      const folder = await repository(path);
+      const [refs, branch, changes] = await Promise.all([readRefs(folder), currentBranch(folder), engine.status(path)]);
+      if (!(branch in refs)) throw new Error('Make the first commit before stashing');
+      if (changes.length === 0) throw new Error('No changes to stash');
+      await engine.snapshot(folder, `Before stashing changes on ${branch}`);
+      const files = await readFiles(folder);
+      const head = refs[branch];
+      const stashed: StashedFiles = { time: Date.now(), changes, files: {}, base: {} };
+      for (const { path: file } of changes) {
+        stashed.files[file] = files.get(file) ?? null;
+        stashed.base[file] = head[file] ?? null;
+        // The branch as its last commit
+        if (file in head) await writeFile(folder, file, head[file]);
+        else await space.delete(joinPath(folder, file));
+      }
+      const stashes = await readStashes(folder);
+      await writeStashes(folder, { ...stashes, [branch]: stashed });
+      return { branch, time: stashed.time, files: changes };
+    },
+
+    async restoreStash(path) {
+      const folder = await repository(path);
+      const [refs, branch, stashes, changes] = await Promise.all([
+        readRefs(folder),
+        currentBranch(folder),
+        readStashes(folder),
+        engine.status(path),
+      ]);
+      const stashed = stashes[branch];
+      if (!stashed) throw new Error(`No stashed changes on ${branch}`);
+      if (changes.length > 0) {
+        const paths = changes.map((change) => change.path);
+        throw new GitError(
+          'CONFLICT',
+          `Commit your changes to ${basename(paths[0])} before restoring the stash`,
+          paths,
+        );
+      }
+      const head = refs[branch] ?? {};
+      // A file committed since, differently: the stash no longer fits
+      if (Object.entries(stashed.base).some(([file, text]) => (head[file] ?? null) !== text)) {
+        throw new Error(
+          `The stashed changes conflict with commits made on ${branch} since: nothing was changed, the stash is kept`,
+        );
+      }
+      for (const [file, text] of Object.entries(stashed.files)) {
+        if (text === null) await space.delete(joinPath(folder, file));
+        else await writeFile(folder, file, text);
+      }
+      const rest = { ...stashes };
+      delete rest[branch];
+      await writeStashes(folder, rest);
+    },
+
+    async dropStash(path) {
+      const folder = await repository(path);
+      const [branch, stashes] = await Promise.all([currentBranch(folder), readStashes(folder)]);
+      if (!stashes[branch]) throw new Error(`No stashed changes on ${branch}`);
+      const rest = { ...stashes };
+      delete rest[branch];
+      await writeStashes(folder, rest);
     },
 
     async log(path, { skip = 0, limit = LOG_PAGE } = {}) {
