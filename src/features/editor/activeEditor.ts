@@ -1,6 +1,6 @@
 /*
  * The editor on screen (#48), for what acts on "the editor" without being
- * part of it: plugins (api.editor.getText/setText). The editor showing
+ * part of it: plugins (api.editor.getPath/getText/setText). The editor showing
  * registers itself while it shows; the last one registered is current.
  */
 

@@ -91,6 +91,7 @@ const PRELUDE = `
       execute: (id) => call('commands.execute', String(id)),
     }),
     editor: Object.freeze({
+      getPath: () => call('editor.getPath'),
       getText: () => call('editor.getText'),
       setText: (text) => call('editor.setText', String(text)),
       onSave: (listener) => on('file.saved', listener),
