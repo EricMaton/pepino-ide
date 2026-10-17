@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { createMemoryBackend } from '../projects/memoryBackend';
 import { createProjectSpace, type ProjectSpace } from '../projects/projectSpace';
 import { createMemoryGitEngine, type GitEngine } from './engine';
-import { describeSync, syncAction } from './sync';
+import { describeSync, lastFetchedText, syncAction } from './sync';
 
 /*
  * Fetch, pull and push in the web stand-in (#33): what `npm run dev` shows.
@@ -27,11 +27,32 @@ const commit = async (file: string, text: string) => {
 
 describe('memory git engine: sync', () => {
   it('a clone is up to date with GitHub; a repository made here has no GitHub', async () => {
-    expect(await git.sync('hello')).toEqual({ remote: true, upstream: 'origin/main', ahead: 0, behind: 0 });
+    expect(await git.sync('hello')).toMatchObject({ remote: true, upstream: 'origin/main', ahead: 0, behind: 0 });
     await space.createDirectory('local');
     await git.init('local');
-    expect(await git.sync('local')).toEqual({ remote: false, upstream: null, ahead: 0, behind: 0 });
+    expect(await git.sync('local')).toEqual({ remote: false, upstream: null, ahead: 0, behind: 0, lastFetched: null });
     await expect(git.fetch('local')).rejects.toThrow(/not connected/);
+  });
+
+  it('remembers the last fetch: the clone’s, then each fetch’s', async () => {
+    const cloned = (await git.sync('hello')).lastFetched;
+    expect(cloned).toEqual(expect.any(Number));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect((await git.fetch('hello')).lastFetched).toBeGreaterThan(cloned!);
+  });
+
+  it('lists the commits behind the counts', async () => {
+    expect(await git.syncCommits('hello')).toEqual({ toPull: [], toPush: [] });
+    await git.fetch('hello');
+    await commit('README.md', '# hello, mine\n');
+
+    const { toPull, toPush } = await git.syncCommits('hello');
+    expect(toPull.map((entry) => [entry.summary, entry.author])).toEqual([['Add notes', 'teammate']]);
+    expect(toPush.map((entry) => entry.summary)).toEqual(['Edit README.md']);
+    expect(toPush[0]).not.toHaveProperty('files');
+
+    await git.createBranch('hello', 'feature');
+    expect(await git.syncCommits('hello')).toEqual({ toPull: [], toPush: [] });
   });
 
   it('fetch finds a teammate’s commit without touching files, and pull brings it', async () => {
@@ -55,7 +76,7 @@ describe('memory git engine: sync', () => {
     await git.createBranch('hello', 'feature');
     await commit('feature.txt', 'wip\n');
     expect(await git.sync('hello')).toMatchObject({ upstream: null });
-    expect(await git.push('hello')).toEqual({ remote: true, upstream: 'origin/feature', ahead: 0, behind: 0 });
+    expect(await git.push('hello')).toMatchObject({ remote: true, upstream: 'origin/feature', ahead: 0, behind: 0 });
   });
 
   it('push is rejected while GitHub has commits; pull merges, then push goes', async () => {
@@ -92,7 +113,14 @@ describe('memory git engine: sync', () => {
 });
 
 describe('the sync bar', () => {
-  const state = (upstream: string | null, ahead: number, behind: number) => ({ remote: true, upstream, ahead, behind });
+  const state = (upstream: string | null, ahead: number, behind: number) => ({
+    remote: true,
+    upstream,
+    ahead,
+    behind,
+    lastFetched: null,
+  });
+  const NOW = Date.UTC(2026, 9, 17, 12);
 
   it('offers one action: publish, then pull before push, else fetch', () => {
     expect(syncAction(state(null, 3, 0))).toBe('publish');
@@ -102,14 +130,26 @@ describe('the sync bar', () => {
   });
 
   it('says what it would do', () => {
-    expect(describeSync(state(null, 0, 0), 'feature')).toEqual({
+    expect(describeSync(state(null, 0, 0), 'feature', NOW)).toEqual({
       title: 'Publish branch',
       detail: 'feature is not on GitHub yet',
     });
-    expect(describeSync(state('origin/main', 2, 1), 'main').detail).toBe(
+    expect(describeSync(state('origin/main', 2, 1), 'main', NOW).detail).toBe(
       '1 commit on GitHub to bring · 2 to push after',
     );
-    expect(describeSync(state('origin/main', 3, 0), 'main').detail).toBe('3 commits to send to origin/main');
-    expect(describeSync(state('origin/main', 0, 0), 'main').title).toBe('Fetch origin');
+    expect(describeSync(state('origin/main', 3, 0), 'main', NOW).detail).toBe('3 commits to send to origin/main');
+    expect(describeSync(state('origin/main', 0, 0), 'main', NOW)).toEqual({
+      title: 'Fetch origin',
+      detail: 'Never fetched',
+    });
+    const fetched = { ...state('origin/main', 0, 0), lastFetched: NOW - 5 * 60_000 };
+    expect(describeSync(fetched, 'main', NOW).detail).toBe('Last fetched 5m ago');
+  });
+
+  it('says how old the counts are', () => {
+    expect(lastFetchedText(null, NOW)).toBe('Never fetched');
+    expect(lastFetchedText(NOW - 10_000, NOW)).toBe('Last fetched just now');
+    expect(lastFetchedText(NOW - 3 * 3_600_000, NOW)).toBe('Last fetched 3h ago');
+    expect(lastFetchedText(NOW - 30 * 86_400_000, NOW)).toMatch(/^Last fetched on 2026-09-1\d$/);
   });
 });

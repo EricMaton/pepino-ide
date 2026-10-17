@@ -2,7 +2,7 @@ import { type ReactNode, useEffect, useState } from 'react';
 import { useServices } from '../../app/services';
 import { Button, Dialog } from '../../ui/components';
 import { cx } from '../../ui/cx';
-import { CloseIcon, FetchIcon, PullIcon, PushIcon } from '../../ui/icons';
+import { CloseIcon, FetchIcon, HistoryIcon, PullIcon, PushIcon } from '../../ui/icons';
 import { useSnackbar } from '../../ui/useSnackbar';
 import { GitHubLoginDialog } from '../github/GitHubLoginDialog';
 import { errorMessage } from '../projects/errors';
@@ -10,6 +10,7 @@ import { GitError, type RemoteProgress, type SyncState } from './engine';
 import { PullRequestRow } from './PullRequest';
 import { type Action, commits, describeSync, syncAction } from './sync';
 import styles from './SyncBar.module.css';
+import { SyncStatusDialog } from './SyncStatus';
 
 /*
  * GitHub Desktop's sync button (#33), as a bar under the repository and
@@ -17,8 +18,12 @@ import styles from './SyncBar.module.css';
  * GitHub yet; pull when GitHub has commits this branch does not (first, even
  * when there are some to push too); push when this branch has commits
  * GitHub does not; otherwise fetch, to find out. Counts are as of the last
- * fetch: the sync status screen (#35) will say when that was.
+ * fetch, which the bar says when it was. The button at its end opens the
+ * sync status screen (#35): the commits behind the counts.
  */
+
+/** How often "Last fetched 5m ago" is brought up to date. */
+const CLOCK_MS = 30_000;
 
 /** A refusal that needs more than a snackbar: what happened, and what to do. */
 type Problem = { kind: 'conflict' | 'inTheWay' | 'rejected'; paths: readonly string[] } | { kind: 'signIn' };
@@ -42,6 +47,13 @@ export function SyncBar({
   const [state, setState] = useState<SyncState | null>(null);
   const [busy, setBusy] = useState<{ action: Action; progress: RemoteProgress | null } | null>(null);
   const [problem, setProblem] = useState<Problem | null>(null);
+  const [showingStatus, setShowingStatus] = useState(false);
+  const [now, setNow] = useState(Date.now);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), CLOCK_MS);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -58,6 +70,7 @@ export function SyncBar({
 
   const run = async (action: Action) => {
     setBusy({ action, progress: null });
+    setNow(Date.now());
     const onProgress = (progress: RemoteProgress) => setBusy({ action, progress });
     try {
       const before = state;
@@ -88,11 +101,12 @@ export function SyncBar({
       git.sync(path).then(setState, () => undefined);
     } finally {
       setBusy(null);
+      setNow(Date.now());
     }
   };
 
   const action = syncAction(state);
-  const { title, detail } = describeSync(state, branch);
+  const { title, detail } = describeSync(state, branch, now);
   const icon =
     action === 'pull' ? <PullIcon size={20} /> : action === 'fetch' ? <FetchIcon size={20} /> : <PushIcon size={20} />;
   const percent =
@@ -117,22 +131,47 @@ export function SyncBar({
             </Button>
           </div>
         ) : (
-          <button type="button" className={styles.action} onClick={() => void run(action)}>
-            {icon}
-            <span className={styles.text}>
-              <span className={cx('body', 'ellipsis', styles.title)}>{title}</span>
-              <span className="caption muted ellipsis">{detail}</span>
-            </span>
-            {(state.ahead > 0 || state.behind > 0) && (
-              <span className={cx('caption', styles.counts)} aria-hidden>
-                {state.behind > 0 && <span>↓{state.behind}</span>}
-                {state.ahead > 0 && <span>↑{state.ahead}</span>}
+          <>
+            <button type="button" className={styles.action} onClick={() => void run(action)}>
+              {icon}
+              <span className={styles.text}>
+                <span className={cx('body', 'ellipsis', styles.title)}>{title}</span>
+                <span className="caption muted ellipsis">{detail}</span>
               </span>
-            )}
-          </button>
+            </button>
+            <button
+              type="button"
+              className={styles.statusButton}
+              aria-label={`Sync status: ${state.behind} to pull, ${state.ahead} to push`}
+              onClick={() => setShowingStatus(true)}
+            >
+              {state.ahead > 0 || state.behind > 0 ? (
+                <span className={cx('caption', styles.counts)} aria-hidden>
+                  {state.behind > 0 && <span>↓{state.behind}</span>}
+                  {state.ahead > 0 && <span>↑{state.ahead}</span>}
+                </span>
+              ) : (
+                <HistoryIcon size={20} />
+              )}
+            </button>
+          </>
         )}
       </div>
       <PullRequestRow path={path} branch={branch} state={state} />
+      {showingStatus && (
+        <SyncStatusDialog
+          path={path}
+          branch={branch}
+          state={state}
+          action={action}
+          now={now}
+          onClose={() => setShowingStatus(false)}
+          onRun={() => {
+            setShowingStatus(false);
+            void run(action);
+          }}
+        />
+      )}
       {problem && (
         <ProblemDialog
           problem={problem}

@@ -29,6 +29,7 @@ const plugin = vi.hoisted(() => ({
   cancelRemote: vi.fn(),
   addListener: vi.fn(),
   sync: vi.fn(),
+  syncCommits: vi.fn(),
   fetch: vi.fn(),
   pull: vi.fn(),
   push: vi.fn(),
@@ -88,6 +89,9 @@ describe('native git engine', () => {
     plugin.fetch.mockResolvedValue(state);
     expect(await git.sync('app')).toEqual(state);
     expect(await git.fetch('app')).toEqual(state);
+    plugin.syncCommits.mockResolvedValue({ toPull: [], toPush: [] });
+    expect(await git.syncCommits('app')).toEqual({ toPull: [], toPush: [] });
+    expect(plugin.syncCommits).toHaveBeenCalledWith({ path: 'app', limit: 100 });
     expect(plugin.addListener).not.toHaveBeenCalled(); // no progress asked for
 
     plugin.push.mockRejectedValueOnce({ code: 'REJECTED', message: 'pull first' });

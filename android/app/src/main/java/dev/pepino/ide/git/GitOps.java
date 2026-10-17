@@ -272,6 +272,7 @@ public final class GitOps {
                 .call()
         ) {
             excludePepino(git.getRepository());
+            markFetched(git.getRepository());
             return info(git.getRepository());
         } catch (IOException | GitAPIException | RuntimeException e) {
             // JGit cleans up after itself too; this also covers a failure after its clone (the exclude)
@@ -428,6 +429,67 @@ public final class GitOps {
         } catch (GitAPIException | RuntimeException e) {
             if (progress.cancelled()) throw new RemoteException("CANCELLED", "Cancelled", e);
             throw remoteFailure(e);
+        }
+        markFetched(git.getRepository());
+    }
+
+    /** Touched on every fetch (a pull's, the clone's): its date is the last fetch's (#35). */
+    private static final String FETCHED = "pepino-fetched";
+
+    /**
+     * Git rewrites FETCH_HEAD only when a fetch brings something new, so a
+     * fetch that finds nothing would not count. The marker does.
+     */
+    private static void markFetched(Repository repository) throws IOException {
+        Files.write(
+            new File(repository.getDirectory(), FETCHED).toPath(),
+            String.valueOf(System.currentTimeMillis()).getBytes(StandardCharsets.UTF_8)
+        );
+    }
+
+    /**
+     * When GitHub was last fetched from (by Pepino, or by git before it: its
+     * FETCH_HEAD), in millis since the epoch; 0 when never.
+     */
+    public static long lastFetched(File folder) throws IOException {
+        try (Git git = Git.open(folder)) {
+            File dir = git.getRepository().getDirectory();
+            return Math.max(new File(dir, FETCHED).lastModified(), new File(dir, "FETCH_HEAD").lastModified());
+        }
+    }
+
+    /** The commits behind the counts of [SyncState]: GitHub's to pull, and this branch's to push, newest first. */
+    public record SyncCommits(List<LogEntry> toPull, List<LogEntry> toPush) {}
+
+    /**
+     * The commits GitHub's branch has that the current one does not, and the
+     * other way round, as of the last fetch: at most [limit] of each. None
+     * for a branch not on GitHub yet.
+     */
+    public static SyncCommits syncCommits(File folder, int limit) throws IOException {
+        try (Git git = Git.open(folder)) {
+            Repository repository = git.getRepository();
+            ObjectId head = repository.resolve(Constants.HEAD);
+            BranchTrackingStatus tracking = head != null && repository.getConfig().getSubsections("remote").contains(ORIGIN)
+                ? BranchTrackingStatus.of(repository, repository.getBranch())
+                : null;
+            ObjectId upstream = tracking == null ? null : repository.resolve(tracking.getRemoteTrackingBranch());
+            if (upstream == null) return new SyncCommits(Collections.emptyList(), Collections.emptyList());
+            return new SyncCommits(only(repository, upstream, head, limit), only(repository, head, upstream, limit));
+        }
+    }
+
+    /** The commits reachable from [from] but not from [without], newest first, at most [limit]. */
+    private static List<LogEntry> only(Repository repository, ObjectId from, ObjectId without, int limit) throws IOException {
+        try (RevWalk walk = new RevWalk(repository)) {
+            walk.markStart(walk.parseCommit(from));
+            walk.markUninteresting(walk.parseCommit(without));
+            List<LogEntry> entries = new ArrayList<>();
+            for (RevCommit commit : walk) {
+                if (entries.size() >= limit) break;
+                entries.add(entryOf(commit));
+            }
+            return entries;
         }
     }
 
@@ -1016,20 +1078,24 @@ public final class GitOps {
             if (git.getRepository().resolve(Constants.HEAD) == null) return Collections.emptyList();
             List<LogEntry> entries = new ArrayList<>();
             for (RevCommit commit : git.log().setSkip(Math.max(0, skip)).setMaxCount(Math.max(1, limit)).call()) {
-                String message = commit.getFullMessage().trim();
-                int end = message.indexOf('\n');
-                PersonIdent author = commit.getAuthorIdent();
-                entries.add(new LogEntry(
-                    commit.getName(),
-                    (end < 0 ? message : message.substring(0, end)).trim(),
-                    end < 0 ? "" : message.substring(end + 1).trim(),
-                    author.getName(),
-                    author.getEmailAddress(),
-                    author.getWhen().getTime()
-                ));
+                entries.add(entryOf(commit));
             }
             return entries;
         }
+    }
+
+    private static LogEntry entryOf(RevCommit commit) {
+        String message = commit.getFullMessage().trim();
+        int end = message.indexOf('\n');
+        PersonIdent author = commit.getAuthorIdent();
+        return new LogEntry(
+            commit.getName(),
+            (end < 0 ? message : message.substring(0, end)).trim(),
+            end < 0 ? "" : message.substring(end + 1).trim(),
+            author.getName(),
+            author.getEmailAddress(),
+            author.getWhen().getTime()
+        );
     }
 
     private static RevCommit parseCommit(Repository repository, RevWalk walk, String id) throws IOException {
