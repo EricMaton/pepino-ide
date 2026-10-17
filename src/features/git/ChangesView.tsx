@@ -10,8 +10,9 @@ import { basename, isWithin, parentPath } from '../projects/paths';
 import type { LineExclusion } from './diff';
 import { DiffView } from './DiffView';
 import { ChangeActionsDialog, type Discarding, DiscardDialog } from './Discard';
+import { StashDialog, StashRow } from './Stash';
 import { KIND_MARKS } from './changeKinds';
-import { type CommitResult, type FileChange, GitError, type Identity } from './engine';
+import { type CommitResult, type FileChange, GitError, type Identity, type StashInfo } from './engine';
 import styles from './GitScreen.module.css';
 import type { Selection } from './selection';
 
@@ -108,6 +109,22 @@ export function ChangesView({
   const [acting, setActing] = useState<FileChange | null>(null);
   const [changesMenu, setChangesMenu] = useState(false);
   const [discarding, setDiscarding] = useState<Discarding | null>(null);
+  // The branch's stash (#139), read again after stashing or restoring; [at] dates "2H AGO"
+  const [stash, setStash] = useState<{ info: StashInfo | null; at: number } | null>(null);
+  const [stashTick, setStashTick] = useState(0);
+  const [showingStash, setShowingStash] = useState(false);
+  const [replacingStash, setReplacingStash] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    git.stash(path).then(
+      (info) => active && setStash({ info, at: Date.now() }),
+      () => active && setStash({ info: null, at: Date.now() }),
+    );
+    return () => {
+      active = false;
+    };
+  }, [git, path, stashTick]);
 
   useEffect(() => {
     let active = true;
@@ -197,6 +214,22 @@ export function ChangesView({
 
   const count = changes?.length ?? 0;
 
+  const stashChanges = async () => {
+    setReplacingStash(false);
+    try {
+      const info = await git.stashChanges(path);
+      setExcluded(new Set());
+      setPartial({});
+      if (opened !== null) close();
+      refresh();
+      setStashTick((value) => value + 1);
+      const stashed = info.files.length;
+      showSnackbar(`Stashed ${stashed} ${stashed === 1 ? 'file' : 'files'} on ${branch}`);
+    } catch (error) {
+      showSnackbar(`Error: ${errorMessage(error)}`);
+    }
+  };
+
   const discarded = () => {
     const what = discarding;
     setDiscarding(null);
@@ -256,6 +289,12 @@ export function ChangesView({
           <MoreIcon size={18} />
         </Button>
       </div>
+
+      {stash?.info && (
+        <div className={styles.stashHolder} inert={opened !== null}>
+          <StashRow stash={stash.info} now={stash.at} onOpen={() => setShowingStash(true)} />
+        </div>
+      )}
 
       <div className={styles.changeList} inert={opened !== null}>
         {changes === null ? (
@@ -398,6 +437,20 @@ export function ChangesView({
           <div className={styles.actionList}>
             <Button
               variant="text"
+              listItem
+              onClick={() => {
+                setChangesMenu(false);
+                if (stash?.info) setReplacingStash(true);
+                else void stashChanges();
+              }}
+            >
+              <span className="accent" aria-hidden>
+                ›
+              </span>
+              Stash all changes
+            </Button>
+            <Button
+              variant="text"
               tone="danger"
               listItem
               onClick={() => {
@@ -420,6 +473,43 @@ export function ChangesView({
           onDiscard={() => {
             setActing(null);
             setDiscarding({ kind: 'files', changes: [acting], all: false });
+          }}
+        />
+      )}
+      {replacingStash && stash?.info && (
+        <Dialog
+          title="Replace the stash?"
+          eyebrow={`STASH · ${branch}`}
+          onClose={() => setReplacingStash(false)}
+          actions={
+            <>
+              <Button variant="text" onClick={() => setReplacingStash(false)}>
+                Cancel
+              </Button>
+              <Button variant="filled" tone="danger" onClick={() => void stashChanges()}>
+                Replace
+              </Button>
+            </>
+          }
+        >
+          <p className="body">
+            {branch} already has stashed changes ({stash.info.files.length}{' '}
+            {stash.info.files.length === 1 ? 'file' : 'files'}). Stashing again replaces them: those are lost.
+          </p>
+        </Dialog>
+      )}
+      {showingStash && stash?.info && (
+        <StashDialog
+          path={path}
+          stash={stash.info}
+          hasChanges={count > 0}
+          now={stash.at}
+          onClose={() => setShowingStash(false)}
+          onDone={(message) => {
+            setShowingStash(false);
+            setStashTick((value) => value + 1);
+            refresh();
+            showSnackbar(message);
           }}
         />
       )}

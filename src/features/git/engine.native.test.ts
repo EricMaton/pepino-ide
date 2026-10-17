@@ -31,6 +31,10 @@ const plugin = vi.hoisted(() => ({
   sync: vi.fn(),
   syncCommits: vi.fn(),
   discard: vi.fn(),
+  stash: vi.fn(),
+  stashChanges: vi.fn(),
+  restoreStash: vi.fn(),
+  dropStash: vi.fn(),
   fetch: vi.fn(),
   pull: vi.fn(),
   push: vi.fn(),
@@ -222,5 +226,24 @@ describe('native git engine: discard (#138)', () => {
       code: 'STALE',
       paths: ['a.txt'],
     });
+  });
+});
+
+describe('native git engine: stash (#139)', () => {
+  it('stashes and restores through the plugin, announcing the files they touch', async () => {
+    const stash = { branch: 'main', time: 1, files: [{ path: 'a.txt', kind: 'modified' }] };
+    plugin.stash.mockResolvedValue({ stash: null });
+    expect(await git.stash('work/app')).toBeNull();
+
+    plugin.stashChanges.mockResolvedValue({ stash, written: ['a.txt'], removed: ['new.txt'] });
+    expect(await git.stashChanges('work/app')).toEqual(stash);
+    expect(announce).toHaveBeenCalledWith('fs.written', { path: 'work/app/a.txt' });
+    expect(announce).toHaveBeenCalledWith('fs.deleted', { path: 'work/app/new.txt' });
+
+    plugin.restoreStash.mockRejectedValueOnce({ code: 'CONFLICT', message: 'in the way', data: { paths: ['b.txt'] } });
+    await expect(git.restoreStash('work/app')).rejects.toMatchObject({ code: 'CONFLICT', paths: ['b.txt'] });
+    plugin.restoreStash.mockResolvedValue({ written: ['a.txt'], removed: [] });
+    await git.restoreStash('work/app');
+    expect(plugin.restoreStash).toHaveBeenLastCalledWith({ path: 'work/app' });
   });
 });

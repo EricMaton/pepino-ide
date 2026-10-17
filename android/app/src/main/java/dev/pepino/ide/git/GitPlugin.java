@@ -303,6 +303,58 @@ public class GitPlugin extends Plugin {
         });
     }
 
+    private static Object toJson(GitOps.Stash stash) {
+        if (stash == null) return JSObject.NULL;
+        JSObject json = new JSObject();
+        json.put("branch", stash.branch());
+        json.put("time", stash.time());
+        JSArray files = new JSArray();
+        for (GitOps.FileChange change : stash.files()) {
+            JSObject file = new JSObject();
+            file.put("path", change.path());
+            file.put("kind", change.kind());
+            files.put(file);
+        }
+        json.put("files", files);
+        return json;
+    }
+
+    private static JSObject toJson(GitOps.Stashed stashed) {
+        JSObject result = new JSObject();
+        result.put("stash", toJson(stashed.stash()));
+        result.put("written", new JSArray(stashed.written()));
+        result.put("removed", new JSArray(stashed.removed()));
+        return result;
+    }
+
+    /** The current branch's stashed changes (#139): { stash } (null when none). */
+    @PluginMethod
+    public void stash(PluginCall call) {
+        run(call, () -> {
+            JSObject result = new JSObject();
+            result.put("stash", toJson(GitOps.stash(folder(call))));
+            return result;
+        });
+    }
+
+    @PluginMethod
+    public void stashChanges(PluginCall call) {
+        run(call, () -> toJson(GitOps.stashChanges(folder(call), GitOps.identity(configFile()))));
+    }
+
+    @PluginMethod
+    public void restoreStash(PluginCall call) {
+        run(call, () -> toJson(GitOps.restoreStash(folder(call))));
+    }
+
+    @PluginMethod
+    public void dropStash(PluginCall call) {
+        run(call, () -> {
+            GitOps.dropStash(folder(call));
+            return new JSObject();
+        });
+    }
+
     /** Discards the changes to `paths` (#138); for those in `lines`, only the changed lines picked there. */
     @PluginMethod
     public void discard(PluginCall call) {
