@@ -11,8 +11,9 @@ import { basename, parentPath } from '../projects/paths';
 import { formatAgo } from '../projects/recents';
 import { KIND_MARKS } from './changeKinds';
 import { DiffView } from './DiffView';
-import { type FileChange, LOG_PAGE, type LogEntry, shortId } from './engine';
+import { type FileChange, GitError, type LastCommit, LOG_PAGE, type LogEntry, shortId } from './engine';
 import styles from './GitScreen.module.css';
+import { PushedDialog } from './UndoCommit';
 
 /** How close to the end of the list (px) the next page starts loading. */
 const LOAD_MORE_MARGIN = 600;
@@ -68,7 +69,7 @@ function useHistory(path: string) {
  * GitHub Desktop's History: the commits of the current branch, newest first,
  * with who made each and when. Tapping one shows what it changed.
  */
-export function HistoryView({ path }: { path: string }) {
+export function HistoryView({ path, onUndone }: { path: string; onUndone: (commit: LogEntry) => void }) {
   const { commits, error, more, at, loadMore } = useHistory(path);
   const [opened, setOpened] = useState<LogEntry | null>(null);
   const open = (commit: LogEntry) => navigate('forward', () => setOpened(commit));
@@ -111,14 +112,38 @@ export function HistoryView({ path }: { path: string }) {
           </>
         )}
       </div>
-      {opened && <CommitView path={path} commit={opened} onClose={close} />}
+      {opened && (
+        <CommitView
+          path={path}
+          commit={opened}
+          newest={commits?.[0]?.id === opened.id}
+          onClose={close}
+          onUndone={onUndone}
+        />
+      )}
     </div>
   );
 }
 
-/** One commit: its whole message, who and when, and the files it changed, each opening its diff. */
-function CommitView({ path, commit, onClose }: { path: string; commit: LogEntry; onClose: () => void }) {
+/**
+ * One commit: its whole message, who and when, and the files it changed,
+ * each opening its diff. The branch's newest one can be undone (#140).
+ */
+function CommitView({
+  path,
+  commit,
+  newest,
+  onClose,
+  onUndone,
+}: {
+  path: string;
+  commit: LogEntry;
+  newest: boolean;
+  onClose: () => void;
+  onUndone: (commit: LogEntry) => void;
+}) {
   const { git } = useServices();
+  const showSnackbar = useSnackbar();
   const [changes, setChanges] = useState<FileChange[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [file, setFile] = useState<string | null>(null);
@@ -137,6 +162,38 @@ function CommitView({ path, commit, onClose }: { path: string; commit: LogEntry;
       active = false;
     };
   }, [git, path, commit.id]);
+
+  // The newest commit: whether it can be undone
+  const [last, setLast] = useState<LastCommit | null>(null);
+  const [undoing, setUndoing] = useState(false);
+  const [pushed, setPushed] = useState(false);
+  useEffect(() => {
+    if (!newest) return;
+    let active = true;
+    git.lastCommit(path).then(
+      (found) => active && setLast(found?.commit.id === commit.id ? found : null),
+      () => undefined,
+    );
+    return () => {
+      active = false;
+    };
+  }, [git, path, commit.id, newest]);
+
+  const undo = async () => {
+    if (last?.onGitHub) {
+      setPushed(true);
+      return;
+    }
+    setUndoing(true);
+    try {
+      onUndone(await git.undoCommit(path));
+      showSnackbar(`Undid “${commit.summary}”: its changes are back in Changes`);
+    } catch (error) {
+      if (error instanceof GitError && error.code === 'PUSHED') setPushed(true);
+      else showSnackbar(`Error: ${errorMessage(error)}`);
+      setUndoing(false);
+    }
+  };
 
   const count = changes?.length ?? 0;
 
@@ -165,6 +222,23 @@ function CommitView({ path, commit, onClose }: { path: string; commit: LogEntry;
           </p>
           <p className={cx('caption', 'muted', styles.commitHash)}>{commit.id}</p>
         </div>
+        {last && !last.merge && (
+          <div className={styles.undoCommit}>
+            <Button
+              variant="outlined"
+              className={cx(undoing && 'cursor')}
+              disabled={undoing}
+              onClick={() => void undo()}
+            >
+              {undoing ? 'Undoing' : 'Undo commit'}
+            </Button>
+            <p className="caption muted">
+              {last.onGitHub
+                ? 'Already on GitHub: it can no longer be undone here.'
+                : 'Its changes go back to Changes, uncommitted, with its message.'}
+            </p>
+          </div>
+        )}
         {changes === null ? (
           error ? (
             <p className={cx('caption', styles.note, styles.diffError)}>✕ {error}</p>
@@ -198,6 +272,7 @@ function CommitView({ path, commit, onClose }: { path: string; commit: LogEntry;
         )}
       </div>
       {file !== null && <DiffView path={path} file={file} commit={commit.id} onClose={closeFile} />}
+      {pushed && <PushedDialog commit={commit} onClose={() => setPushed(false)} />}
     </div>
   );
 }

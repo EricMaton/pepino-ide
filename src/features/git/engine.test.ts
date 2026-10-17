@@ -404,3 +404,46 @@ describe('memory git engine: stash (#139)', () => {
     expect(await git.stash('app')).not.toBeNull();
   });
 });
+
+describe('memory git engine: undo (#140)', () => {
+  beforeEach(async () => {
+    await git.init('app');
+    await git.setIdentity({ name: 'Pepino', email: 'me@pepino.dev' });
+    await space.writeTextFile('app/a.txt', 'one\n');
+    await git.commit('app', { message: 'first', paths: ['a.txt'] });
+  });
+
+  it('takes the last commit back, its changes uncommitted, and gives its message', async () => {
+    await space.writeTextFile('app/a.txt', 'two\n');
+    await space.writeTextFile('app/new.txt', 'fresh\n');
+    await git.commit('app', { message: 'second\n\nwhy', paths: ['a.txt', 'new.txt'] });
+    expect(await git.lastCommit('app')).toMatchObject({ commit: { summary: 'second' }, onGitHub: false });
+
+    const undone = await git.undoCommit('app');
+
+    expect(undone).toMatchObject({ summary: 'second', description: 'why' });
+    expect((await git.log('app')).map((entry) => entry.summary)).toEqual(['first']);
+    expect(await git.status('app')).toEqual([
+      { path: 'a.txt', kind: 'modified' },
+      { path: 'new.txt', kind: 'new' },
+    ]);
+    expect(await space.readTextFile('app/a.txt')).toBe('two\n');
+  });
+
+  it('undoing the first commit leaves the branch with none', async () => {
+    await git.undoCommit('app');
+
+    expect(await git.lastCommit('app')).toBeNull();
+    expect(await git.info('app')).toEqual({ branch: 'main', hasCommits: false });
+    expect(await git.status('app')).toEqual([{ path: 'a.txt', kind: 'new' }]);
+    await expect(git.undoCommit('app')).rejects.toThrow(/no commit/);
+  });
+
+  it('never undoes a commit GitHub has', async () => {
+    const quick = createMemoryGitEngine(space, { cloneStepMs: 0 });
+    await quick.clone('hello', 'https://github.com/octocat/hello.git');
+
+    expect(await quick.lastCommit('hello')).toMatchObject({ onGitHub: true });
+    await expect(quick.undoCommit('hello')).rejects.toMatchObject({ code: 'PUSHED' });
+  });
+});

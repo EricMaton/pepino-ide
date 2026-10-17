@@ -35,6 +35,8 @@ const plugin = vi.hoisted(() => ({
   stashChanges: vi.fn(),
   restoreStash: vi.fn(),
   dropStash: vi.fn(),
+  lastCommit: vi.fn(),
+  undoCommit: vi.fn(),
   fetch: vi.fn(),
   pull: vi.fn(),
   push: vi.fn(),
@@ -245,5 +247,20 @@ describe('native git engine: stash (#139)', () => {
     plugin.restoreStash.mockResolvedValue({ written: ['a.txt'], removed: [] });
     await git.restoreStash('work/app');
     expect(plugin.restoreStash).toHaveBeenLastCalledWith({ path: 'work/app' });
+  });
+});
+
+describe('native git engine: undo (#140)', () => {
+  it('reads the last commit and undoes it through the plugin; PUSHED as a GitError', async () => {
+    const commit = { id: 'abc', summary: 'second', description: '', author: 'me', email: '', time: 1 };
+    plugin.lastCommit.mockResolvedValue({ last: { commit, onGitHub: false, merge: false } });
+    expect(await git.lastCommit('work/app')).toEqual({ commit, onGitHub: false, merge: false });
+
+    plugin.undoCommit.mockResolvedValue({ commit });
+    expect(await git.undoCommit('work/app')).toEqual(commit);
+    expect(plugin.undoCommit).toHaveBeenLastCalledWith({ path: 'work/app' });
+
+    plugin.undoCommit.mockRejectedValueOnce({ code: 'PUSHED', message: 'on GitHub' });
+    await expect(git.undoCommit('work/app')).rejects.toMatchObject({ code: 'PUSHED' });
   });
 });

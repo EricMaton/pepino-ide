@@ -11,8 +11,17 @@ import type { LineExclusion } from './diff';
 import { DiffView } from './DiffView';
 import { ChangeActionsDialog, type Discarding, DiscardDialog } from './Discard';
 import { StashDialog, StashRow } from './Stash';
+import { LastCommitRow, PushedDialog } from './UndoCommit';
 import { KIND_MARKS } from './changeKinds';
-import { type CommitResult, type FileChange, GitError, type Identity, type StashInfo } from './engine';
+import {
+  type CommitResult,
+  type FileChange,
+  GitError,
+  type Identity,
+  type LastCommit,
+  type LogEntry,
+  type StashInfo,
+} from './engine';
 import styles from './GitScreen.module.css';
 import type { Selection } from './selection';
 
@@ -77,14 +86,22 @@ export function ChangesView({
   path,
   branch,
   visible,
+  refreshKey,
+  undone,
   onCommitted,
+  onUndone,
 }: {
   /** The repository (the active project). */
   path: string;
   branch: string;
   /** False while History shows: an open diff waits, and leaves back alone, until Changes shows again. */
   visible: boolean;
+  /** Changes after a commit, an undo, a pull or a push: the last commit is read again. */
+  refreshKey: number;
+  /** The commit just undone (#140), here or in History: its message comes back to the commit box. */
+  undone: LogEntry | null;
   onCommitted: () => void;
+  onUndone: (commit: LogEntry) => void;
 }) {
   const { git } = useServices();
   const showSnackbar = useSnackbar();
@@ -114,6 +131,34 @@ export function ChangesView({
   const [stashTick, setStashTick] = useState(0);
   const [showingStash, setShowingStash] = useState(false);
   const [replacingStash, setReplacingStash] = useState(false);
+  // The branch's last commit (#140), to undo while GitHub does not have it; [at] dates "2M AGO"
+  const [last, setLast] = useState<{ info: LastCommit | null; at: number } | null>(null);
+  const [undoing, setUndoing] = useState(false);
+  const [pushed, setPushed] = useState<LogEntry | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    git.lastCommit(path).then(
+      (info) => active && setLast({ info, at: Date.now() }),
+      () => active && setLast({ info: null, at: Date.now() }),
+    );
+    return () => {
+      active = false;
+    };
+  }, [git, path, refreshKey]);
+
+  // An undone commit's message, back to be committed again (set while rendering, as React suggests)
+  const [shownUndone, setShownUndone] = useState(undone);
+  if (undone !== shownUndone) {
+    setShownUndone(undone);
+    if (undone) {
+      setSummary(undone.summary);
+      setDescription(undone.description);
+      setComposing(true);
+      setLastCommit(null);
+      refresh();
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -227,6 +272,19 @@ export function ChangesView({
       showSnackbar(`Stashed ${stashed} ${stashed === 1 ? 'file' : 'files'} on ${branch}`);
     } catch (error) {
       showSnackbar(`Error: ${errorMessage(error)}`);
+    }
+  };
+
+  const undo = async (commit: LogEntry) => {
+    setUndoing(true);
+    try {
+      onUndone(await git.undoCommit(path));
+      showSnackbar(`Undid “${commit.summary}”: its changes are back`);
+    } catch (error) {
+      if (error instanceof GitError && error.code === 'PUSHED') setPushed(commit);
+      else showSnackbar(`Error: ${errorMessage(error)}`);
+    } finally {
+      setUndoing(false);
     }
   };
 
@@ -354,6 +412,17 @@ export function ChangesView({
           })
         )}
       </div>
+
+      {last?.info && !last.info.onGitHub && !last.info.merge && (
+        <div className={styles.stashHolder} inert={opened !== null}>
+          <LastCommitRow
+            commit={last.info.commit}
+            now={last.at}
+            busy={undoing}
+            onUndo={() => last.info && void undo(last.info.commit)}
+          />
+        </div>
+      )}
 
       <form
         className={cx(styles.commitBox, !composing && styles.commitBoxFolded)}
@@ -513,6 +582,7 @@ export function ChangesView({
           }}
         />
       )}
+      {pushed && <PushedDialog commit={pushed} onClose={() => setPushed(null)} />}
       {discarding && (
         <DiscardDialog path={path} what={discarding} onClose={() => setDiscarding(null)} onDiscarded={discarded} />
       )}
