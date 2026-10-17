@@ -142,3 +142,19 @@ export const FetchIcon = (props: IconProps) => (
     <path d="M8 3v15M4 14l4 4 4-4M16 21V6M12 10l4-4 4 4" />
   </Icon>
 );
+
+/** A plugin: a puzzle piece, square-cut (#171). */
+export const PluginIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <path d="M4 8h4V6a2 2 0 0 1 4 0v2h4v4h2a2 2 0 0 1 0 4h-2v4H4v-4h2a2 2 0 0 0 0-4H4z" />
+  </Icon>
+);
+
+/** More: the screens that are not in the bar (#171). */
+export const MoreScreensIcon = (props: IconProps) => (
+  <Icon {...props} fill="currentColor" stroke="none">
+    <rect x="3" y="10" width="4" height="4" />
+    <rect x="10" y="10" width="4" height="4" />
+    <rect x="17" y="10" width="4" height="4" />
+  </Icon>
+);

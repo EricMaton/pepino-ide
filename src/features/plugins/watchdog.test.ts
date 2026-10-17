@@ -68,8 +68,8 @@ describe('plugin watchdog (#50)', () => {
     const terminate = vi.fn();
     const connection = connect(
       port1 as unknown as Port<HostMessage, WorkerMessage>,
-      quietHost({ call: () => new Promise((resolve) => setTimeout(() => resolve('slow'), 300)) }),
-      { terminate, watchdogMs: 100 },
+      quietHost({ call: () => new Promise((resolve) => setTimeout(() => resolve('slow'), 1500)) }),
+      { terminate, watchdogMs: 500 },
     );
 
     await connection.activate();
