@@ -32,7 +32,7 @@ public final class ShellEnvironment {
         File home = context.getFilesDir().getCanonicalFile();
         File rc = new File(new File(home, "terminal"), "shellrc");
         writeStartupFile(context, rc);
-        return new String[] {
+        java.util.List<String> env = new java.util.ArrayList<>(java.util.Arrays.asList(
             "TERM=xterm-256color",
             "COLORTERM=truecolor",
             "LANG=en_US.UTF-8",
@@ -40,12 +40,33 @@ public final class ShellEnvironment {
             "PROJECTS=" + projects(context).getCanonicalPath(),
             "ENV=" + rc.getPath(),
             "SHELL=" + SHELL[0],
+            // The APK, whose JGit the shell's `git` runs (#41, res/raw/shellrc)
+            "PEPINO_APK=" + context.getPackageCodePath(),
             "TMPDIR=" + context.getCacheDir().getCanonicalPath(),
             "PATH=" + context.getApplicationInfo().nativeLibraryDir + ":/system/bin:/system/xbin:/vendor/bin",
             "ANDROID_DATA=/data",
-            "ANDROID_ROOT=/system",
-        };
+            "ANDROID_ROOT=/system"
+        ));
+        // What Android's runtime needs to start a VM from the shell (app_process: git #41, am, pm),
+        // as the app's own process has them
+        for (String name : RUNTIME) {
+            String value = System.getenv(name);
+            if (value != null) env.add(name + "=" + value);
+        }
+        return env.toArray(new String[0]);
     }
+
+    private static final String[] RUNTIME = {
+        "BOOTCLASSPATH",
+        "DEX2OATBOOTCLASSPATH",
+        "SYSTEMSERVERCLASSPATH",
+        "ANDROID_ART_ROOT",
+        "ANDROID_I18N_ROOT",
+        "ANDROID_TZDATA_ROOT",
+        "ANDROID_ASSETS",
+        "ANDROID_STORAGE",
+        "EXTERNAL_STORAGE",
+    };
 
     /** res/raw/shellrc at [file], rewritten only when the app's copy changed. */
     private static void writeStartupFile(Context context, File file) throws IOException {

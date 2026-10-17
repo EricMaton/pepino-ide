@@ -47,7 +47,8 @@ public class ShellDeviceTest {
 
         /** Waits until the output has [text] after what was there at [from]. */
         void await(int from, String text) throws InterruptedException {
-            for (int i = 0; i < 100 && output().indexOf(text, from) < 0; i++) Thread.sleep(50);
+            // Up to 30 s: git starts a VM (app_process), slow on an emulator
+            for (int i = 0; i < 600 && output().indexOf(text, from) < 0; i++) Thread.sleep(50);
             assertTrue("Expected \"" + text + "\" in: " + output().substring(from), output().indexOf(text, from) >= 0);
         }
     }
@@ -97,5 +98,49 @@ public class ShellDeviceTest {
         shell.write("exit 5\r".getBytes(StandardCharsets.UTF_8));
         assertTrue(recorder.ended.await(10, TimeUnit.SECONDS));
         assertEquals(5, recorder.code);
+    }
+
+    /** git (#41): the app's JGit through app_process, from the shell, with the app's identity. */
+    @Test
+    public void gitRunsTheAppsJGit() throws Exception {
+        File repo = new File(ShellEnvironment.projects(context), "cli-" + System.nanoTime());
+        assertTrue(repo.mkdirs());
+        Recorder recorder = new Recorder();
+        TerminalSession shell = TerminalSession.start(
+            1,
+            repo.getCanonicalPath(),
+            ShellEnvironment.SHELL,
+            ShellEnvironment.of(context),
+            24,
+            120,
+            recorder
+        );
+        recorder.await(0, " $ ");
+
+        int mark = recorder.output().length();
+        // Markers the typed line itself does not show: e""nd only prints as "end"
+        shell.write("git --version; echo \"e\"\"xit=$?\"\r".getBytes(StandardCharsets.UTF_8));
+        recorder.await(mark, "exit=0");
+        assertTrue(recorder.output().substring(mark), recorder.output().indexOf("git version 2 (Pepino", mark) >= 0);
+
+        mark = recorder.output().length();
+        shell.write("git init && echo hi > a.txt && git add a.txt && git status -s; echo e\"\"nd-of-status\r".getBytes(StandardCharsets.UTF_8));
+        recorder.await(mark, "Initialized empty Git repository in ");
+        // On a terminal, in git's colours: the staged A green
+        recorder.await(mark, "\u001b[32mA\u001b[m\u001b[31m \u001b[m a.txt");
+        recorder.await(mark, "end-of-status");
+
+        // An identity of the repository's own: the test does not depend on the app's .gitconfig
+        mark = recorder.output().length();
+        shell.write(
+            "printf '[user]\\n\\tname = Device\\n\\temail = device@pepino.dev\\n' >> .git/config; git commit -m First; git log -1; echo e\"\"nd-of-log\r".getBytes(
+                StandardCharsets.UTF_8
+            )
+        );
+        recorder.await(mark, "end-of-log");
+        String log = recorder.output().substring(mark);
+        assertTrue(log, log.contains("] First"));
+        assertTrue(log, log.contains("Author: Device <device@pepino.dev>"));
+        shell.kill();
     }
 }

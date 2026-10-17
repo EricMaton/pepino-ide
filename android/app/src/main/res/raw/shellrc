@@ -24,3 +24,9 @@ alias ll='ls -la --color=auto'
 alias grep='grep --color=auto'
 # Back to the projects' folder from anywhere
 alias projects='cd "$PROJECTS"'
+
+# git (#41): Android has none; this is the JGit the app ships, through
+# app_process as Android's own am and pm run (see dev.pepino.ide.cli.GitCli)
+git() {
+	CLASSPATH="$PEPINO_APK" /system/bin/app_process /system/bin dev.pepino.ide.cli.GitCli "$@"
+}
