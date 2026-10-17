@@ -4,6 +4,7 @@ import android.os.Bundle;
 import com.getcapacitor.BridgeActivity;
 import dev.pepino.ide.git.GitPlugin;
 import dev.pepino.ide.github.GitHubPlugin;
+import dev.pepino.ide.terminal.TerminalPlugin;
 
 public class MainActivity extends BridgeActivity {
 
@@ -13,6 +14,7 @@ public class MainActivity extends BridgeActivity {
         System.setProperty("user.home", getFilesDir().getAbsolutePath());
         registerPlugin(GitPlugin.class);
         registerPlugin(GitHubPlugin.class);
+        registerPlugin(TerminalPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

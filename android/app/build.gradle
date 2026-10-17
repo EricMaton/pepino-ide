@@ -10,10 +10,21 @@ android {
         versionCode 1
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        ndk {
+            // Phones (64 and 32 bit ARM) and the x86_64 emulator
+            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+        }
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    // The terminal's PTY (#37): src/main/jni, built with ndk-build (no CMake needed). The NDK GitHub's runners have.
+    ndkVersion = "27.2.12479018"
+    externalNativeBuild {
+        ndkBuild {
+            path = "src/main/jni/Android.mk"
         }
     }
     compileOptions {
