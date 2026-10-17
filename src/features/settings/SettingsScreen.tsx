@@ -9,12 +9,12 @@ import { GitHubLoginDialog } from '../github/GitHubLoginDialog';
 import { useGitHubAccount } from '../github/useGitHubAccount';
 import { Appearance } from './Appearance';
 import { EditorPreferences } from './EditorPreferences';
-import { Plugins } from './Plugins';
 import styles from './SettingsScreen.module.css';
 
 /**
  * Settings: the accounts (GitHub, #29, which clone, push and pull requests
- * need), the appearance (#44), the editor (#45) and the plugins (#49).
+ * need), the appearance (#44) and the editor (#45). Plugins have their own
+ * screen (#171).
  */
 export function SettingsScreen({ subtitle }: { subtitle: string }) {
   const account = useGitHubAccount();
@@ -34,10 +34,6 @@ export function SettingsScreen({ subtitle }: { subtitle: string }) {
           <span className="accent">//</span> Editor
         </h2>
         <EditorPreferences />
-        <h2 className={cx('label', 'muted', styles.heading)}>
-          <span className="accent">//</span> Plugins
-        </h2>
-        <Plugins />
       </div>
     </div>
   );

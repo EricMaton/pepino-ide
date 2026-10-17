@@ -4,6 +4,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { folderLabelFor } from '../features/editor/labels';
 import { GitScreen } from '../features/git/GitScreen';
 import { PluginRuntime } from '../features/plugins/PluginRuntime';
+import { PluginsScreen } from '../features/settings/PluginsScreen';
 import { SettingsScreen } from '../features/settings/SettingsScreen';
 import { errorMessage } from '../features/projects/errors';
 import { FileExplorer } from '../features/projects/FileExplorer';
@@ -16,7 +17,7 @@ import { NoFileOpen } from '../features/workspace/WorkspaceDrawer';
 import { dispatchBack, useBackHandler } from '../ui/back';
 import { cx } from '../ui/cx';
 import { Button } from '../ui/components';
-import { BranchIcon, CloseIcon, FolderIcon, ProjectIcon, PromptIcon, SlidersIcon } from '../ui/icons';
+import { CloseIcon, ProjectIcon } from '../ui/icons';
 import { useKeyboardVisible } from '../ui/keyboard';
 import { navigate } from '../ui/motion';
 import { useSnackbar } from '../ui/useSnackbar';
@@ -25,6 +26,7 @@ import { restoreSession } from './restoreSession';
 import { type EditorViewState, withEditorState } from './session';
 import { type AppDestination, DESTINATIONS, HOME } from './destinations';
 import { useServices } from './services';
+import { NavBar } from './NavBar';
 import { TopBar, TopBarFrame } from './TopBar';
 import { type TopBarSlots, TopBarSlotsContext } from './topBarSlots';
 import { useFileSource } from './useFileSource';
@@ -44,13 +46,6 @@ interface OpenFile {
   /** Cursor and scroll to reopen at. */
   viewState?: EditorViewState;
 }
-
-const NAV_ICONS: Record<AppDestination, typeof FolderIcon> = {
-  projects: FolderIcon,
-  git: BranchIcon,
-  terminal: PromptIcon,
-  settings: SlidersIcon,
-};
 
 const SPACE_NAME = '~/projects';
 
@@ -433,7 +428,9 @@ export function App() {
         <main className={styles.content}>
           {destination === 'git' && state === 'ready' ? (
             <GitScreen project={project} onOpen={openProject} />
-          ) : destination === 'terminal' ? null : destination === 'settings' ? (
+          ) : destination === 'terminal' ? null : destination === 'plugins' ? (
+            <PluginsScreen subtitle={BRAND} />
+          ) : destination === 'settings' ? (
             <SettingsScreen subtitle={BRAND} />
           ) : current.teaser ? (
             <ComingSoon label={current.label} {...current.teaser} />
@@ -493,25 +490,13 @@ export function App() {
             )}
           </Suspense>
         </main>
-        <nav className={styles.nav}>
-          {/* TERMINAL only where there is one: Android (#161) */}
-          {DESTINATIONS.filter(({ id }) => id !== 'terminal' || terminal.available).map(({ id, label }) => {
-            const NavIcon = NAV_ICONS[id];
-            return (
-              <button
-                key={id}
-                type="button"
-                className={styles.navItem}
-                aria-current={id === destination ? 'page' : undefined}
-                // PROJECTS again, from inside PROJECTS, goes out to the explorer; any other tap only navigates.
-                onClick={() => (id === HOME && destination === HOME ? showExplorer() : setDestination(id))}
-              >
-                <NavIcon size={22} />
-                <span className="label">{label}</span>
-              </button>
-            );
-          })}
-        </nav>
+        <NavBar
+          destination={destination}
+          // TERMINAL only where there is one: Android (#161)
+          available={DESTINATIONS.map(({ id }) => id).filter((id) => id !== 'terminal' || terminal.available)}
+          // PROJECTS again, from inside PROJECTS, goes out to the explorer; any other tap only navigates.
+          onSelect={(id) => (id === HOME && destination === HOME ? showExplorer() : setDestination(id))}
+        />
       </div>
     </TopBarSlotsContext>
   );
