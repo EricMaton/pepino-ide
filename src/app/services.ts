@@ -5,6 +5,7 @@ import { CommandDispatcher, CommandRegistry } from '../core/commands';
 import { EventBus } from '../core/events';
 import { createFileHistory, type FileHistory } from '../features/editor/fileHistory';
 import { createMemoryGitEngine, createNativeGitEngine, type GitEngine } from '../features/git/engine';
+import { createNativeTerminal, createUnavailableTerminal, type TerminalBackend } from '../features/terminal/terminal';
 import { createRepositories, type Repositories } from '../features/git/repositories';
 import { createMemoryGitHub, createNativeGitHub, type GitHub } from '../features/github/github';
 import { createCapacitorBackend } from '../features/projects/capacitorBackend';
@@ -41,6 +42,8 @@ export interface Services {
   fileHistory: FileHistory;
   /** GitHub sign-in (#29): the token stays native, in the Keystore (#30). */
   github: GitHub;
+  /** Shells on a PTY (#37): Android only; iOS and the web have none. */
+  terminal: TerminalBackend;
   /** Small user preferences (editor font size…), persisted across restarts. */
   preferences: KeyValueStore;
 }
@@ -106,6 +109,7 @@ export function createServices(): Services {
     repositories,
     fileHistory,
     github,
+    terminal: Capacitor.getPlatform() === 'android' ? createNativeTerminal() : createUnavailableTerminal(),
     preferences,
   };
 }
