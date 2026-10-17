@@ -81,7 +81,8 @@ export default function EditorScreen({
   initialViewState,
   onViewState,
 }: EditorScreenProps) {
-  const { projectSpace, registry, dispatcher, events, workspace, editorSettings, fileHistory } = useServices();
+  const { projectSpace, registry, dispatcher, events, workspace, editorSettings, fileHistory, activeEditor } =
+    useServices();
   const showSnackbar = useSnackbar();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('saved');
@@ -382,8 +383,21 @@ export default function EditorScreen({
   const runKey = (id: string) =>
     dispatcher.execute(id).catch((error: unknown) => showSnackbar(`Error: ${errorMessage(error)}`));
 
+  // While this editor shows, it is "the editor" for plugins (#48)
+  useEffect(() => {
+    if (!view || !visible) return;
+    return activeEditor.set({
+      get path() {
+        return livePath.current;
+      },
+      getText: () => view.state.doc.toString(),
+      setText: (text) => view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } }),
+    });
+  }, [activeEditor, view, visible]);
+
   const onChange = (next: Text) => {
     doc.current = next;
+    events.publish('editor.changed', { path: livePath.current });
     const clean = savedDoc.current !== null && next.eq(savedDoc.current);
     setSaveState((state) => (clean ? 'saved' : state === 'saving' ? 'saving' : 'unsaved'));
     setEditCount((count) => count + 1);

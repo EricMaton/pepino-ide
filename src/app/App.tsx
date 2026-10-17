@@ -3,6 +3,7 @@ import { Capacitor } from '@capacitor/core';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { folderLabelFor } from '../features/editor/labels';
 import { GitScreen } from '../features/git/GitScreen';
+import { PluginRuntime } from '../features/plugins/PluginRuntime';
 import { SettingsScreen } from '../features/settings/SettingsScreen';
 import { errorMessage } from '../features/projects/errors';
 import { FileExplorer } from '../features/projects/FileExplorer';
@@ -427,6 +428,7 @@ export function App() {
   return (
     <TopBarSlotsContext value={slots}>
       <div className={styles.app} data-keyboard-open={keyboardOpen || undefined}>
+        <PluginRuntime />
         <TopBarFrame onScreenSlot={onScreenSlot} onOverlaySlot={onOverlaySlot} />
         <main className={styles.content}>
           {destination === 'git' && state === 'ready' ? (

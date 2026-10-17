@@ -46,6 +46,22 @@ plugin.onActivate(api => {
 });
 ```
 
+### Implementado (Sprint 6, #48)
+
+| Llamada | Permiso | Qué hace |
+|---|---|---|
+| `plugin.onActivate(api => …)` / `plugin.onDeactivate(() => …)` | — | Al activar / desactivar el plugin |
+| `api.commands.register(id, fn)` | — | El comando sale en la paleta como `Plugin: Título` (id de la app: `<plugin id>.<id>`); tiene que estar en `contributes.commands` |
+| `api.commands.execute(id)` | — | Un comando suyo por su id corto, o cualquier otro por el id de la app |
+| `api.editor.getText()` | `editor.read` | El texto del archivo abierto en el editor |
+| `api.editor.setText(text)` | `editor.write` | Lo sustituye entero (una sola edición, deshacible) |
+| `api.editor.onSave(fn)` / `onOpen(fn)` / `onChange(fn)` | — | Reciben `{ path }`; `onChange`, una vez por pausa al escribir (300 ms) |
+| `api.settings.get(key)` | — | Síncrono: el valor por defecto de `contributes.settings` (los del usuario, #57) |
+| `api.window.showMessage(text)` | — | Un aviso (snackbar) con el nombre del plugin delante |
+| `console.log/warn/error` | — | Al log del plugin (SETTINGS → Plugins, #57) |
+
+Una llamada sin el permiso se rechaza en el host (la promesa falla con `Not allowed: <permiso>`) y queda en el log del plugin. `git.*`, `fs.*` y la red llegan con los plugins de ejemplo (#51–#53) y la gestión de plugins (Sprint 7).
+
 ## Permisos (v1)
 
 | Permiso | Acceso |
