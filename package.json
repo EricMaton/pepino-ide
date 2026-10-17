@@ -41,10 +41,12 @@
     "@codemirror/view": "^6.43.14",
     "@fontsource-variable/archivo": "^5.3.0",
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@jitl/quickjs-wasmfile-release-sync": "^0.32.0",
     "@lezer/highlight": "^1.2.5",
     "@tanstack/react-virtual": "^3.14.19",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
+    "quickjs-emscripten-core": "^0.32.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
