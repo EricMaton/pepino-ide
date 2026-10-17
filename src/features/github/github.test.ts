@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createMemoryGitHub, createNativeGitHub, GitHubError, parseGitHubUrl, REPOS_PER_PAGE } from './github';
+import {
+  createMemoryGitHub,
+  createNativeGitHub,
+  GitHubError,
+  isSignedIn,
+  parseGitHubUrl,
+  REPOS_PER_PAGE,
+} from './github';
 
 const plugin = vi.hoisted(() => ({
   account: vi.fn(),
@@ -16,7 +23,7 @@ const plugin = vi.hoisted(() => ({
 
 vi.mock('@capacitor/core', () => ({ registerPlugin: () => plugin }));
 
-const octocat = { login: 'octocat', name: null, avatarUrl: 'https://avatars/1' };
+const octocat = { login: 'octocat', name: null, avatarUrl: 'https://avatars/1', expired: false };
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -144,5 +151,49 @@ describe('pull requests', () => {
     expect(pull).toMatchObject({ number: 1, title: 'Add login' });
     expect((await github.pullRequestFor(repo, 'feature')).pullRequest).toEqual(pull);
     await expect(github.createPullRequest(request)).rejects.toBeInstanceOf(GitHubError);
+  });
+});
+
+describe('an expired sign-in (#36)', () => {
+  it('is not signed in, though GitHub still knows who it was', () => {
+    expect(isSignedIn(octocat)).toBe(true);
+    expect(isSignedIn({ ...octocat, expired: true })).toBe(false);
+    expect(isSignedIn(null)).toBe(false);
+    expect(isSignedIn(undefined)).toBe(false);
+  });
+
+  it('the native one reads the account again when GitHub refuses the token, and tells the listeners', async () => {
+    const github = createNativeGitHub('client1');
+    const told = vi.fn();
+    github.subscribe(told);
+    plugin.repos.mockRejectedValue({ code: 'UNAUTHORIZED', message: 'Bad credentials' });
+    plugin.account.mockResolvedValue({ account: { ...octocat, expired: true } });
+
+    await expect(github.repos(1)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    await vi.waitFor(() => expect(told).toHaveBeenCalledWith({ ...octocat, expired: true }));
+
+    told.mockClear();
+    plugin.account.mockResolvedValue({ account: null });
+    await github.recheck();
+    expect(told).toHaveBeenCalledWith(null);
+  });
+
+  it('the stand-in refuses every call once expired, until a sign-in again', async () => {
+    const github = createMemoryGitHub(0, 3, 0);
+    const told = vi.fn();
+    github.subscribe(told);
+    await github.finishLogin();
+    github.expire();
+
+    expect(await github.account()).toMatchObject({ login: 'octocat', expired: true });
+    expect(told).toHaveBeenLastCalledWith(expect.objectContaining({ expired: true }));
+    await expect(github.repos(1)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    await expect(github.pullRequestFor({ owner: 'o', repo: 'r' }, 'main')).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+
+    await github.finishLogin();
+    expect(await github.account()).toMatchObject({ expired: false });
+    expect((await github.repos(1)).repos).toHaveLength(3);
   });
 });

@@ -21,7 +21,15 @@ export interface GitHubAccount {
   login: string;
   name: string | null;
   avatarUrl: string;
+  /**
+   * GitHub refused the token (#36): revoked on GitHub, or expired. Pepino
+   * forgot it and keeps who it was, to sign in again as.
+   */
+  expired: boolean;
 }
+
+/** Signed in with a token GitHub still takes: not signed out, nor expired. */
+export const isSignedIn = (account: GitHubAccount | null | undefined): boolean => Boolean(account) && !account!.expired;
 
 /** A sign-in waiting for the user: the code to type at [verificationUri]. */
 export interface DeviceLogin {
@@ -129,8 +137,13 @@ export interface GitHub {
   remoteBranches(repo: RepoRef): Promise<string[]>;
   /** Opens a pull request; GitHub's refusals (one already open, nothing to merge) are INVALID, in its words. */
   createPullRequest(request: NewPullRequest): Promise<PullRequest>;
-  /** Called whenever someone signs in or out; returns the unsubscribe. */
+  /** Called whenever someone signs in or out, or the sign-in expires; returns the unsubscribe. */
   subscribe(listener: (account: GitHubAccount | null) => void): () => void;
+  /**
+   * Reads who is signed in again and tells the listeners. After a refusal
+   * (UNAUTHORIZED) from git, the token may be gone: the account says so.
+   */
+  recheck(): Promise<void>;
 }
 
 interface GitHubPlugin {
@@ -184,11 +197,15 @@ function listeners() {
 export function createNativeGitHub(clientId = GITHUB_CLIENT_ID, scopes = GITHUB_SCOPES): GitHub {
   const plugin = registerPlugin<GitHubPlugin>('GitHub');
   const { tell, subscribe } = listeners();
+  const recheck = async () => tell((await plugin.account()).account);
   const call = async <T>(run: () => Promise<T>): Promise<T> => {
     try {
       return await run();
     } catch (error) {
-      throw githubError(error);
+      const failure = githubError(error);
+      // GitHub refused the token: the plugin forgot it, and the account now shows as expired
+      if (failure.code === 'UNAUTHORIZED') void recheck().catch(() => undefined);
+      throw failure;
     }
   };
   return {
@@ -213,6 +230,7 @@ export function createNativeGitHub(clientId = GITHUB_CLIENT_ID, scopes = GITHUB_
     createPullRequest: (request) =>
       call(async () => (await plugin.createPullRequest({ ...request, draft: false })).pullRequest),
     subscribe,
+    recheck: () => recheck().catch(() => undefined),
   };
 }
 
@@ -243,13 +261,21 @@ function sampleRepos(owner: string, count: number): GitHubRepo[] {
  * [approveAfterMs]; the account lives in memory only, with [repoCount]
  * made-up repositories that take [latencyMs] a page.
  */
-export function createMemoryGitHub(approveAfterMs = 3000, repoCount = 120, latencyMs = 400): GitHub {
+export interface MemoryGitHub extends GitHub {
+  /** What a revoked token looks like (#36): the account stays, expired, and every call is refused. */
+  expire(): void;
+}
+
+export function createMemoryGitHub(approveAfterMs = 3000, repoCount = 120, latencyMs = 400): MemoryGitHub {
   const { tell, subscribe } = listeners();
   const allRepos = sampleRepos('octocat', repoCount);
   // Pull requests opened here, by `owner/repo:head`
   const pulls = new Map<string, PullRequest>();
   let account: GitHubAccount | null = null;
   let waiting: { cancel: () => void } | null = null;
+  const requireToken = () => {
+    if (!account || account.expired) throw new GitHubError('UNAUTHORIZED', 'GitHub refused the sign-in');
+  };
   return {
     account: async () => account,
     startLogin: async () => ({
@@ -261,7 +287,7 @@ export function createMemoryGitHub(approveAfterMs = 3000, repoCount = 120, laten
       new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
           waiting = null;
-          account = { login: 'octocat', name: 'The Octocat', avatarUrl: '' };
+          account = { login: 'octocat', name: 'The Octocat', avatarUrl: '', expired: false };
           tell(account);
           resolve(account);
         }, approveAfterMs);
@@ -282,22 +308,22 @@ export function createMemoryGitHub(approveAfterMs = 3000, repoCount = 120, laten
     },
     openUrl: async (url) => void window.open(url, '_blank', 'noopener'),
     repos: async (page) => {
-      if (!account) throw new GitHubError('UNAUTHORIZED', 'Not signed in to GitHub');
+      requireToken();
       await new Promise((resolve) => setTimeout(resolve, latencyMs));
       const from = (page - 1) * REPOS_PER_PAGE;
       return { repos: allRepos.slice(from, from + REPOS_PER_PAGE), hasMore: from + REPOS_PER_PAGE < allRepos.length };
     },
     pullRequestFor: async (repo, branch) => {
-      if (!account) throw new GitHubError('UNAUTHORIZED', 'Not signed in to GitHub');
+      requireToken();
       await new Promise((resolve) => setTimeout(resolve, latencyMs));
       return { defaultBranch: 'main', pullRequest: pulls.get(`${repo.owner}/${repo.repo}:${branch}`) ?? null };
     },
     remoteBranches: async () => {
-      if (!account) throw new GitHubError('UNAUTHORIZED', 'Not signed in to GitHub');
+      requireToken();
       return ['main', 'develop'];
     },
     createPullRequest: async ({ owner, repo, head, base, title }) => {
-      if (!account) throw new GitHubError('UNAUTHORIZED', 'Not signed in to GitHub');
+      requireToken();
       await new Promise((resolve) => setTimeout(resolve, latencyMs));
       const key = `${owner}/${repo}:${head}`;
       if (pulls.has(key)) throw new GitHubError('INVALID', `A pull request already exists for ${owner}:${head}.`);
@@ -312,5 +338,11 @@ export function createMemoryGitHub(approveAfterMs = 3000, repoCount = 120, laten
       return pull;
     },
     subscribe,
+    recheck: async () => tell(account),
+    expire: () => {
+      if (!account) return;
+      account = { ...account, expired: true };
+      tell(account);
+    },
   };
 }

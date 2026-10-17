@@ -73,3 +73,8 @@
   font-weight: 900;
   font-size: 20px;
 }
+
+/* GitHub refused the token (#36) */
+.expired {
+  color: var(--error);
+}

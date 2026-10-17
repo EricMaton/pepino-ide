@@ -44,7 +44,11 @@ export function CloneRepositoryDialog({
   const [query, setQuery] = useState('');
   // The list, kept while the user says where the clone goes; a new one for another account
   const [list, setList] = useState<{ login: string; pager: RepoPager } | null>(null);
-  if (account && list?.login !== account.login) setList({ login: account.login, pager: createRepoPager(github) });
+  // What to do once signed in again: the clone GitHub refused goes on by itself (#36)
+  const afterSignIn = useRef<(() => void) | null>(null);
+  if (account && !account.expired && list?.login !== account.login) {
+    setList({ login: account.login, pager: createRepoPager(github) });
+  }
 
   const clone = (repo: GitHubRepo, path: string) => {
     setStep({ kind: 'cloning', repo, path, progress: null, error: null });
@@ -60,6 +64,8 @@ export function CloneRepositoryDialog({
       .catch((error: unknown) => {
         // cancelled: the dialog closed already
         if (!(error instanceof GitError && error.code === 'CANCELLED')) update({ error });
+        // refused: the token may be gone, and the account shows it
+        if (error instanceof GitError && error.code === 'UNAUTHORIZED') void github.recheck();
       });
   };
 
@@ -69,14 +75,26 @@ export function CloneRepositoryDialog({
     onClose();
   };
 
-  const signIn = () => {
+  const signIn = (then: (() => void) | null = null) => {
+    afterSignIn.current = then;
     setStep({ kind: 'pick' });
     setSigningIn(true);
   };
 
   if (signingIn) {
-    // the account updates by itself once signed in, and the list shows
-    return <GitHubLoginDialog onClose={() => setSigningIn(false)} onSignedIn={() => setSigningIn(false)} />;
+    // the account updates by itself once signed in; the list is read again, with the new token
+    return (
+      <GitHubLoginDialog
+        onClose={() => setSigningIn(false)}
+        onSignedIn={() => {
+          setSigningIn(false);
+          setList(null);
+          const then = afterSignIn.current;
+          afterSignIn.current = null;
+          then?.();
+        }}
+      />
+    );
   }
   if (step.kind === 'where') {
     return (
@@ -95,7 +113,10 @@ export function CloneRepositoryDialog({
         onClose={close}
         onRetry={() => clone(step.repo, step.path)}
         onBack={() => setStep({ kind: 'where', repo: step.repo })}
-        onSignIn={signIn}
+        onSignIn={() => {
+          const { repo, path } = step;
+          signIn(() => clone(repo, path));
+        }}
       />
     );
   }
@@ -125,8 +146,17 @@ export function CloneRepositoryDialog({
       ) : account === null ? (
         <div className={styles.signIn}>
           <p className="body">Sign in to GitHub to see your repositories, private ones too.</p>
-          <Button variant="filled" onClick={signIn}>
+          <Button variant="filled" onClick={() => signIn()}>
             Sign in with GitHub
+          </Button>
+        </div>
+      ) : account.expired ? (
+        <div className={styles.signIn} role="alert">
+          <p className="body">
+            GitHub no longer accepts your sign-in as @{account.login}: it was revoked, or it expired.
+          </p>
+          <Button variant="filled" onClick={() => signIn()}>
+            Sign in again
           </Button>
         </div>
       ) : (
@@ -137,7 +167,7 @@ export function CloneRepositoryDialog({
             onQuery={setQuery}
             selected={selected}
             onSelect={setSelected}
-            onSignIn={signIn}
+            onSignIn={() => signIn()}
           />
         )
       )}
@@ -228,7 +258,7 @@ function explainClone(error: unknown): { title: string; detail: string; signIn: 
   }
   if (code === 'NETWORK') {
     return {
-      title: 'The connection dropped',
+      title: errorMessage(error),
       detail: 'Nothing was kept: the clone starts over when you try again.',
       signIn: false,
     };
@@ -429,7 +459,7 @@ function ListError({ error, onRetry, onSignIn }: { error: GitHubError; onRetry: 
     error.code === 'UNAUTHORIZED'
       ? ['GitHub no longer accepts your sign-in', 'It may have been revoked on GitHub. Sign in again.']
       : error.code === 'NETWORK'
-        ? ['No connection to GitHub', 'Check the connection and try again.']
+        ? [error.message, 'Check the connection and try again.']
         : error.code === 'RATE_LIMITED'
           ? ['GitHub asks to wait', error.message]
           : ['Cannot read your repositories', error.message];

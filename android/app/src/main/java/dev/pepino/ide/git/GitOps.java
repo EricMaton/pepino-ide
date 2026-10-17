@@ -58,6 +58,7 @@ import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevTree;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileBasedConfig;
+import dev.pepino.ide.github.Network;
 import org.eclipse.jgit.transport.CredentialsProvider;
 import org.eclipse.jgit.transport.PushResult;
 import org.eclipse.jgit.transport.RefSpec;
@@ -133,6 +134,9 @@ public final class GitOps {
 
     /** The remote a clone sets up, whose branches show next to the local ones. */
     static final String ORIGIN = "origin";
+
+    /** Seconds GitHub may stay silent before a clone, fetch or push gives up (NETWORK) instead of hanging. */
+    static final int REMOTE_TIMEOUT_S = 30;
 
     /** After switching branch: where HEAD is now, and the files the switch wrote or removed (repo-relative). */
     public record Switched(RepoInfo info, List<String> written, List<String> removed) {}
@@ -268,6 +272,7 @@ public final class GitOps {
                 .setDirectory(folder)
                 .setCloneAllBranches(true)
                 .setCredentialsProvider(credentials)
+                .setTimeout(REMOTE_TIMEOUT_S)
                 .setProgressMonitor(monitor(progress))
                 .call()
         ) {
@@ -333,15 +338,9 @@ public final class GitOps {
             if (message.contains("not authorized") || message.contains("Authentication is required") || message.contains("401")) {
                 return new RemoteException("UNAUTHORIZED", "GitHub refused the sign-in", e);
             }
-            for (Throwable cause = e.getCause(); cause != null; cause = cause.getCause()) {
-                if (cause instanceof java.net.UnknownHostException
-                    || cause instanceof java.net.ConnectException
-                    || cause instanceof java.net.SocketTimeoutException
-                    || cause instanceof java.net.NoRouteToHostException) {
-                    return new RemoteException("NETWORK", "Cannot reach GitHub", e);
-                }
-            }
         }
+        String network = Network.describe(e);
+        if (network != null) return new RemoteException("NETWORK", network, e);
         return new RemoteException("FAILED", message, e);
     }
 
@@ -424,6 +423,7 @@ public final class GitOps {
                 .setRemote(ORIGIN)
                 .setRemoveDeletedRefs(true)
                 .setCredentialsProvider(credentials)
+                .setTimeout(REMOTE_TIMEOUT_S)
                 .setProgressMonitor(monitor(progress))
                 .call();
         } catch (GitAPIException | RuntimeException e) {
@@ -597,6 +597,7 @@ public final class GitOps {
                     .setRemote(ORIGIN)
                     .setRefSpecs(new RefSpec(Constants.R_HEADS + branch + ":" + target))
                     .setCredentialsProvider(credentials)
+                    .setTimeout(REMOTE_TIMEOUT_S)
                     .setProgressMonitor(monitor(progress))
                     .call();
             } catch (GitAPIException | RuntimeException e) {

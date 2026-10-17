@@ -187,7 +187,18 @@ public class GitCloneTest {
             "https://github.com/a/b.git: cannot open git-upload-pack",
             new UnknownHostException("github.com")
         );
-        assertEquals("NETWORK", ((GitOps.RemoteException) GitOps.remoteFailure(offline)).code);
+        GitOps.RemoteException offlineFailure = (GitOps.RemoteException) GitOps.remoteFailure(offline);
+        assertEquals("NETWORK", offlineFailure.code);
+        assertEquals("No internet connection", offlineFailure.getMessage());
+
+        // Each connection failure says which one it is (#36)
+        TransportException slow = new TransportException("read timed out", new java.net.SocketTimeoutException("Read timed out"));
+        assertEquals("NETWORK", ((GitOps.RemoteException) GitOps.remoteFailure(slow)).code);
+        assertTrue(GitOps.remoteFailure(slow).getMessage().startsWith("GitHub is taking too long"));
+        TransportException portal = new TransportException("handshake", new javax.net.ssl.SSLHandshakeException("bad certificate"));
+        assertTrue(GitOps.remoteFailure(portal).getMessage().contains("Wi-Fi"));
+        TransportException reset = new TransportException("reset", new java.net.SocketException("Connection reset"));
+        assertEquals("The connection to GitHub dropped", GitOps.remoteFailure(reset).getMessage());
 
         TransportException other = new TransportException("https://github.com/a/b.git: Repository not found");
         assertEquals("FAILED", ((GitOps.RemoteException) GitOps.remoteFailure(other)).code);

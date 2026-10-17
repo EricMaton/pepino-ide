@@ -79,7 +79,15 @@ export function createServices(): Services {
     ? createNativeGitEngine((topic, payload) => events.publish(topic, payload as never))
     : createMemoryGitEngine(projectSpace);
   const fileHistory = createFileHistory(projectSpace, git);
-  const github = Capacitor.isNativePlatform() ? createNativeGitHub() : createMemoryGitHub();
+  let github: GitHub;
+  if (Capacitor.isNativePlatform()) {
+    github = createNativeGitHub();
+  } else {
+    const memory = createMemoryGitHub();
+    github = memory;
+    // `pepinoDev.expireGitHub()` in the console: GitHub refusing the token, to try signing in again (#36)
+    if (import.meta.env.DEV) Object.assign(globalThis, { pepinoDev: { expireGitHub: () => memory.expire() } });
+  }
 
   // Recents only listen to the bus: whoever opens a project doesn't need to know about them.
   events.subscribe('project.opened', (project) => {

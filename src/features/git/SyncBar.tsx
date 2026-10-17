@@ -42,7 +42,7 @@ export function SyncBar({
   /** A pull rewrote files and added commits: changes and history to read again. */
   onPulled: () => void;
 }) {
-  const { git } = useServices();
+  const { git, github } = useServices();
   const showSnackbar = useSnackbar();
   const [state, setState] = useState<SyncState | null>(null);
   const [busy, setBusy] = useState<{ action: Action; progress: RemoteProgress | null } | null>(null);
@@ -70,7 +70,6 @@ export function SyncBar({
 
   const run = async (action: Action) => {
     setBusy({ action, progress: null });
-    setNow(Date.now());
     const onProgress = (progress: RemoteProgress) => setBusy({ action, progress });
     try {
       const before = state;
@@ -94,14 +93,17 @@ export function SyncBar({
       if (code === 'MERGE_CONFLICT') setProblem({ kind: 'conflict', paths });
       else if (code === 'CONFLICT') setProblem({ kind: 'inTheWay', paths });
       else if (code === 'REJECTED') setProblem({ kind: 'rejected', paths: [] });
-      else if (code === 'UNAUTHORIZED') setProblem({ kind: 'signIn' });
-      else if (code === 'NETWORK') showSnackbar('No connection to GitHub');
-      else if (code !== 'CANCELLED') showSnackbar(`Error: ${errorMessage(error)}`);
+      else if (code === 'UNAUTHORIZED') {
+        // the token may be gone (#36): the account shows it, and signing in again does this again
+        void github.recheck();
+        setProblem({ kind: 'signIn' });
+      } else if (code === 'NETWORK') {
+        showSnackbar(errorMessage(error), { label: 'Retry', onAction: () => void run(action) });
+      } else if (code !== 'CANCELLED') showSnackbar(`Error: ${errorMessage(error)}`);
       // A fetch may have happened before the refusal: the counts to show are GitHub's now
       git.sync(path).then(setState, () => undefined);
     } finally {
       setBusy(null);
-      setNow(Date.now());
     }
   };
 

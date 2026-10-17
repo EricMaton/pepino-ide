@@ -25,3 +25,11 @@
 .waiting {
   margin: 0;
 }
+
+/* A sign-in again (#36): why, above the code */
+.expired {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-left: 4px solid var(--primary);
+  background: var(--surface-variant);
+}

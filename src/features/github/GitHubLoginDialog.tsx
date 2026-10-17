@@ -43,11 +43,24 @@ export function GitHubLoginDialog({
   const { github } = useServices();
   const [step, setStep] = useState<Step>({ kind: 'starting' });
   const [attempt, setAttempt] = useState(0);
+  // Who GitHub stopped accepting (#36), when this is a sign-in again
+  const [expired, setExpired] = useState<GitHubAccount | null>(null);
   const finished = useRef(false);
   const latestSignedIn = useRef(onSignedIn);
   useEffect(() => {
     latestSignedIn.current = onSignedIn;
   });
+
+  useEffect(() => {
+    let active = true;
+    github.account().then(
+      (account) => active && setExpired(account?.expired ? account : null),
+      () => undefined,
+    );
+    return () => {
+      active = false;
+    };
+  }, [github]);
 
   useEffect(() => {
     let active = true;
@@ -84,8 +97,8 @@ export function GitHubLoginDialog({
 
   return (
     <Dialog
-      title="Sign in with GitHub"
-      eyebrow="DEVICE CODE"
+      title={expired ? 'Sign in again' : 'Sign in with GitHub'}
+      eyebrow={expired ? `GITHUB · @${expired.login}` : 'DEVICE CODE'}
       onClose={close}
       actions={
         step.kind === 'failed' && explain(step.error).retry ? (
@@ -110,6 +123,12 @@ export function GitHubLoginDialog({
         )
       }
     >
+      {expired && step.kind !== 'failed' && (
+        <p className={cx('caption', styles.expired)}>
+          GitHub no longer accepts Pepino&apos;s sign-in as <strong>@{expired.login}</strong>: it was revoked, or it
+          expired. Sign in again and Pepino carries on with what you were doing.
+        </p>
+      )}
       {step.kind === 'starting' ? (
         <p className={cx('label', 'cursor', styles.waiting)} data-loading>
           Asking GitHub for a code
