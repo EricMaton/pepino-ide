@@ -96,3 +96,24 @@
   --inset-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
   --inset-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
 }
+
+/*
+ * The light theme (#44, src/ui/theme.ts): the same brutalism on paper. Only
+ * the semantic layer changes; git's colours darken to read on light. A
+ * custom accent overrides --primary inline, over both themes.
+ */
+:root[data-theme='light'] {
+  --bg: #f4f2ec;
+  --fg: #0a0a0a;
+  --surface: #f4f2ec;
+  --surface-variant: #e6e3da;
+  --primary: #d10500;
+  --on-primary: #f2f2f2;
+  --error: #c20400;
+  --outline: #6c6962;
+  --scrim: rgb(10 10 10 / 0.45);
+  --git-added: #1b8a40;
+  --git-modified: #a36600;
+  --git-removed: #c8262b;
+  --on-git: #f4f2ec;
+}

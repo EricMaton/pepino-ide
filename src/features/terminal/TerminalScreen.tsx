@@ -6,6 +6,7 @@ import { TopBar } from '../../app/TopBar';
 import { useServices } from '../../app/services';
 import { Button } from '../../ui/components';
 import { cx } from '../../ui/cx';
+import { THEME_EVENT } from '../../ui/theme';
 import { errorMessage } from '../projects/errors';
 import { resolveInRoot } from '../projects/paths';
 import type { ProjectInfo } from '../projects/projects';
@@ -20,20 +21,13 @@ import type { TerminalBackend } from './terminal';
  * page that loads again attaches to it, showing what it printed last.
  */
 
-/** xterm's colours: the app's tokens for the ground, a palette that reads on it for ANSI. */
-function theme() {
-  const css = getComputedStyle(document.documentElement);
-  const token = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
-  return {
-    background: token('--bg', '#0b0b0b'),
-    foreground: token('--fg', '#f4f4f0'),
-    cursor: token('--primary', '#e10600'),
-    cursorAccent: token('--bg', '#0b0b0b'),
-    selectionBackground: '#e1060055',
+/** ANSI's colours as they read on a dark ground, and on a light one (#44). */
+const ANSI = {
+  dark: {
     black: '#1a1a1a',
-    red: token('--pepino-red', '#e10600'),
-    green: token('--pepino-green', '#3fd46b'),
-    yellow: token('--pepino-amber', '#f2b33d'),
+    red: '#e10600',
+    green: '#3fd46b',
+    yellow: '#f2b33d',
     blue: '#5b9cf5',
     magenta: '#d27af0',
     cyan: '#4fd6d0',
@@ -46,6 +40,41 @@ function theme() {
     brightMagenta: '#e7a6ff',
     brightCyan: '#8af0ea',
     brightWhite: '#ffffff',
+  },
+  light: {
+    black: '#0a0a0a',
+    red: '#c20400',
+    green: '#1b8a40',
+    yellow: '#a36600',
+    blue: '#1f5fc4',
+    magenta: '#8e3fb5',
+    cyan: '#08808a',
+    white: '#6c6962',
+    brightBlack: '#4a4843',
+    brightRed: '#e10600',
+    brightGreen: '#23a24c',
+    brightYellow: '#c27a00',
+    brightBlue: '#2f7cf6',
+    brightMagenta: '#a64fd0',
+    brightCyan: '#0a9aa6',
+    brightWhite: '#2a2a2a',
+  },
+};
+
+/** xterm's colours: the app's tokens for the ground and the cursor, the theme's base's ANSI palette. */
+function theme() {
+  const root = document.documentElement;
+  const css = getComputedStyle(root);
+  const token = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
+  const primary = token('--primary', '#e10600');
+  return {
+    ...ANSI[root.dataset.theme === 'light' ? 'light' : 'dark'],
+    background: token('--bg', '#0a0a0a'),
+    foreground: token('--fg', '#f2f2f2'),
+    cursor: primary,
+    cursorAccent: token('--bg', '#0a0a0a'),
+    // xterm takes plain colours: the accent's #rrggbb with an alpha
+    selectionBackground: /^#[0-9a-f]{6}$/i.test(primary) ? `${primary}59` : '#e1060059',
   };
 }
 
@@ -137,6 +166,11 @@ function TerminalView({ backend, path, visible }: { backend: TerminalBackend; pa
       term.write(`\r\n\x1b[2m[The shell ended: exit code ${code}]\x1b[0m\r\n`);
       setEnded(code);
     });
+    // A theme chosen in SETTINGS (#44) recolours the terminal as it is
+    const recolour = () => {
+      term.options.theme = theme();
+    };
+    window.addEventListener(THEME_EVENT, recolour);
     const typing = term.onData((typed) => {
       if (current.id === null) return;
       let data = typed;
@@ -177,6 +211,7 @@ function TerminalView({ backend, path, visible }: { backend: TerminalBackend; pa
       stopData();
       stopExit();
       typing.dispose();
+      window.removeEventListener(THEME_EVENT, recolour);
       term.dispose();
       view.current = null;
     };
