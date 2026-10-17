@@ -40,3 +40,28 @@ export function insertIndent(state: EditorState): TransactionSpec | null {
   if (state.selection.ranges.some((range) => !range.empty)) return null;
   return insertText(state, state.facet(indentUnit));
 }
+
+/**
+ * A plugin's snippet (#53) where the main selection is, replacing it: each
+ * `\t` is one indent unit (the user's spaces or tab), each line after the
+ * first starts at the indentation of the line it goes into, and the cursor
+ * ends at `$0` (or after the snippet).
+ */
+export function insertSnippet(state: EditorState, body: string): TransactionSpec {
+  const { from, to } = state.selection.main;
+  const base = /^[ \t]*/.exec(state.doc.lineAt(from).text)![0];
+  const lines = body
+    .replace(/\r\n?/g, '\n')
+    .replace(/\t/g, state.facet(indentUnit))
+    .split('\n')
+    .map((line, i) => (i === 0 || line === '' ? line : base + line));
+  let text = lines.join('\n');
+  const marker = text.indexOf('$0');
+  if (marker >= 0) text = text.slice(0, marker) + text.slice(marker + 2);
+  return {
+    changes: { from, to, insert: text },
+    selection: EditorSelection.cursor(from + (marker >= 0 ? marker : text.length)),
+    scrollIntoView: true,
+    userEvent: 'input.paste',
+  };
+}

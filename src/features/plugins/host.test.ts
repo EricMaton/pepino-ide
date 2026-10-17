@@ -59,7 +59,14 @@ function setUp() {
   }>();
   const activeEditor = createActiveEditor();
   let text = 'hello';
-  activeEditor.set({ path: 'app/a.ts', getText: () => text, setText: (next) => void (text = next) });
+  activeEditor.set({
+    path: 'app/a.ts',
+    getText: () => text,
+    setText: (next) => void (text = next),
+    getSelection: () => '',
+    insert: () => undefined,
+    insertSnippet: () => undefined,
+  });
   const host = new PluginHost({
     registry,
     dispatcher,

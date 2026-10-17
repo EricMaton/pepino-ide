@@ -1,5 +1,6 @@
 import type { CommandDispatcher, CommandRegistry } from '../../core/commands';
 import type { EventChannel } from '../../core/events';
+import type { KeyValueStore } from '../../core/storage';
 import type { ActiveEditor } from '../editor/activeEditor';
 import type { PluginConnection } from './connection';
 import { commandId, type LoadedPlugin, registerContributions } from './loader';
@@ -37,6 +38,29 @@ const LOG_LIMIT = 200;
 
 export type PluginState = 'starting' | 'running' | 'failed' | 'stopped';
 
+export interface QuickPickItem {
+  label: string;
+  detail?: string;
+}
+
+/** What a plugin asks the user (#53): the app shows it, and answers with what the user chose. */
+export interface PluginPrompter {
+  /** The index of the item chosen, or null when dismissed. */
+  quickPick(request: { plugin: string; title?: string; items: QuickPickItem[] }): Promise<number | null>;
+  /** The text entered, or null when dismissed. */
+  input(request: { plugin: string; title?: string; placeholder?: string; value?: string }): Promise<string | null>;
+}
+
+/** Where a plugin's api.storage is kept: one JSON object per plugin. */
+export const pluginStorageKey = (id: string) => `pepino.plugin-data.${id}`;
+
+/** How much a plugin may keep in api.storage, as JSON. */
+export const STORAGE_LIMIT = 256 * 1024;
+
+/** The most items a quick pick shows, and the longest text a prompt takes. */
+const MAX_ITEMS = 1000;
+const MAX_TEXT = 500;
+
 export interface PluginStatus {
   manifest: PluginManifest;
   origin: string;
@@ -55,6 +79,8 @@ export interface PluginHostDeps {
   connect: (host: SandboxHost) => PluginConnection;
   /** Whether [plugin] may use [permission]: declared, and approved by the user (#49). */
   allowed?: (plugin: PluginManifest, permission: Permission) => boolean;
+  /** Where api.storage persists (the app's preferences); only in memory without it. */
+  storage?: KeyValueStore;
   options?: SandboxOptions;
 }
 
@@ -73,12 +99,55 @@ export class PluginHost {
   private readonly plugins = new Map<string, Running>();
   private readonly listeners = new Set<() => void>();
   private notifier: (text: string) => void = (text) => console.info(text);
+  private prompter: PluginPrompter | null = null;
+  /** Each plugin's api.storage, once read. */
+  private readonly data = new Map<string, Promise<Record<string, unknown>>>();
 
   constructor(private readonly deps: PluginHostDeps) {}
 
   /** Where api.window.showMessage goes (the app's snackbar, once it is up). */
   setNotifier(notify: (text: string) => void) {
     this.notifier = notify;
+  }
+
+  /** Who shows api.window.showQuickPick / showInput (the app, once it is up); without one, they are dismissed. */
+  setPrompter(prompter: PluginPrompter | null) {
+    this.prompter = prompter;
+  }
+
+  /** Plugin [id]'s api.storage. */
+  private storageOf(id: string): Promise<Record<string, unknown>> {
+    let found = this.data.get(id);
+    if (!found) {
+      const storage = this.deps.storage;
+      found = (storage ? storage.get(pluginStorageKey(id)) : Promise.resolve(null)).then((raw) => {
+        try {
+          const value: unknown = raw ? JSON.parse(raw) : {};
+          return typeof value === 'object' && value !== null && !Array.isArray(value)
+            ? (value as Record<string, unknown>)
+            : {};
+        } catch {
+          return {};
+        }
+      });
+      this.data.set(id, found);
+    }
+    return found;
+  }
+
+  /** Puts [key] in plugin [id]'s storage ([value] undefined: takes it out), within the limit. */
+  private async store(id: string, key: string, value: unknown) {
+    const data = await this.storageOf(id);
+    const before = data[key];
+    if (value === undefined) delete data[key];
+    else data[key] = value;
+    const raw = JSON.stringify(data);
+    if (raw.length > STORAGE_LIMIT) {
+      if (before === undefined) delete data[key];
+      else data[key] = before;
+      throw new Error(`Storage is full: a plugin may keep ${STORAGE_LIMIT / 1024} KB`);
+    }
+    await this.deps.storage?.set(pluginStorageKey(id), raw);
   }
 
   /** Every plugin started (or that failed to), in the order they were. */
@@ -214,6 +283,19 @@ export class PluginHost {
     };
     return {
       'editor.getPath': { permission: 'editor.read', run: () => editor().path },
+      'editor.getSelection': { permission: 'editor.read', run: () => editor().getSelection() },
+      'editor.insert': {
+        permission: 'editor.write',
+        run: ([text]) => {
+          editor().insert(String(text));
+        },
+      },
+      'editor.insertSnippet': {
+        permission: 'editor.write',
+        run: ([body]) => {
+          editor().insertSnippet(String(body));
+        },
+      },
       'editor.getText': { permission: 'editor.read', run: () => editor().getText() },
       'editor.setText': {
         permission: 'editor.write',
@@ -249,6 +331,49 @@ export class PluginHost {
           this.notifier(`${manifest.name}: ${String(text)}`);
         },
       },
+      'window.showQuickPick': {
+        run: async ([items, options]) => {
+          if (!Array.isArray(items)) throw new Error('showQuickPick: give a list of items');
+          const listed = items.slice(0, MAX_ITEMS).map((item) => {
+            const { label, detail } = (item ?? {}) as { label?: unknown; detail?: unknown };
+            return {
+              label: text(label),
+              ...(detail !== undefined && detail !== null && { detail: text(detail) }),
+            };
+          });
+          const { title } = (options ?? {}) as { title?: unknown };
+          const chosen = await (this.prompter?.quickPick({
+            plugin: manifest.name,
+            ...(title !== undefined && { title: text(title) }),
+            items: listed,
+          }) ?? null);
+          return chosen !== null && chosen >= 0 && chosen < listed.length ? chosen : null;
+        },
+      },
+      'window.showInput': {
+        run: async ([options]) => {
+          const { title, placeholder, value } = (options ?? {}) as Record<string, unknown>;
+          return (
+            (await this.prompter?.input({
+              plugin: manifest.name,
+              ...(title !== undefined && { title: text(title) }),
+              ...(placeholder !== undefined && { placeholder: text(placeholder) }),
+              ...(value !== undefined && { value: String(value).slice(0, STORAGE_LIMIT) }),
+            })) ?? null
+          );
+        },
+      },
+      'storage.get': { run: async ([key]) => (await this.storageOf(manifest.id))[String(key)] ?? null },
+      'storage.set': {
+        run: async ([key, value]) => {
+          await this.store(manifest.id, String(key), value ?? undefined);
+        },
+      },
+      'storage.delete': {
+        run: async ([key]) => {
+          await this.store(manifest.id, String(key), undefined);
+        },
+      },
     };
   }
 
@@ -278,6 +403,9 @@ export class PluginHost {
 function settingsOf(manifest: PluginManifest): Record<string, SettingValue> {
   return Object.fromEntries(manifest.contributes.settings.map((setting) => [setting.key, setting.default]));
 }
+
+/** A plugin's text for the app's UI: a string, not too long. */
+const text = (value: unknown) => String(value).slice(0, MAX_TEXT);
 
 function messageOf(failure: unknown): string {
   return failure instanceof Error ? failure.message : String(failure);

@@ -1,7 +1,7 @@
 import { EditorSelection, EditorState } from '@codemirror/state';
 import { describe, expect, it } from 'vitest';
 import { indentUnit } from '@codemirror/language';
-import { insertIndent, insertPair, insertText } from './actions';
+import { insertIndent, insertPair, insertSnippet, insertText } from './actions';
 
 /** `|` marks the cursor, `[…]` a selection. */
 function stateFrom(marked: string): EditorState {
@@ -77,5 +77,26 @@ describe('insertIndent', () => {
   it('leaves selections to line indentation', () => {
     const state = stateFrom('[a]');
     expect(insertIndent(state)).toBeNull();
+  });
+});
+
+describe('insertSnippet (#53)', () => {
+  const at = (marked: string, unit: string) => {
+    const plain = stateFrom(marked);
+    return EditorState.create({ doc: plain.doc, selection: plain.selection, extensions: indentUnit.of(unit) });
+  };
+
+  it('indents with the user’s unit, at the line’s indentation, and leaves the cursor at $0', () => {
+    const state = at('function a() {\n    |\n}', '    ');
+    const next = state.update(insertSnippet(state, 'if ($0) {\n\treturn;\n}')).state;
+    expect(next.doc.toString()).toBe('function a() {\n    if () {\n        return;\n    }\n}');
+    expect(next.selection.main.head).toBe('function a() {\n    if ('.length);
+  });
+
+  it('replaces the selection; without $0 the cursor ends after it', () => {
+    const state = at('let [x] = 1;', '\t');
+    const next = state.update(insertSnippet(state, 'y\r\n\tz')).state;
+    expect(next.doc.toString()).toBe('let y\n\tz = 1;');
+    expect(next.selection.main.head).toBe('let y\n\tz'.length);
   });
 });

@@ -127,6 +127,7 @@ export function createServices(): Services {
     activeEditor,
     connect: createWorkerConnection,
     allowed: (plugin, permission) => pluginPermissions.allowed(plugin, permission),
+    storage: preferences,
   });
   const plugins = new PluginManager(pluginHost, pluginPermissions, () => [builtinSource()]);
   const theme = createThemeStore(preferences);
