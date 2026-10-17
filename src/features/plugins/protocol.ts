@@ -8,7 +8,14 @@ import type { SandboxOptions } from './sandbox';
  */
 
 export type HostMessage =
-  | { type: 'init'; seq: number; main: string; settings: Record<string, SettingValue>; options: SandboxOptions }
+  | {
+      type: 'init';
+      seq: number;
+      main: string;
+      settings: Record<string, SettingValue>;
+      options: SandboxOptions;
+      capabilities: string[];
+    }
   | { type: 'activate' | 'deactivate' | 'commands'; seq: number }
   | { type: 'command'; seq: number; id: string }
   | { type: 'event'; seq: number; topic: string; payload: unknown }

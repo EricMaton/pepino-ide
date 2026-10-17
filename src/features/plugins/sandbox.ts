@@ -78,6 +78,7 @@ const PRELUDE = `
     listeners.get(topic).push(listener);
   };
   const settings = __settings;
+  const capabilities = __capabilities;
   const api = Object.freeze({
     apiVersion: '1',
     commands: Object.freeze({
@@ -96,6 +97,12 @@ const PRELUDE = `
     }),
     settings: Object.freeze({ get: (key) => settings[key] }),
     window: Object.freeze({ showMessage: (text) => call('window.showMessage', String(text)) }),
+    // Only a plugin allowed the network gets a way to it (#49); the host checks again on each call
+    ...(capabilities.includes('network') && {
+      network: Object.freeze({
+        fetch: (url, init) => call('network.fetch', String(url), init === undefined ? {} : init),
+      }),
+    }),
   });
   globalThis.plugin = Object.freeze({
     onActivate(run) { activate = run; },
@@ -115,6 +122,7 @@ const PRELUDE = `
   };
   delete globalThis.__host;
   delete globalThis.__settings;
+  delete globalThis.__capabilities;
 })();
 `;
 
@@ -127,6 +135,8 @@ export async function createSandbox(
   settings: Record<string, SettingValue>,
   host: SandboxHost,
   options: SandboxOptions = DEFAULT_SANDBOX_OPTIONS,
+  /** The permissions the plugin may use, for what the api offers it (network). */
+  capabilities: readonly string[] = [],
 ): Promise<Sandbox> {
   const runtime: QuickJSRuntime = (await quickjs()).newRuntime();
   runtime.setMemoryLimit(options.memoryBytes);
@@ -204,6 +214,9 @@ export async function createSandbox(
   const settingsHandle = vm.unwrapResult(vm.evalCode(`(${JSON.stringify(settings)})`));
   vm.setProp(vm.global, '__settings', settingsHandle);
   settingsHandle.dispose();
+  const capabilitiesHandle = vm.unwrapResult(vm.evalCode(JSON.stringify(capabilities)));
+  vm.setProp(vm.global, '__capabilities', capabilitiesHandle);
+  capabilitiesHandle.dispose();
   vm.unwrapResult(vm.evalCode(PRELUDE, 'pepino:prelude')).dispose();
 
   /** Runs [code] in the plugin, awaiting it when it returns a promise; its errors as [PluginError]s. */

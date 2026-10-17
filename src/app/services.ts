@@ -11,6 +11,9 @@ import { createEditorSettingsStore, type EditorSettingsStore } from '../features
 import { type ActiveEditor, createActiveEditor } from '../features/editor/activeEditor';
 import { createWorkerConnection } from '../features/plugins/connection';
 import { PluginHost } from '../features/plugins/host';
+import { builtinSource } from '../features/plugins/loader';
+import { PluginManager } from '../features/plugins/manager';
+import { createPluginPermissions } from '../features/plugins/permissions';
 import { createRepositories, type Repositories } from '../features/git/repositories';
 import { createMemoryGitHub, createNativeGitHub, type GitHub } from '../features/github/github';
 import { createCapacitorBackend } from '../features/projects/capacitorBackend';
@@ -53,8 +56,10 @@ export interface Services {
   terminal: TerminalBackend;
   /** The editor on screen (#48), for plugins' api.editor. */
   activeEditor: ActiveEditor;
-  /** The plugins (#46–#50): each in a sandboxed worker, reached through commands and events. */
-  plugins: PluginHost;
+  /** The running plugins (#46–#50): each in a sandboxed worker, reached through commands and events. */
+  pluginHost: PluginHost;
+  /** Every plugin found, on or off, and what the user approved it to do (#49). */
+  plugins: PluginManager;
   /** The editor's settings (#45): font size, tabs, wrap, line numbers; every editor follows. */
   editorSettings: EditorSettingsStore;
   /** The theme (#44): dark, light, the phone's, or custom; applied to the whole page. */
@@ -114,7 +119,16 @@ export function createServices(): Services {
 
   const dispatcher = new CommandDispatcher(registry);
   const activeEditor = createActiveEditor();
-  const plugins = new PluginHost({ registry, dispatcher, events, activeEditor, connect: createWorkerConnection });
+  const pluginPermissions = createPluginPermissions(preferences);
+  const pluginHost = new PluginHost({
+    registry,
+    dispatcher,
+    events,
+    activeEditor,
+    connect: createWorkerConnection,
+    allowed: (plugin, permission) => pluginPermissions.allowed(plugin, permission),
+  });
+  const plugins = new PluginManager(pluginHost, pluginPermissions, () => [builtinSource()]);
 
   return {
     registry,
@@ -132,6 +146,7 @@ export function createServices(): Services {
     theme: createThemeStore(preferences),
     editorSettings: createEditorSettingsStore(preferences),
     activeEditor,
+    pluginHost,
     plugins,
     preferences,
   };
