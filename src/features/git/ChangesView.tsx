@@ -2,12 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useServices } from '../../app/services';
 import { Button, Dialog, TextField } from '../../ui/components';
 import { cx } from '../../ui/cx';
+import { MoreIcon } from '../../ui/icons';
 import { navigate } from '../../ui/motion';
 import { useSnackbar } from '../../ui/useSnackbar';
 import { errorMessage } from '../projects/errors';
 import { basename, isWithin, parentPath } from '../projects/paths';
 import type { LineExclusion } from './diff';
 import { DiffView } from './DiffView';
+import { ChangeActionsDialog, type Discarding, DiscardDialog } from './Discard';
 import { KIND_MARKS } from './changeKinds';
 import { type CommitResult, type FileChange, GitError, type Identity } from './engine';
 import styles from './GitScreen.module.css';
@@ -102,6 +104,10 @@ export function ChangesView({
   const [identity, setIdentity] = useState<Identity | null | undefined>(undefined);
   const [askingIdentity, setAskingIdentity] = useState(false);
   const pendingCommit = useRef(false);
+  // Discarding (#138): the file whose ⋮ is open, the header's ⋮, and what is being confirmed
+  const [acting, setActing] = useState<FileChange | null>(null);
+  const [changesMenu, setChangesMenu] = useState(false);
+  const [discarding, setDiscarding] = useState<Discarding | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -190,6 +196,24 @@ export function ChangesView({
   }, [identity]);
 
   const count = changes?.length ?? 0;
+
+  const discarded = () => {
+    const what = discarding;
+    setDiscarding(null);
+    if (!what) return;
+    // Lines picked on the old contents no longer mean anything: the files are whole in the commit again
+    const files = what.kind === 'lines' ? [what.file] : what.changes.map((change) => change.path);
+    files.forEach((file) => select(file, 'all'));
+    if (what.kind === 'files' && opened !== null && files.includes(opened)) close();
+    refresh();
+    showSnackbar(
+      what.kind === 'lines'
+        ? `Discarded ${what.lines.lines.length} ${what.lines.lines.length === 1 ? 'line' : 'lines'} of ${basename(what.file)}`
+        : files.length === 1
+          ? `Discarded changes to ${basename(files[0])}`
+          : `Discarded changes to ${files.length} files`,
+    );
+  };
   const commitLabel =
     ticked.length > 0
       ? `Commit ${ticked.length} ${ticked.length === 1 ? 'file' : 'files'} to ${branch}`
@@ -206,7 +230,7 @@ export function ChangesView({
   return (
     <div className={styles.changes}>
       <div className={styles.changesHead} inert={opened !== null}>
-        <label className={styles.checkRow}>
+        <label className={cx(styles.checkRow, styles.checkRowGrow)}>
           <input
             type="checkbox"
             className={styles.check}
@@ -221,6 +245,16 @@ export function ChangesView({
             {changes === null ? 'Changes' : `${count} changed ${count === 1 ? 'file' : 'files'}`}
           </span>
         </label>
+        <Button
+          variant="text"
+          square
+          className="muted"
+          aria-label="Actions for the changes"
+          disabled={count === 0}
+          onClick={() => setChangesMenu(true)}
+        >
+          <MoreIcon size={18} />
+        </Button>
       </div>
 
       <div className={styles.changeList} inert={opened !== null}>
@@ -267,6 +301,15 @@ export function ChangesView({
                     <span className="visually-hidden">{label}</span>
                   </span>
                 </button>
+                <Button
+                  variant="text"
+                  square
+                  className={cx('muted', styles.changeMore)}
+                  aria-label={`Actions for ${change.path}`}
+                  onClick={() => setActing(change)}
+                >
+                  <MoreIcon size={18} />
+                </Button>
               </div>
             );
           })
@@ -333,9 +376,55 @@ export function ChangesView({
         <DiffView
           path={path}
           file={opened}
-          picking={{ selection: selectionOf(opened), onSelect: onSelectOpened }}
+          picking={{
+            selection: selectionOf(opened),
+            onSelect: onSelectOpened,
+            onDiscardFile: () => {
+              const change = changes?.find((found) => found.path === opened);
+              if (change) setDiscarding({ kind: 'files', changes: [change], all: false });
+            },
+            onDiscardLines: (lines) => setDiscarding({ kind: 'lines', file: opened, lines }),
+          }}
           onClose={close}
         />
+      )}
+
+      {changesMenu && changes && (
+        <Dialog
+          title="Changes"
+          eyebrow={`${count} changed ${count === 1 ? 'file' : 'files'}`}
+          onClose={() => setChangesMenu(false)}
+        >
+          <div className={styles.actionList}>
+            <Button
+              variant="text"
+              tone="danger"
+              listItem
+              onClick={() => {
+                setChangesMenu(false);
+                setDiscarding({ kind: 'files', changes, all: true });
+              }}
+            >
+              <span className="accent" aria-hidden>
+                ›
+              </span>
+              Discard all changes…
+            </Button>
+          </div>
+        </Dialog>
+      )}
+      {acting && (
+        <ChangeActionsDialog
+          change={acting}
+          onClose={() => setActing(null)}
+          onDiscard={() => {
+            setActing(null);
+            setDiscarding({ kind: 'files', changes: [acting], all: false });
+          }}
+        />
+      )}
+      {discarding && (
+        <DiscardDialog path={path} what={discarding} onClose={() => setDiscarding(null)} onDiscarded={discarded} />
       )}
 
       {askingIdentity && (

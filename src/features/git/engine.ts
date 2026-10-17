@@ -165,6 +165,17 @@ export interface GitEngine {
     path: string,
     commit: { message: string; paths: readonly string[]; excluded?: Readonly<Record<string, LineExclusion>> },
   ): Promise<CommitResult>;
+  /**
+   * GitHub Desktop's Discard changes (#138): [paths] go back to the last
+   * commit (a new file is deleted, a deleted one comes back); for those in
+   * [lines], only the changed lines picked there, the rest stays. A snapshot
+   * is taken first, so Earlier versions keeps what was discarded. When a
+   * file changed since its lines were picked, nothing is discarded (STALE).
+   */
+  discard(
+    path: string,
+    change: { paths: readonly string[]; lines?: Readonly<Record<string, LineExclusion>> },
+  ): Promise<void>;
   /** The commits reachable from HEAD, newest first: [limit] after skipping [skip]. None before the first commit. */
   log(path: string, page?: { skip?: number; limit?: number }): Promise<LogEntry[]>;
   /** The files [commit] changed against its first parent (all new in a first commit), sorted by path. */
@@ -244,6 +255,11 @@ interface GitPlugin {
     paths: string[];
     excluded: Record<string, LineExclusion>;
   }): Promise<CommitResult>;
+  discard(options: {
+    path: string;
+    paths: string[];
+    lines: Record<string, LineExclusion>;
+  }): Promise<{ written: string[]; removed: string[] }>;
   log(options: { path: string; skip: number; limit: number }): Promise<{ commits: LogEntry[] }>;
   commitChanges(options: { path: string; commit: string }): Promise<{ changes: FileChange[] }>;
   commitDiff(options: { path: string; commit: string; file: string }): Promise<FileDiff>;
@@ -319,6 +335,16 @@ export function createNativeGitEngine(announce: Announce): GitEngine {
         .catch((error: unknown) => {
           throw gitError(error);
         });
+    },
+    async discard(path, { paths, lines = {} }) {
+      const folder = project(path);
+      const discarded = await git
+        .discard({ path: folder, paths: [...paths], lines: { ...lines } })
+        .catch((error: unknown) => {
+          throw gitError(error);
+        });
+      for (const file of discarded.written) announce('fs.written', { path: joinPath(folder, file) });
+      for (const file of discarded.removed) announce('fs.deleted', { path: joinPath(folder, file) });
     },
     async log(path, { skip = 0, limit = LOG_PAGE } = {}) {
       return (await git.log({ path: project(path), skip, limit })).commits;
@@ -612,6 +638,37 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
       const entry = { id, summary, description, author: identity.name, email: identity.email, time, files: next };
       await writeLog(folder, { ...log, [branch]: [entry, ...(log[branch] ?? [])] });
       return { id: shortId(id), summary };
+    },
+
+    async discard(path, { paths, lines = {} }) {
+      const folder = await repository(path);
+      if (paths.length === 0) throw new Error('Choose at least one file to discard');
+      const [refs, branch, files] = await Promise.all([readRefs(folder), currentBranch(folder), readFiles(folder)]);
+      const head = refs[branch] ?? {};
+      const stale = paths.filter((file) => {
+        const picked = lines[file];
+        if (!picked || picked.lines.length === 0) return false;
+        return picked.version !== `${hashOf(head[file] ?? '')}:${hashOf(files.get(file) ?? '')}`;
+      });
+      if (stale.length > 0) {
+        throw new GitError('STALE', `${stale[0]} changed since you picked its lines: check them again`, stale);
+      }
+      const first = basename(paths[0]);
+      await engine.snapshot(
+        folder,
+        `Before discarding changes to ${paths.length === 1 ? first : `${first} and ${paths.length - 1} more`}`,
+      );
+      for (const file of paths) {
+        const picked = lines[file];
+        // Discarding some lines: the file with every other change kept (all of them picked: the whole file)
+        const kept =
+          picked && picked.lines.length > 0
+            ? applyExclusion(head[file] ?? '', files.get(file) ?? '', new Set(picked.lines))
+            : null;
+        if (kept !== null) await writeFile(folder, file, kept);
+        else if (file in head) await writeFile(folder, file, head[file]);
+        else if (files.has(file)) await space.delete(joinPath(folder, file));
+      }
     },
 
     async log(path, { skip = 0, limit = LOG_PAGE } = {}) {

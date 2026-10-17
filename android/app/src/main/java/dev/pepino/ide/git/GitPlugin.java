@@ -295,7 +295,7 @@ public class GitPlugin extends Plugin {
             JSArray rawPaths = call.getArray("paths", new JSArray());
             List<String> paths = new ArrayList<>();
             for (int i = 0; i < rawPaths.length(); i++) paths.add(rawPaths.getString(i));
-            GitOps.CommitResult commit = GitOps.commit(folder(call), call.getString("message"), paths, exclusions(call), who);
+            GitOps.CommitResult commit = GitOps.commit(folder(call), call.getString("message"), paths, exclusions(call, "excluded"), who);
             JSObject result = new JSObject();
             result.put("id", commit.id());
             result.put("summary", commit.summary());
@@ -303,9 +303,24 @@ public class GitPlugin extends Plugin {
         });
     }
 
-    /** `excluded`: { [path]: { version, lines: number[] } }. */
-    private static Map<String, GitOps.LineExclusion> exclusions(PluginCall call) throws Exception {
-        JSObject raw = call.getObject("excluded", new JSObject());
+    /** Discards the changes to `paths` (#138); for those in `lines`, only the changed lines picked there. */
+    @PluginMethod
+    public void discard(PluginCall call) {
+        run(call, () -> {
+            JSArray rawPaths = call.getArray("paths", new JSArray());
+            List<String> paths = new ArrayList<>();
+            for (int i = 0; i < rawPaths.length(); i++) paths.add(rawPaths.getString(i));
+            GitOps.Discarded discarded = GitOps.discard(folder(call), paths, exclusions(call, "lines"));
+            JSObject result = new JSObject();
+            result.put("written", new JSArray(discarded.written()));
+            result.put("removed", new JSArray(discarded.removed()));
+            return result;
+        });
+    }
+
+    /** [key] (`excluded`, `lines`): { [path]: { version, lines: number[] } }. */
+    private static Map<String, GitOps.LineExclusion> exclusions(PluginCall call, String key) throws Exception {
+        JSObject raw = call.getObject(key, new JSObject());
         Map<String, GitOps.LineExclusion> exclusions = new HashMap<>();
         for (Iterator<String> paths = raw.keys(); paths.hasNext(); ) {
             String path = paths.next();

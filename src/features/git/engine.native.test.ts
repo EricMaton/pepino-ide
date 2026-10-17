@@ -30,6 +30,7 @@ const plugin = vi.hoisted(() => ({
   addListener: vi.fn(),
   sync: vi.fn(),
   syncCommits: vi.fn(),
+  discard: vi.fn(),
   fetch: vi.fn(),
   pull: vi.fn(),
   push: vi.fn(),
@@ -202,5 +203,24 @@ describe('native git engine', () => {
     expect(await git.snapshot('app', 'Before editing a.txt')).toBe('snap');
     expect(plugin.snapshot).toHaveBeenCalledWith({ path: 'app', reason: 'Before editing a.txt' });
     expect(await git.snapshotFile('app', 'snap', 'gone.txt')).toBeNull();
+  });
+});
+
+describe('native git engine: discard (#138)', () => {
+  it('sends the files and picked lines, and announces what it wrote and removed', async () => {
+    plugin.discard.mockResolvedValue({ written: ['a.txt'], removed: ['new.txt'] });
+    const lines = { 'a.txt': { version: 'v1', lines: [2] } };
+
+    await git.discard('work/app', { paths: ['a.txt', 'new.txt'], lines });
+
+    expect(plugin.discard).toHaveBeenCalledWith({ path: 'work/app', paths: ['a.txt', 'new.txt'], lines });
+    expect(announce).toHaveBeenCalledWith('fs.written', { path: 'work/app/a.txt' });
+    expect(announce).toHaveBeenCalledWith('fs.deleted', { path: 'work/app/new.txt' });
+
+    plugin.discard.mockRejectedValueOnce({ code: 'STALE', message: 'a.txt changed', data: { paths: ['a.txt'] } });
+    await expect(git.discard('work/app', { paths: ['a.txt'], lines })).rejects.toMatchObject({
+      code: 'STALE',
+      paths: ['a.txt'],
+    });
   });
 });

@@ -2,14 +2,14 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import { useServices } from '../../app/services';
 import { useBackHandler } from '../../ui/back';
-import { Button } from '../../ui/components';
+import { Button, Dialog } from '../../ui/components';
 import { cx } from '../../ui/cx';
-import { BackIcon } from '../../ui/icons';
+import { BackIcon, MoreIcon } from '../../ui/icons';
 import { useSnackbar } from '../../ui/useSnackbar';
 import { clampFontSize, DEFAULT_FONT_SIZE, FONT_SIZE_KEY } from '../editor/zoom';
 import { errorMessage } from '../projects/errors';
 import { basename, joinPath, parentPath } from '../projects/paths';
-import { changedLines, type DiffLine, type FileDiff, type Hunk } from './diff';
+import { changedLines, type DiffLine, type FileDiff, type Hunk, type LineExclusion } from './diff';
 import styles from './GitScreen.module.css';
 import { excludedLines, type Selection, toggleLines } from './selection';
 
@@ -84,21 +84,31 @@ function useCodeFontSize(): number {
 
 const MARKS: Record<DiffLine['kind'], string> = { added: '+', removed: '−', context: ' ' };
 
-/** Lines picked for the commit being made, and how to change them. */
+/** Lines picked for the commit being made, and how to change them; and discarding (#138). */
 interface Picking {
   selection: Selection;
   onSelect: (selection: Selection) => void;
+  /** Discard the whole file (asks first). */
+  onDiscardFile: () => void;
+  /** Discard these changed lines (asks first). */
+  onDiscardLines: (lines: LineExclusion) => void;
 }
 
 /** Nothing to pick in a diff of the history. */
-const NOT_PICKING: Picking = { selection: 'all', onSelect: () => undefined };
+const NOT_PICKING: Picking = {
+  selection: 'all',
+  onSelect: () => undefined,
+  onDiscardFile: () => undefined,
+  onDiscardLines: () => undefined,
+};
 
 /**
  * One changed file, GitHub Desktop's way but for a 6" screen: a unified diff
  * (one column, lines wrapped, never side by side). With [picking], tapping a
  * changed line takes it out of the commit or puts it back, and tapping a
  * hunk's header does it for the whole hunk. With [commit] instead, it is what
- * that commit changed, only to read.
+ * that commit changed, only to read. Its ⋮ discards the file, or lines
+ * picked for it (#138): tapped lines are then the ones to discard.
  */
 export function DiffView({
   path,
@@ -113,7 +123,10 @@ export function DiffView({
   file: string;
   onClose: () => void;
 } & ({ picking: Picking; commit?: never } | { commit: string; picking?: never })) {
-  const { selection, onSelect } = picking ?? NOT_PICKING;
+  const { selection, onSelect, onDiscardFile, onDiscardLines } = picking ?? NOT_PICKING;
+  const [menu, setMenu] = useState(false);
+  // The lines picked to discard, on the diff version they were picked on: once it changes, the picking is over
+  const [discardPick, setDiscardPick] = useState<LineExclusion | null>(null);
   const readOnly = picking === undefined;
   const { diff, error } = useDiff(path, file, commit);
   const showSnackbar = useSnackbar();
@@ -128,26 +141,46 @@ export function DiffView({
     }
   }, [readOnly, version, selection, onSelect, showSnackbar, file]);
 
-  const excluded = diff ? excludedLines(diff, selection) : new Set<number>();
   const changed = diff ? changedLines(diff) : [];
-  const toggle = (lines: readonly number[]) => diff && onSelect(toggleLines(diff, selection, lines));
+  const discarding = diff !== null && discardPick !== null && discardPick.version === diff.version;
+  const picked = discarding ? new Set(discardPick.lines) : null;
+  const excluded = picked ?? (diff ? excludedLines(diff, selection) : new Set<number>());
+  const toggle = (lines: readonly number[]) => {
+    if (!diff) return;
+    if (!picked) {
+      onSelect(toggleLines(diff, selection, lines));
+      return;
+    }
+    // Discarding: a tap picks the lines, or unpicks them when all were picked
+    const next = new Set(picked);
+    const all = lines.every((line) => next.has(line));
+    for (const line of lines) {
+      if (all) next.delete(line);
+      else next.add(line);
+    }
+    setDiscardPick({ version: diff.version, lines: [...next].sort((a, b) => a - b) });
+  };
+  const canPickLines = diff !== null && !diff.binary && !diff.tooLarge && changed.length > 0;
   const counts = diff ? <DiffCounts diff={diff} /> : null;
-  const lineText =
-    diff && !diff.binary && !diff.tooLarge && changed.length > 0 ? (
-      readOnly ? (
-        counts
-      ) : (
-        <>
-          {counts} · committing {changed.length - excluded.size} of {changed.length}
-        </>
-      )
-    ) : readOnly ? (
-      parentPath(file) || 'In this commit'
-    ) : selection === 'none' ? (
-      'Not in the commit'
+  const lineText = discarding ? (
+    <span className={styles.discardNote}>
+      Tap the changes to discard · {picked!.size} of {changed.length}
+    </span>
+  ) : diff && !diff.binary && !diff.tooLarge && changed.length > 0 ? (
+    readOnly ? (
+      counts
     ) : (
-      'In the commit'
-    );
+      <>
+        {counts} · committing {changed.length - excluded.size} of {changed.length}
+      </>
+    )
+  ) : readOnly ? (
+    parentPath(file) || 'In this commit'
+  ) : selection === 'none' ? (
+    'Not in the commit'
+  ) : (
+    'In the commit'
+  );
 
   return (
     <div className={styles.diff}>
@@ -164,7 +197,18 @@ export function DiffView({
           <span className="body ellipsis">{basename(file)}</span>
           <span className="caption muted ellipsis">{lineText}</span>
         </span>
-        {!readOnly && (
+        {!readOnly && !discarding && (
+          <Button
+            variant="text"
+            square
+            className="muted"
+            aria-label={`Actions for ${file}`}
+            onClick={() => setMenu(true)}
+          >
+            <MoreIcon size={18} />
+          </Button>
+        )}
+        {!readOnly && !discarding && (
           <label className={styles.diffTick}>
             <input
               type="checkbox"
@@ -203,6 +247,59 @@ export function DiffView({
         </div>
       ) : (
         <DiffLines diff={diff} excluded={excluded} onToggle={readOnly ? undefined : toggle} />
+      )}
+
+      {discarding && (
+        <div className={styles.discardBar}>
+          <Button variant="text" onClick={() => setDiscardPick(null)}>
+            Cancel
+          </Button>
+          <Button
+            variant="filled"
+            tone="danger"
+            disabled={picked!.size === 0}
+            onClick={() => onDiscardLines(discardPick)}
+          >
+            Discard {picked!.size} {picked!.size === 1 ? 'line' : 'lines'}
+          </Button>
+        </div>
+      )}
+
+      {menu && (
+        <Dialog title={basename(file)} eyebrow={file} onClose={() => setMenu(false)}>
+          <div className={styles.actionList}>
+            {canPickLines && (
+              <Button
+                variant="text"
+                tone="danger"
+                listItem
+                onClick={() => {
+                  setMenu(false);
+                  setDiscardPick({ version: diff.version, lines: [] });
+                }}
+              >
+                <span className="accent" aria-hidden>
+                  ›
+                </span>
+                Discard some lines…
+              </Button>
+            )}
+            <Button
+              variant="text"
+              tone="danger"
+              listItem
+              onClick={() => {
+                setMenu(false);
+                onDiscardFile();
+              }}
+            >
+              <span className="accent" aria-hidden>
+                ›
+              </span>
+              Discard all changes to the file…
+            </Button>
+          </div>
+        </Dialog>
       )}
     </div>
   );

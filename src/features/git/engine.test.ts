@@ -297,3 +297,46 @@ describe('memory git engine: snapshots', () => {
     expect(version.reason).toBe('Before switching to main');
   });
 });
+
+describe('memory git engine: discarding (#138)', () => {
+  beforeEach(async () => {
+    await git.init('app');
+    await git.setIdentity({ name: 'Pepino', email: 'me@pepino.dev' });
+    await space.writeTextFile('app/a.txt', 'one\ntwo\nthree\n');
+    await space.writeTextFile('app/gone.txt', 'bye\n');
+    await git.commit('app', { message: 'first', paths: ['a.txt', 'gone.txt'] });
+  });
+
+  it('puts files back as committed, deletes new ones, and keeps a snapshot first', async () => {
+    await space.writeTextFile('app/a.txt', 'one\nmine\nthree\n');
+    await space.delete('app/gone.txt');
+    await space.writeTextFile('app/new.txt', 'fresh\n');
+
+    await git.discard('app', { paths: ['a.txt', 'gone.txt', 'new.txt'] });
+
+    expect(await git.status('app')).toEqual([]);
+    expect(await space.readTextFile('app/a.txt')).toBe('one\ntwo\nthree\n');
+    expect(await space.readTextFile('app/gone.txt')).toBe('bye\n');
+    await expect(space.readTextFile('app/new.txt')).rejects.toThrow();
+    const [version] = await git.snapshotVersions('app', 'a.txt');
+    expect(version.reason).toBe('Before discarding changes to a.txt and 2 more');
+    expect(await git.snapshotFile('app', version.id, 'a.txt')).toBe('one\nmine\nthree\n');
+  });
+
+  it('discards only the picked lines, and nothing when they were picked on an older version', async () => {
+    await space.writeTextFile('app/a.txt', 'one\nTWO\nthree\nfour\n');
+    const { version } = await git.diff('app', 'a.txt');
+    // lines 0 and 1: "two" removed and "TWO" added; 2: "four" added
+    await git.discard('app', { paths: ['a.txt'], lines: { 'a.txt': { version, lines: [2] } } });
+    expect(await space.readTextFile('app/a.txt')).toBe('one\nTWO\nthree\n');
+
+    await expect(
+      git.discard('app', { paths: ['a.txt'], lines: { 'a.txt': { version, lines: [0, 1] } } }),
+    ).rejects.toMatchObject({ code: 'STALE', paths: ['a.txt'] });
+    expect(await space.readTextFile('app/a.txt')).toBe('one\nTWO\nthree\n');
+
+    const fresh = await git.diff('app', 'a.txt');
+    await git.discard('app', { paths: ['a.txt'], lines: { 'a.txt': { version: fresh.version, lines: [0, 1] } } });
+    expect(await git.status('app')).toEqual([]);
+  });
+});
