@@ -1045,6 +1045,109 @@ public final class GitOps {
     /** A file committed with some of its lines: its content as built from them. */
     private record Partial(byte[] content, FileMode mode) {}
 
+    /** What a discard did: the files it wrote and removed (repo-relative). */
+    public record Discarded(List<String> written, List<String> removed) {}
+
+    /**
+     * GitHub Desktop's Discard changes (#138): each of [paths] goes back to
+     * the last commit (a new file is deleted, a deleted one comes back). For
+     * a file in [lines], only those changed lines go back and its other
+     * changes stay. The working tree is snapshotted first, so Earlier
+     * versions (#27) keeps what was discarded. When a file changed since its
+     * lines were picked, nothing is discarded ([StaleSelectionException]).
+     */
+    public static Discarded discard(File folder, List<String> paths, Map<String, LineExclusion> lines)
+        throws IOException, GitAPIException {
+        if (paths.isEmpty()) throw new IllegalArgumentException("Choose at least one file to discard");
+        try (Git git = Git.open(folder)) {
+            Repository repository = git.getRepository();
+            clearStaleLocks(repository);
+            // Some of a file's lines: the file with every other change kept
+            Map<String, byte[]> partials = new TreeMap<>();
+            List<String> stale = new ArrayList<>();
+            List<String> whole = new ArrayList<>();
+            for (String path : paths) {
+                LineExclusion picked = lines.get(path);
+                if (picked == null || picked.lines().isEmpty()) {
+                    whole.add(path);
+                    continue;
+                }
+                Sides sides = sides(repository, folder, path);
+                if (sides.tooLarge() || !sides.text() || !sides.version().equals(picked.version())) {
+                    stale.add(path);
+                    continue;
+                }
+                Changes changes = sides.changes();
+                int total = changes.count();
+                Set<Integer> chosen = new HashSet<>();
+                for (int line : picked.lines()) if (line >= 0 && line < total) chosen.add(line);
+                if (chosen.size() >= total) whole.add(path);
+                else if (!chosen.isEmpty()) partials.put(path, partial(changes, chosen));
+            }
+            if (!stale.isEmpty()) throw new StaleSelectionException(stale);
+
+            snapshot(repository, "Before discarding changes to " + ConflictException.describe(paths));
+            ObjectId headId = repository.resolve(Constants.HEAD + "^{commit}");
+            RevCommit head = null;
+            if (headId != null) {
+                try (RevWalk walk = new RevWalk(repository)) {
+                    head = walk.parseCommit(headId);
+                }
+            }
+            List<String> written = new ArrayList<>();
+            List<String> removed = new ArrayList<>();
+            List<String> restore = new ArrayList<>();
+            for (String path : whole) {
+                if (head != null && blobId(repository, head.getTree(), path) != null) {
+                    restore.add(path);
+                    continue;
+                }
+                // Not in the last commit: discarding it is deleting it
+                File file = resolve(folder, path);
+                if (file.isFile() && file.delete()) removed.add(path);
+                git.rm().setCached(true).addFilepattern(path).call();
+            }
+            if (!restore.isEmpty()) {
+                CheckoutCommand checkout = git.checkout().setStartPoint(head);
+                for (String path : restore) checkout.addPath(path);
+                checkout.call();
+                written.addAll(restore);
+            }
+            for (Map.Entry<String, byte[]> entry : partials.entrySet()) {
+                writeCheckedOut(repository, entry.getKey(), resolve(folder, entry.getKey()), entry.getValue());
+                written.add(entry.getKey());
+            }
+            return new Discarded(written, removed);
+        }
+    }
+
+    /**
+     * Writes [content] (as git stores it) to [file] as a checkout would:
+     * with .gitattributes' line endings (CRLF for `*.bat text eol=crlf`).
+     */
+    private static void writeCheckedOut(Repository repository, String path, File file, byte[] content) throws IOException {
+        EolStreamType eol = EolStreamType.DIRECT;
+        try (TreeWalk walk = new TreeWalk(repository)) {
+            walk.setOperationType(TreeWalk.OperationType.CHECKOUT_OP);
+            walk.addTree(new FileTreeIterator(repository));
+            walk.setFilter(PathFilter.create(path));
+            walk.setRecursive(true);
+            while (walk.next()) {
+                if (!walk.getPathString().equals(path)) continue;
+                eol = EolStreamTypeUtil.detectStreamType(
+                    TreeWalk.OperationType.CHECKOUT_OP,
+                    repository.getConfig().get(WorkingTreeOptions.KEY),
+                    walk.getAttributes()
+                );
+            }
+        }
+        File parent = file.getParentFile();
+        if (parent != null) parent.mkdirs();
+        try (java.io.OutputStream out = EolStreamTypeUtil.wrapOutputStream(Files.newOutputStream(file.toPath()), eol)) {
+            out.write(content);
+        }
+    }
+
     /** Puts each partial file into the index, past the disk. */
     private static void stage(Repository repository, Map<String, Partial> partials) throws IOException {
         DirCache index = repository.lockDirCache();
