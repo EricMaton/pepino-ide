@@ -75,11 +75,18 @@
 
 /* Bottom navigation */
 .nav {
-  display: flex;
+  position: relative;
+  z-index: 10;
   flex: none;
   padding-bottom: var(--inset-bottom);
   background: var(--surface-variant);
   border-top: var(--border);
+}
+
+.navBar {
+  position: relative;
+  z-index: 1;
+  display: flex;
 }
 
 .navItem {
@@ -194,43 +201,124 @@
   gap: 2px;
 }
 
-/* MORE (#171): the destinations not in the bar */
-.moreList {
+/* MORE (#171): a tray rising above the bar, with what is not in it */
+.trayCatcher {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+}
+
+.tray {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-3);
+  border-top: var(--border);
+  background: var(--surface-variant);
+  box-shadow: 0 calc(-1 * var(--shadow-offset)) 0 var(--primary);
+  animation: tray-up var(--motion-enter) var(--ease-out);
 }
 
-.moreItem {
+@keyframes tray-up {
+  from {
+    transform: translateY(16px);
+    opacity: 0;
+  }
+}
+
+.trayHint {
+  padding: 0 var(--space-1);
+}
+
+.trayItems {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-2);
+  min-height: var(--nav-height);
+}
+
+.trayItem {
+  position: relative;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: var(--space-3);
-  min-height: 60px;
-  padding: var(--space-2) var(--space-3);
+  justify-content: center;
+  gap: 3px;
+  height: var(--nav-height);
+  padding: 0;
   border: var(--border);
   background: var(--bg);
   color: var(--fg);
-  text-align: left;
   cursor: pointer;
-  -webkit-touch-callout: none;
-  user-select: none;
 }
 
-.moreItem svg {
+.trayItem svg {
   color: var(--primary);
 }
 
-.moreItemCurrent {
+.trayItem[aria-current='page'] {
   box-shadow: var(--shadow-primary);
 }
 
-.moreText {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.trayItem .label {
+  font-size: 11px;
 }
 
-.navItem {
+/* Held to be dragged (#171): no browser gesture takes the finger away, no system menu */
+.navItem,
+.trayItem {
+  touch-action: none;
   -webkit-touch-callout: none;
   user-select: none;
+}
+
+/* The one being dragged stays faint where it was; a ghost follows the finger */
+.navPicked {
+  opacity: 0.3;
+}
+
+.navGhost {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 88px;
+  height: var(--nav-height);
+  border: var(--border);
+  background: var(--primary);
+  color: var(--on-primary);
+  box-shadow: var(--shadow-fg);
+  transform: translate(-50%, -120%);
+  pointer-events: none;
+}
+
+.navGhost .label {
+  font-size: 11px;
+}
+
+/* Where it would land: a bar before, or after the last */
+.dropBefore::after,
+.dropAfter::after {
+  content: '';
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  width: 4px;
+  background: var(--primary);
+}
+
+.dropBefore::after {
+  left: -2px;
+}
+
+.dropAfter::after {
+  right: -2px;
 }
