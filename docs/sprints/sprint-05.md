@@ -5,13 +5,13 @@
 
 ## Tareas
 
-- [ ] PTY embebido: plugin Capacitor propio en Kotlin + NDK (`forkpty`), con binarios empaquetados como `jniLibs` por la restricción W^X de Android 10+
-- [ ] Shell disponible en Android (sh/toybox) + PATH de la app
-- [ ] Terminal UI con xterm.js: scrollback, colores, resize al abrir/cerrar teclado
-- [ ] Teclado terminal: fila de teclas especiales (Ctrl, Esc, Tab, flechas, |, ~)
-- [ ] Integración con git del sistema dentro de la terminal
-- [ ] Evaluar incluir node/npm embebido (nodejs-mobile) — spike
-- [ ] Documentar explícitamente que iOS no tendrá terminal (restricción de plataforma)
+- [x] PTY embebido: plugin Capacitor propio en Kotlin + NDK (`forkpty`), con binarios empaquetados como `jniLibs` por la restricción W^X de Android 10+
+- [x] Shell disponible en Android (sh/toybox) + PATH de la app
+- [x] Terminal UI con xterm.js: scrollback, colores, resize al abrir/cerrar teclado
+- [x] Teclado terminal: fila de teclas especiales (Ctrl, Esc, Tab, flechas, |, ~)
+- [x] Integración con git dentro de la terminal: el JGit de la app vía app_process (ADR-008)
+- [x] Evaluar incluir node/npm embebido (nodejs-mobile) — spike: no por ahora (ADR-008)
+- [x] Documentar explícitamente que iOS no tendrá terminal (restricción de plataforma)
 
 ## Criterios de aceptación
 
