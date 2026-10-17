@@ -36,6 +36,7 @@ import org.eclipse.jgit.diff.RawText;
 import org.eclipse.jgit.diff.SequenceComparator;
 import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.dircache.DirCacheBuilder;
+import org.eclipse.jgit.dircache.DirCacheCheckout;
 import org.eclipse.jgit.dircache.DirCacheEditor;
 import org.eclipse.jgit.dircache.DirCacheEntry;
 import org.eclipse.jgit.dircache.DirCacheIterator;
@@ -55,6 +56,7 @@ import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.RepositoryCache;
 import org.eclipse.jgit.lib.StoredConfig;
+import org.eclipse.jgit.lib.TreeFormatter;
 import org.eclipse.jgit.merge.MergeStrategy;
 import org.eclipse.jgit.merge.ResolveMerger;
 import org.eclipse.jgit.revwalk.RevCommit;
@@ -373,7 +375,11 @@ public final class GitOps {
         public final List<String> paths;
 
         MergeConflictException(List<String> paths) {
-            super("GitHub's changes and yours touch the same lines in " + ConflictException.describe(paths));
+            this(paths, "GitHub's changes and yours touch the same lines in " + ConflictException.describe(paths));
+        }
+
+        MergeConflictException(List<String> paths, String message) {
+            super(message);
             this.paths = paths;
         }
     }
@@ -1324,6 +1330,83 @@ public final class GitOps {
                 index.commit();
             }
             return entryOf(commit);
+        }
+    }
+
+    /** What a revert did (#142): the new commit, and the files it wrote and removed. */
+    public record Reverted(CommitResult commit, List<String> written, List<String> removed) {}
+
+    /**
+     * GitHub Desktop's Revert (#142): a new commit on the current branch that
+     * undoes what commit [id] changed, safe even when GitHub has it. Worked
+     * out in memory first (the commit's changes taken out of the branch as it
+     * is now, a three-way merge): when later commits changed the same lines,
+     * nothing changes ([MergeConflictException]); nor when uncommitted changes
+     * to those files are in the way ([ConflictException]). The files are
+     * snapshotted before they change. Never a merge commit.
+     */
+    public static Reverted revert(File folder, String id, Identity who) throws IOException, GitAPIException {
+        if (who == null) throw new IllegalStateException("Set your name and email for commits first");
+        try (Git git = Git.open(folder); RevWalk walk = new RevWalk(git.getRepository())) {
+            Repository repository = git.getRepository();
+            clearStaleLocks(repository);
+            excludePepino(repository);
+            RevCommit commit = parseCommit(repository, walk, id);
+            if (commit.getParentCount() > 1) throw new IllegalStateException("A merge commit cannot be reverted");
+            ObjectId head = repository.resolve(Constants.HEAD);
+            RevCommit headCommit = walk.parseCommit(head);
+            ObjectId parentTree;
+            if (commit.getParentCount() == 1) {
+                parentTree = walk.parseCommit(commit.getParent(0)).getTree();
+            } else {
+                // The first commit: reverting it takes away every file it added
+                try (ObjectInserter inserter = repository.newObjectInserter()) {
+                    parentTree = inserter.insert(new TreeFormatter());
+                    inserter.flush();
+                }
+            }
+            String summary = entryOf(commit).summary();
+            ResolveMerger merger = (ResolveMerger) MergeStrategy.RECURSIVE.newMerger(repository, true);
+            merger.setBase(commit.getTree());
+            if (!merger.merge(headCommit.getTree(), parentTree)) {
+                List<String> paths = new ArrayList<>(new java.util.TreeSet<>(merger.getUnmergedPaths()));
+                if (paths.isEmpty()) paths.addAll(merger.getFailingPaths().keySet());
+                throw new MergeConflictException(
+                    paths,
+                    "Commits made after \"" + summary + "\" changed the same lines in " + ConflictException.describe(paths)
+                );
+            }
+            ObjectId tree = merger.getResultTreeId();
+            if (tree.equals(headCommit.getTree())) throw new IllegalArgumentException("Its changes are not on the branch any more: nothing to revert");
+            // Uncommitted changes to the files it rewrites stay theirs: nothing happens
+            List<String> touched = new ArrayList<>();
+            try (TreeWalk trees = new TreeWalk(repository)) {
+                trees.addTree(headCommit.getTree());
+                trees.addTree(tree);
+                trees.setRecursive(true);
+                trees.setFilter(TreeFilter.ANY_DIFF);
+                while (trees.next()) touched.add(trees.getPathString());
+            }
+            List<String> inTheWay = new ArrayList<>();
+            for (FileChange change : status(folder)) if (touched.contains(change.path())) inTheWay.add(change.path());
+            if (!inTheWay.isEmpty()) throw new ConflictException(inTheWay, "reverting");
+            snapshot(repository, "Before reverting " + commit.abbreviate(7).name());
+            // The index as the last commit (Pepino's model), then the files as the revert leaves them
+            git.reset().call();
+            DirCacheCheckout checkout = new DirCacheCheckout(repository, headCommit.getTree(), repository.lockDirCache(), tree);
+            checkout.setFailOnConflict(true);
+            checkout.checkout();
+            PersonIdent ident = new PersonIdent(who.name(), who.email());
+            RevCommit reverted = git
+                .commit()
+                .setMessage("Revert \"" + summary + "\"\n\nThis reverts commit " + commit.getName() + ".\n")
+                .setAuthor(ident)
+                .setCommitter(ident)
+                .call();
+            List<String> written = new ArrayList<>();
+            List<String> removed = new ArrayList<>();
+            changedFiles(repository, head, reverted, written, removed);
+            return new Reverted(new CommitResult(reverted.abbreviate(7).name(), reverted.getShortMessage()), written, removed);
         }
     }
 

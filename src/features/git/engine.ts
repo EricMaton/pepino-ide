@@ -238,6 +238,14 @@ export interface GitEngine {
    * its message.
    */
   undoCommit(path: string): Promise<LogEntry>;
+  /**
+   * GitHub Desktop's Revert (#142): a new commit that undoes what [commit]
+   * changed, safe even when GitHub has it. When later commits changed the
+   * same lines, nothing changes (MERGE_CONFLICT, with the files); nor when
+   * uncommitted changes to those files are in the way (CONFLICT). The files
+   * it rewrites are announced as fs.* events. Never a merge commit.
+   */
+  revert(path: string, commit: string): Promise<CommitResult>;
   /** The commits reachable from HEAD, newest first: [limit] after skipping [skip]. None before the first commit. */
   log(path: string, page?: { skip?: number; limit?: number }): Promise<LogEntry[]>;
   /** The files [commit] changed against its first parent (all new in a first commit), sorted by path. */
@@ -329,6 +337,10 @@ interface GitPlugin {
   dropStash(options: { path: string }): Promise<void>;
   lastCommit(options: { path: string }): Promise<{ last: LastCommit | null }>;
   undoCommit(options: { path: string }): Promise<{ commit: LogEntry }>;
+  revert(options: {
+    path: string;
+    commit: string;
+  }): Promise<{ commit: CommitResult; written: string[]; removed: string[] }>;
   log(options: { path: string; skip: number; limit: number }): Promise<{ commits: LogEntry[] }>;
   commitChanges(options: { path: string; commit: string }): Promise<{ changes: FileChange[] }>;
   commitDiff(options: { path: string; commit: string; file: string }): Promise<FileDiff>;
@@ -442,6 +454,15 @@ export function createNativeGitEngine(announce: Announce): GitEngine {
     },
     async lastCommit(path) {
       return (await git.lastCommit({ path: project(path) })).last;
+    },
+    async revert(path, commit) {
+      const folder = project(path);
+      const reverted = await git.revert({ path: folder, commit }).catch((error: unknown) => {
+        throw gitError(error);
+      });
+      for (const file of reverted.written) announce('fs.written', { path: joinPath(folder, file) });
+      for (const file of reverted.removed) announce('fs.deleted', { path: joinPath(folder, file) });
+      return reverted.commit;
     },
     async undoCommit(path) {
       const undone = await git.undoCommit({ path: project(path) }).catch((error: unknown) => {
@@ -883,6 +904,49 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
       if (!last) return null;
       const { files: _files, ...commit } = last;
       return { commit, onGitHub: onGitHub(log, last.id), merge: false };
+    },
+
+    async revert(path, commit) {
+      const folder = await repository(path);
+      const { files: after, parent: before } = await findCommit(folder, commit);
+      const [refs, branch, log, changes] = await Promise.all([
+        readRefs(folder),
+        currentBranch(folder),
+        readLog(folder),
+        engine.status(path),
+      ]);
+      const entry = Object.values(log)
+        .flat()
+        .find((candidate) => candidate.id.startsWith(commit));
+      const summary = entry?.summary ?? commit;
+      const head = refs[branch] ?? {};
+      const touched = [...new Set([...Object.keys(after), ...Object.keys(before)])]
+        .filter((file) => after[file] !== before[file])
+        .sort();
+      // The stand-in compares whole files: one changed again since clashes
+      const clashes = touched.filter((file) => head[file] !== after[file] && head[file] !== before[file]);
+      if (clashes.length > 0) {
+        throw new GitError(
+          'MERGE_CONFLICT',
+          `Commits made after "${summary}" changed the same lines in ${basename(clashes[0])}`,
+          clashes,
+        );
+      }
+      const reverting = touched.filter((file) => head[file] === after[file]);
+      if (reverting.length === 0) throw new Error('Its changes are not on the branch any more: nothing to revert');
+      const inTheWay = changes.map((change) => change.path).filter((file) => reverting.includes(file));
+      if (inTheWay.length > 0) {
+        throw new GitError('CONFLICT', `Commit your changes to ${basename(inTheWay[0])} before reverting`, inTheWay);
+      }
+      await engine.snapshot(folder, `Before reverting ${shortId(entry?.id ?? commit)}`);
+      for (const file of reverting) {
+        if (before[file] === undefined) await space.delete(joinPath(folder, file));
+        else await writeFile(folder, file, before[file]);
+      }
+      return engine.commit(path, {
+        message: `Revert "${summary}"\n\nThis reverts commit ${entry?.id ?? commit}.`,
+        paths: reverting,
+      });
     },
 
     async undoCommit(path) {

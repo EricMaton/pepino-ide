@@ -217,6 +217,22 @@ public class GitPlugin extends Plugin {
         });
     }
 
+    /** Reverts commit `commit` (#142): { commit: { id, summary }, written, removed }. */
+    @PluginMethod
+    public void revert(PluginCall call) {
+        run(call, () -> {
+            GitOps.Reverted reverted = GitOps.revert(folder(call), call.getString("commit"), GitOps.identity(configFile()));
+            JSObject commit = new JSObject();
+            commit.put("id", reverted.commit().id());
+            commit.put("summary", reverted.commit().summary());
+            JSObject result = new JSObject();
+            result.put("commit", commit);
+            result.put("written", new JSArray(reverted.written()));
+            result.put("removed", new JSArray(reverted.removed()));
+            return result;
+        });
+    }
+
     /** Undoes the branch's last commit (#140): { commit }, the one undone. */
     @PluginMethod
     public void undoCommit(PluginCall call) {
