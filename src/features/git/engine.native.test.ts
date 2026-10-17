@@ -185,6 +185,7 @@ describe('native git engine', () => {
       message: 'm',
       paths: ['a.txt'],
       excluded: { 'a.txt': { version: 'v', lines: [2] } },
+      amend: false,
     });
     expect(plugin.commit.mock.calls[0][0].paths).not.toBe(paths);
 

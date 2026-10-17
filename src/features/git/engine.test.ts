@@ -447,3 +447,45 @@ describe('memory git engine: undo (#140)', () => {
     await expect(quick.undoCommit('hello')).rejects.toMatchObject({ code: 'PUSHED' });
   });
 });
+
+describe('memory git engine: amend (#141)', () => {
+  beforeEach(async () => {
+    await git.init('app');
+    await git.setIdentity({ name: 'Pepino', email: 'me@pepino.dev' });
+    await space.writeTextFile('app/a.txt', 'one\n');
+    await git.commit('app', { message: 'first', paths: ['a.txt'] });
+    await space.writeTextFile('app/a.txt', 'two\n');
+    await git.commit('app', { message: 'secnod', paths: ['a.txt'] });
+  });
+
+  it('replaces the last commit: a new message alone, or with more changes', async () => {
+    await git.setIdentity({ name: 'Other', email: 'other@pepino.dev' });
+    await git.commit('app', { message: 'second', paths: [], amend: true });
+    expect((await git.log('app')).map((entry) => `${entry.summary}:${entry.author}`)).toEqual([
+      'second:Pepino',
+      'first:Pepino',
+    ]);
+
+    await space.writeTextFile('app/b.txt', 'joins\n');
+    await space.writeTextFile('app/c.txt', 'stays out\n');
+    await git.commit('app', { message: 'second\n\nwith b', paths: ['b.txt'], amend: true });
+
+    const [last] = await git.log('app');
+    expect(last).toMatchObject({ summary: 'second', description: 'with b' });
+    expect(await git.commitChanges('app', last.id)).toEqual([
+      { path: 'a.txt', kind: 'modified' },
+      { path: 'b.txt', kind: 'new' },
+    ]);
+    expect(await git.status('app')).toEqual([{ path: 'c.txt', kind: 'new' }]);
+  });
+
+  it('never amends a commit GitHub has', async () => {
+    const quick = createMemoryGitEngine(space, { cloneStepMs: 0 });
+    await quick.setIdentity({ name: 'Pepino', email: 'me@pepino.dev' });
+    await quick.clone('hello', 'https://github.com/octocat/hello.git');
+
+    await expect(quick.commit('hello', { message: 'renamed', paths: [], amend: true })).rejects.toMatchObject({
+      code: 'PUSHED',
+    });
+  });
+});

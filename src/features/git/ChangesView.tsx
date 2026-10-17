@@ -11,7 +11,7 @@ import type { LineExclusion } from './diff';
 import { DiffView } from './DiffView';
 import { ChangeActionsDialog, type Discarding, DiscardDialog } from './Discard';
 import { StashDialog, StashRow } from './Stash';
-import { LastCommitRow, PushedDialog } from './UndoCommit';
+import { LastCommitRow, PushedDialog, type Reopened } from './UndoCommit';
 import { KIND_MARKS } from './changeKinds';
 import {
   type CommitResult,
@@ -20,6 +20,7 @@ import {
   type Identity,
   type LastCommit,
   type LogEntry,
+  shortId,
   type StashInfo,
 } from './engine';
 import styles from './GitScreen.module.css';
@@ -87,9 +88,9 @@ export function ChangesView({
   branch,
   visible,
   refreshKey,
-  undone,
+  reopened,
   onCommitted,
-  onUndone,
+  onReopened,
 }: {
   /** The repository (the active project). */
   path: string;
@@ -98,10 +99,14 @@ export function ChangesView({
   visible: boolean;
   /** Changes after a commit, an undo, a pull or a push: the last commit is read again. */
   refreshKey: number;
-  /** The commit just undone (#140), here or in History: its message comes back to the commit box. */
-  undone: LogEntry | null;
+  /**
+   * A commit back in the commit box, here or from History: just undone
+   * (#140), its message to commit again; or to amend (#141), its message to
+   * change and the changes ticked to add to it.
+   */
+  reopened: Reopened | null;
   onCommitted: () => void;
-  onUndone: (commit: LogEntry) => void;
+  onReopened: (reopened: Reopened) => void;
 }) {
   const { git } = useServices();
   const showSnackbar = useSnackbar();
@@ -134,7 +139,9 @@ export function ChangesView({
   // The branch's last commit (#140), to undo while GitHub does not have it; [at] dates "2M AGO"
   const [last, setLast] = useState<{ info: LastCommit | null; at: number } | null>(null);
   const [undoing, setUndoing] = useState(false);
-  const [pushed, setPushed] = useState<LogEntry | null>(null);
+  const [pushed, setPushed] = useState<Reopened | null>(null);
+  // The commit being amended (#141): the next commit replaces it
+  const [amending, setAmending] = useState<LogEntry | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -147,18 +154,29 @@ export function ChangesView({
     };
   }, [git, path, refreshKey]);
 
-  // An undone commit's message, back to be committed again (set while rendering, as React suggests)
-  const [shownUndone, setShownUndone] = useState(undone);
-  if (undone !== shownUndone) {
-    setShownUndone(undone);
-    if (undone) {
-      setSummary(undone.summary);
-      setDescription(undone.description);
+  // A commit's message back in the box, to commit again or amend (set while rendering, as React suggests)
+  const [shownReopened, setShownReopened] = useState(reopened);
+  if (reopened !== shownReopened) {
+    setShownReopened(reopened);
+    if (reopened) {
+      setSummary(reopened.commit.summary);
+      setDescription(reopened.commit.description);
+      setAmending(reopened.amend ? reopened.commit : null);
+      // Amending starts with nothing ticked: only what is ticked on purpose joins the commit
+      if (reopened.amend) {
+        setExcluded(new Set((changes ?? []).map((change) => change.path)));
+        setPartial({});
+      }
       setComposing(true);
       setLastCommit(null);
       refresh();
     }
   }
+  const cancelAmend = () => {
+    setAmending(null);
+    setSummary('');
+    setDescription('');
+  };
 
   useEffect(() => {
     let active = true;
@@ -184,7 +202,8 @@ export function ChangesView({
 
   const ticked = (changes ?? []).filter((change) => !excluded.has(change.path));
   const allTicked = changes !== null && changes.length > 0 && ticked.length === changes.length;
-  const canCommit = ticked.length > 0 && summary.trim() !== '' && !committing;
+  // Amending needs no files: a new message alone is enough
+  const canCommit = (ticked.length > 0 || amending !== null) && summary.trim() !== '' && !committing;
 
   const selectionOf = (file: string): Selection => (excluded.has(file) ? 'none' : (partial[file] ?? 'all'));
   const select = useCallback((file: string, selection: Selection) => {
@@ -230,8 +249,9 @@ export function ChangesView({
     const paths = ticked.map((change) => change.path);
     const lines = Object.fromEntries(paths.filter((file) => file in partial).map((file) => [file, partial[file]]));
     try {
-      const result = await git.commit(path, { message, paths, excluded: lines });
+      const result = await git.commit(path, { message, paths, excluded: lines, amend: amending !== null });
       setLastCommit(result);
+      setAmending(null);
       setComposing(false);
       setSummary('');
       setDescription('');
@@ -242,7 +262,11 @@ export function ChangesView({
     } catch (error) {
       // Lines picked before the file changed again: they are all in again, to be checked
       if (error instanceof GitError && error.code === 'STALE') error.paths.forEach((file) => select(file, 'all'));
-      showSnackbar(`Error: ${errorMessage(error)}`);
+      // Pushed since amending started
+      if (error instanceof GitError && error.code === 'PUSHED' && amending) {
+        setPushed({ commit: amending, amend: true });
+        cancelAmend();
+      } else showSnackbar(`Error: ${errorMessage(error)}`);
     } finally {
       setCommitting(false);
     }
@@ -278,10 +302,10 @@ export function ChangesView({
   const undo = async (commit: LogEntry) => {
     setUndoing(true);
     try {
-      onUndone(await git.undoCommit(path));
+      onReopened({ commit: await git.undoCommit(path), amend: false });
       showSnackbar(`Undid “${commit.summary}”: its changes are back`);
     } catch (error) {
-      if (error instanceof GitError && error.code === 'PUSHED') setPushed(commit);
+      if (error instanceof GitError && error.code === 'PUSHED') setPushed({ commit, amend: false });
       else showSnackbar(`Error: ${errorMessage(error)}`);
     } finally {
       setUndoing(false);
@@ -305,13 +329,17 @@ export function ChangesView({
           : `Discarded changes to ${files.length} files`,
     );
   };
-  const commitLabel =
-    ticked.length > 0
-      ? `Commit ${ticked.length} ${ticked.length === 1 ? 'file' : 'files'} to ${branch}`
+  const files = `${ticked.length} ${ticked.length === 1 ? 'file' : 'files'}`;
+  const commitLabel = amending
+    ? ticked.length > 0
+      ? `Amend ${shortId(amending.id)} with ${files}`
+      : `Amend ${shortId(amending.id)}`
+    : ticked.length > 0
+      ? `Commit ${files} to ${branch}`
       : `Commit to ${branch}`;
   // What the folded row says: the message so far, else the last commit, else what a commit would take
   const folded = summary.trim()
-    ? summary.trim()
+    ? `${amending ? `Amending ${shortId(amending.id)} · ` : ''}${summary.trim()}`
     : lastCommit
       ? `✓ Committed ${lastCommit.id} · ${lastCommit.summary}`
       : count === 0
@@ -413,13 +441,14 @@ export function ChangesView({
         )}
       </div>
 
-      {last?.info && !last.info.onGitHub && !last.info.merge && (
+      {last?.info && !last.info.onGitHub && !last.info.merge && !amending && (
         <div className={styles.stashHolder} inert={opened !== null}>
           <LastCommitRow
             commit={last.info.commit}
             now={last.at}
             busy={undoing}
             onUndo={() => last.info && void undo(last.info.commit)}
+            onAmend={() => last.info && onReopened({ commit: last.info.commit, amend: true })}
           />
         </div>
       )}
@@ -453,6 +482,17 @@ export function ChangesView({
         </button>
         {composing && (
           <>
+            {amending && (
+              <div className={styles.amending}>
+                <span className={cx('caption', 'ellipsis', styles.amendingText)}>
+                  <span className="accent">AMENDING {shortId(amending.id)}</span> · the commit is replaced, ticked
+                  changes join it
+                </span>
+                <Button variant="text" onClick={cancelAmend}>
+                  Cancel
+                </Button>
+              </div>
+            )}
             <TextField label="Summary" placeholder="What changed" value={summary} onChange={setSummary} autoFocus />
             <TextField
               label="Description"
@@ -462,7 +502,7 @@ export function ChangesView({
               rows={2}
             />
             <Button type="submit" variant="filled" className={cx(committing && 'cursor')} disabled={!canCommit}>
-              {committing ? 'Committing' : commitLabel}
+              {committing ? (amending ? 'Amending' : 'Committing') : commitLabel}
             </Button>
             {lastCommit && (
               <p className={cx('caption', styles.committed)} role="status">
@@ -582,7 +622,7 @@ export function ChangesView({
           }}
         />
       )}
-      {pushed && <PushedDialog commit={pushed} onClose={() => setPushed(null)} />}
+      {pushed && <PushedDialog commit={pushed.commit} amend={pushed.amend} onClose={() => setPushed(null)} />}
       {discarding && (
         <DiscardDialog path={path} what={discarding} onClose={() => setDiscarding(null)} onDiscarded={discarded} />
       )}
