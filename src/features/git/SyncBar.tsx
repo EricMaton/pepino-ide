@@ -7,6 +7,7 @@ import { useSnackbar } from '../../ui/useSnackbar';
 import { GitHubLoginDialog } from '../github/GitHubLoginDialog';
 import { errorMessage } from '../projects/errors';
 import { GitError, type RemoteProgress, type SyncState } from './engine';
+import { PullRequestRow } from './PullRequest';
 import { type Action, commits, describeSync, syncAction } from './sync';
 import styles from './SyncBar.module.css';
 
@@ -131,6 +132,7 @@ export function SyncBar({
           </button>
         )}
       </div>
+      <PullRequestRow path={path} branch={branch} state={state} />
       {problem && (
         <ProblemDialog
           problem={problem}

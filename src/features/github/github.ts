@@ -54,11 +54,49 @@ export interface RepoPage {
   hasMore: boolean;
 }
 
+/** A pull request (#34); [url] is its page on github.com. */
+export interface PullRequest {
+  number: number;
+  title: string;
+  url: string;
+  draft: boolean;
+}
+
+/** A GitHub repository, as `owner/name`. */
+export interface RepoRef {
+  owner: string;
+  repo: string;
+}
+
+/** The repository at a GitHub https URL (a clone's origin), or null for any other. */
+export function parseGitHubUrl(url: string | null): RepoRef | null {
+  const match = url?.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+  return match ? { owner: match[1], repo: match[2] } : null;
+}
+
+/** What a new pull request says: from [head] into [base]. */
+export interface NewPullRequest extends RepoRef {
+  head: string;
+  base: string;
+  title: string;
+  body: string;
+}
+
 /** Repositories per page: big enough that most people have one or two. */
 export const REPOS_PER_PAGE = 50;
 
 export type GitHubErrorCode =
-  'EXPIRED' | 'DENIED' | 'CANCELLED' | 'DISABLED' | 'UNAUTHORIZED' | 'RATE_LIMITED' | 'NETWORK' | 'FAILED';
+  | 'INVALID'
+  | 'FORBIDDEN'
+  | 'NOT_FOUND'
+  | 'EXPIRED'
+  | 'DENIED'
+  | 'CANCELLED'
+  | 'DISABLED'
+  | 'UNAUTHORIZED'
+  | 'RATE_LIMITED'
+  | 'NETWORK'
+  | 'FAILED';
 
 export class GitHubError extends Error {
   constructor(
@@ -85,6 +123,12 @@ export interface GitHub {
   openUrl(url: string): Promise<void>;
   /** [page] (from 1) of the signed-in user's repositories, most recently pushed first. */
   repos(page: number): Promise<RepoPage>;
+  /** For [branch] of a repository: its default branch, and the branch's open pull request (or null). */
+  pullRequestFor(repo: RepoRef, branch: string): Promise<{ defaultBranch: string; pullRequest: PullRequest | null }>;
+  /** The repository's branches on GitHub: where a pull request can go. */
+  remoteBranches(repo: RepoRef): Promise<string[]>;
+  /** Opens a pull request; GitHub's refusals (one already open, nothing to merge) are INVALID, in its words. */
+  createPullRequest(request: NewPullRequest): Promise<PullRequest>;
   /** Called whenever someone signs in or out; returns the unsubscribe. */
   subscribe(listener: (account: GitHubAccount | null) => void): () => void;
 }
@@ -97,9 +141,18 @@ interface GitHubPlugin {
   logout(): Promise<void>;
   openUrl(options: { url: string }): Promise<void>;
   repos(options: { page: number; perPage: number }): Promise<RepoPage>;
+  pullRequestFor(options: RepoRef & { branch: string }): Promise<{
+    defaultBranch: string;
+    pullRequest: PullRequest | null;
+  }>;
+  remoteBranches(options: RepoRef): Promise<{ branches: string[] }>;
+  createPullRequest(options: NewPullRequest & { draft: boolean }): Promise<{ pullRequest: PullRequest }>;
 }
 
 const CODES: readonly GitHubErrorCode[] = [
+  'INVALID',
+  'FORBIDDEN',
+  'NOT_FOUND',
   'EXPIRED',
   'DENIED',
   'CANCELLED',
@@ -155,6 +208,10 @@ export function createNativeGitHub(clientId = GITHUB_CLIENT_ID, scopes = GITHUB_
       }),
     openUrl: (url) => call(() => plugin.openUrl({ url })),
     repos: (page) => call(() => plugin.repos({ page, perPage: REPOS_PER_PAGE })),
+    pullRequestFor: (repo, branch) => call(() => plugin.pullRequestFor({ ...repo, branch })),
+    remoteBranches: (repo) => call(async () => (await plugin.remoteBranches(repo)).branches),
+    createPullRequest: (request) =>
+      call(async () => (await plugin.createPullRequest({ ...request, draft: false })).pullRequest),
     subscribe,
   };
 }
@@ -189,6 +246,8 @@ function sampleRepos(owner: string, count: number): GitHubRepo[] {
 export function createMemoryGitHub(approveAfterMs = 3000, repoCount = 120, latencyMs = 400): GitHub {
   const { tell, subscribe } = listeners();
   const allRepos = sampleRepos('octocat', repoCount);
+  // Pull requests opened here, by `owner/repo:head`
+  const pulls = new Map<string, PullRequest>();
   let account: GitHubAccount | null = null;
   let waiting: { cancel: () => void } | null = null;
   return {
@@ -227,6 +286,30 @@ export function createMemoryGitHub(approveAfterMs = 3000, repoCount = 120, laten
       await new Promise((resolve) => setTimeout(resolve, latencyMs));
       const from = (page - 1) * REPOS_PER_PAGE;
       return { repos: allRepos.slice(from, from + REPOS_PER_PAGE), hasMore: from + REPOS_PER_PAGE < allRepos.length };
+    },
+    pullRequestFor: async (repo, branch) => {
+      if (!account) throw new GitHubError('UNAUTHORIZED', 'Not signed in to GitHub');
+      await new Promise((resolve) => setTimeout(resolve, latencyMs));
+      return { defaultBranch: 'main', pullRequest: pulls.get(`${repo.owner}/${repo.repo}:${branch}`) ?? null };
+    },
+    remoteBranches: async () => {
+      if (!account) throw new GitHubError('UNAUTHORIZED', 'Not signed in to GitHub');
+      return ['main', 'develop'];
+    },
+    createPullRequest: async ({ owner, repo, head, base, title }) => {
+      if (!account) throw new GitHubError('UNAUTHORIZED', 'Not signed in to GitHub');
+      await new Promise((resolve) => setTimeout(resolve, latencyMs));
+      const key = `${owner}/${repo}:${head}`;
+      if (pulls.has(key)) throw new GitHubError('INVALID', `A pull request already exists for ${owner}:${head}.`);
+      if (head === base) throw new GitHubError('INVALID', `No commits between ${base} and ${head}`);
+      const pull = {
+        number: pulls.size + 1,
+        title,
+        url: `https://github.com/${owner}/${repo}/pull/${pulls.size + 1}`,
+        draft: false,
+      };
+      pulls.set(key, pull);
+      return pull;
     },
     subscribe,
   };

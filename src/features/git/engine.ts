@@ -201,6 +201,8 @@ export interface GitEngine {
   cancelRemote(): Promise<void>;
   /** Where the current branch stands against GitHub's, as of the last fetch (no network). */
   sync(path: string): Promise<SyncState>;
+  /** The URL of the repository's origin (GitHub's, for a clone), or null. */
+  originUrl(path: string): Promise<string | null>;
   /** Brings GitHub's branches up to date, touching no local branch or file. */
   fetch(path: string, onProgress?: (progress: RemoteProgress) => void): Promise<SyncState>;
   /**
@@ -244,6 +246,7 @@ interface GitPlugin {
   clone(options: { path: string; url: string }): Promise<RepoInfo>;
   cancelRemote(): Promise<void>;
   sync(options: { path: string }): Promise<SyncState>;
+  originUrl(options: { path: string }): Promise<{ url: string | null }>;
   fetch(options: { path: string }): Promise<SyncState>;
   pull(options: { path: string }): Promise<{ state: SyncState; written: string[]; removed: string[] }>;
   push(options: { path: string }): Promise<SyncState>;
@@ -358,6 +361,9 @@ export function createNativeGitEngine(announce: Announce): GitEngine {
     },
     sync(path) {
       return git.sync({ path: project(path) });
+    },
+    async originUrl(path) {
+      return (await git.originUrl({ path: project(path) })).url;
     },
     fetch(path, onProgress) {
       const folder = project(path);
@@ -772,6 +778,7 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
       // and a branch only on GitHub, to switch to
       const develop: Snapshot = { ...files, 'CHANGELOG.md': '# Changelog\n\n- Work in progress\n' };
       await writeRemotes(folder, { [DEFAULT_BRANCH]: files, develop });
+      await space.writeTextFile(gitPath(folder, 'pepino-origin'), url);
       const ahead = {
         ...entry,
         id: hashOf(`${url}:develop`).padStart(8, '0').repeat(5),
@@ -791,6 +798,11 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
 
     async sync(path) {
       return syncOf(await repository(path));
+    },
+
+    async originUrl(path) {
+      const folder = await repository(path);
+      return space.readTextFile(gitPath(folder, 'pepino-origin')).catch(() => null);
     },
 
     async fetch(path, onProgress) {

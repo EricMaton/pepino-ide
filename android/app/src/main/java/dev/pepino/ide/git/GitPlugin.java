@@ -155,6 +155,17 @@ public class GitPlugin extends Plugin {
         return json;
     }
 
+    /** The URL of the repository's origin (GitHub's, for a clone), or null. */
+    @PluginMethod
+    public void originUrl(PluginCall call) {
+        run(call, () -> {
+            String url = GitOps.originUrl(folder(call));
+            JSObject result = new JSObject();
+            result.put("url", url == null ? JSObject.NULL : url);
+            return result;
+        });
+    }
+
     /** Where the current branch stands against GitHub's (#33), as of the last fetch: no network. */
     @PluginMethod
     public void sync(PluginCall call) {
