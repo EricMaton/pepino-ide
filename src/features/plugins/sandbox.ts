@@ -22,6 +22,8 @@ export interface SandboxHost {
   /** An `api` call, by method name ("editor.getText"); resolves to plain data. */
   call(method: string, args: unknown[]): Promise<unknown>;
   log(level: 'log' | 'warn' | 'error', text: string): void;
+  /** The worker stopped answering and was terminated (#50): the plugin is gone. */
+  unresponsive?(): void;
 }
 
 export interface SandboxOptions {
@@ -31,7 +33,7 @@ export interface SandboxOptions {
   memoryBytes: number;
 }
 
-export const DEFAULT_SANDBOX_OPTIONS: SandboxOptions = { timeoutMs: 1000, memoryBytes: 32 * 1024 * 1024 };
+export const DEFAULT_SANDBOX_OPTIONS: SandboxOptions = { timeoutMs: 2000, memoryBytes: 32 * 1024 * 1024 };
 
 /** The plugin's code failed: threw, or ran out of time ([timedOut]) or memory. */
 export class PluginError extends Error {

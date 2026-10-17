@@ -82,17 +82,59 @@ export function serveSandbox(port: Port<WorkerMessage, HostMessage>) {
   });
 }
 
-/** The app's side of [port]: requests out, the plugin's calls answered by [host]. */
+/**
+ * How long a worker with requests pending may go without a word before it is
+ * taken for stuck (#50): far longer than the sandbox's own deadline, which
+ * should have stopped any runaway code by then. Waiting on the host (an api
+ * call in progress) is not being stuck.
+ */
+export const WATCHDOG_MS = 10_000;
+
+/**
+ * The app's side of [port]: requests out, the plugin's calls answered by
+ * [host]. A worker that stops answering is terminated ([terminate]) and
+ * [SandboxHost.unresponsive] told: the last resort, past the sandbox's own
+ * interrupt (#50).
+ */
 export function connect(
   port: Port<HostMessage, WorkerMessage>,
   host: SandboxHost,
-  terminate: () => void = () => undefined,
+  { terminate = () => undefined, watchdogMs = WATCHDOG_MS }: { terminate?: () => void; watchdogMs?: number } = {},
 ): PluginConnection {
   let nextSeq = 1;
   const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   let stopped = false;
+  // The watchdog: when the worker was last heard from, and the api calls the host is still answering
+  let lastHeard = Date.now();
+  let hostCalls = 0;
+  let watchdog: ReturnType<typeof setInterval> | undefined;
+  const watch = () => {
+    if (watchdog !== undefined) return;
+    watchdog = setInterval(
+      () => {
+        if (pending.size === 0) {
+          clearInterval(watchdog);
+          watchdog = undefined;
+          return;
+        }
+        if (hostCalls > 0 || Date.now() - lastHeard <= watchdogMs) return;
+        stop(new PluginError(`The plugin stopped responding for ${watchdogMs / 1000} s and was stopped`, true));
+        host.unresponsive?.();
+      },
+      Math.max(10, Math.min(1000, watchdogMs / 4)),
+    );
+  };
+  const stop = (reason: PluginError) => {
+    if (stopped) return;
+    stopped = true;
+    clearInterval(watchdog);
+    terminate();
+    for (const waiting of pending.values()) waiting.reject(reason);
+    pending.clear();
+  };
 
   port.addEventListener('message', ({ data: message }) => {
+    lastHeard = Date.now();
     switch (message.type) {
       case 'done': {
         const waiting = pending.get(message.seq);
@@ -102,16 +144,23 @@ export function connect(
         break;
       }
       case 'call':
-        host.call(message.method, message.args).then(
-          (result) => !stopped && port.postMessage({ type: 'reply', call: message.call, result }),
-          (failure: unknown) =>
-            !stopped &&
-            port.postMessage({
-              type: 'reply',
-              call: message.call,
-              error: failure instanceof Error ? failure.message : String(failure),
-            }),
-        );
+        hostCalls++;
+        host
+          .call(message.method, message.args)
+          .finally(() => {
+            hostCalls--;
+            lastHeard = Date.now();
+          })
+          .then(
+            (result) => !stopped && port.postMessage({ type: 'reply', call: message.call, result }),
+            (failure: unknown) =>
+              !stopped &&
+              port.postMessage({
+                type: 'reply',
+                call: message.call,
+                error: failure instanceof Error ? failure.message : String(failure),
+              }),
+          );
         break;
       case 'log':
         host.log(message.level, message.text);
@@ -126,7 +175,9 @@ export function connect(
     const seq = nextSeq++;
     return new Promise<T>((resolve, reject) => {
       pending.set(seq, { resolve: resolve as (value: unknown) => void, reject });
+      if (pending.size === 1) lastHeard = Date.now();
       port.postMessage({ ...message, seq } as HostMessage);
+      watch();
     });
   };
 
@@ -138,18 +189,12 @@ export function connect(
     runCommand: (id) => request({ type: 'command', id }),
     emit: (topic, payload) => request({ type: 'event', topic, payload }),
     commands: () => request<string[]>({ type: 'commands' }),
-    terminate() {
-      if (stopped) return;
-      stopped = true;
-      terminate();
-      for (const waiting of pending.values()) waiting.reject(new PluginError('The plugin has been stopped'));
-      pending.clear();
-    },
+    terminate: () => stop(new PluginError('The plugin has been stopped')),
   };
 }
 
 /** A plugin in a Web Worker of its own, off the UI thread (the app; the tests use [connect] on a MessageChannel). */
 export function createWorkerConnection(host: SandboxHost): PluginConnection {
   const worker = new Worker(new URL('./plugin.worker.ts', import.meta.url), { type: 'module', name: 'pepino-plugin' });
-  return connect(worker as unknown as Port<HostMessage, WorkerMessage>, host, () => worker.terminate());
+  return connect(worker as unknown as Port<HostMessage, WorkerMessage>, host, { terminate: () => worker.terminate() });
 }
