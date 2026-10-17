@@ -53,6 +53,8 @@ dependencies {
     implementation project(':capacitor-android')
     // Git engine (ADR-006)
     implementation "org.eclipse.jgit:org.eclipse.jgit:$jgitVersion"
+    // JGit logs through SLF4J: no logger, and no warning about it on the terminal's git (#41)
+    implementation "org.slf4j:slf4j-nop:1.7.36"
     coreLibraryDesugaring "com.android.tools:desugar_jdk_libs_nio:$desugarJdkLibsVersion"
     testImplementation "junit:junit:$junitVersion"
     // The real org.json for JUnit: android.jar only has stubs that throw
