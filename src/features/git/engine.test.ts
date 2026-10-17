@@ -532,3 +532,54 @@ describe('memory git engine: revert (#142)', () => {
     expect(await space.readTextFile('app/a.txt')).toBe('mine\n');
   });
 });
+
+describe('memory git engine: resolving a merge (#143)', () => {
+  let quick: GitEngine;
+  beforeEach(async () => {
+    quick = createMemoryGitEngine(space, { cloneStepMs: 0 });
+    await quick.setIdentity({ name: 'Pepino', email: 'me@pepino.dev' });
+    await quick.clone('hello', 'https://github.com/octocat/hello.git');
+    // Mine and the teammate's (on the first fetch) both write NOTES.md
+    await space.writeTextFile('hello/NOTES.md', 'mine\n');
+    await quick.commit('hello', { message: 'my notes', paths: ['NOTES.md'] });
+    await quick.fetch('hello');
+  });
+
+  it('leaves the conflict to resolve, then a commit finishes the merge', async () => {
+    await expect(quick.pull('hello')).rejects.toMatchObject({ code: 'MERGE_CONFLICT' });
+
+    await quick.startMerge('hello');
+
+    expect(await quick.mergeState('hello')).toEqual({ theirs: 'origin/main', message: 'Merge origin/main into main' });
+    expect(await quick.status('hello')).toEqual([{ path: 'NOTES.md', kind: 'conflicted' }]);
+    expect(await space.readTextFile('hello/NOTES.md')).toMatch(/^<<<<<<< HEAD\nmine\n=======\n/);
+    await expect(quick.checkout('hello', 'develop')).rejects.toThrow(/merge/);
+    await expect(quick.markResolved('hello', 'NOTES.md')).rejects.toThrow(/markers/);
+    await expect(quick.commit('hello', { message: 'too soon', paths: ['NOTES.md'] })).rejects.toThrow(/Resolve/);
+
+    await space.writeTextFile('hello/NOTES.md', 'both\n');
+    await quick.markResolved('hello', 'NOTES.md');
+    expect(await quick.status('hello')).toEqual([{ path: 'NOTES.md', kind: 'modified' }]);
+    await quick.commit('hello', { message: 'Merge origin/main into main', paths: ['NOTES.md'] });
+
+    expect(await quick.mergeState('hello')).toBeNull();
+    expect(await quick.status('hello')).toEqual([]);
+    expect(await quick.sync('hello')).toMatchObject({ ahead: 2, behind: 0 });
+  });
+
+  it('aborting puts the branch back', async () => {
+    await quick.startMerge('hello');
+
+    await quick.abortMerge('hello');
+
+    expect(await quick.mergeState('hello')).toBeNull();
+    expect(await space.readTextFile('hello/NOTES.md')).toBe('mine\n');
+    expect(await quick.status('hello')).toEqual([]);
+    await expect(quick.abortMerge('hello')).rejects.toThrow(/no merge/);
+  });
+
+  it('starts only from a branch without changes', async () => {
+    await space.writeTextFile('hello/README.md', 'edited\n');
+    await expect(quick.startMerge('hello')).rejects.toMatchObject({ code: 'CONFLICT', paths: ['README.md'] });
+  });
+});

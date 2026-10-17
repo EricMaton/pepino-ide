@@ -38,6 +38,10 @@ const plugin = vi.hoisted(() => ({
   lastCommit: vi.fn(),
   undoCommit: vi.fn(),
   revert: vi.fn(),
+  mergeState: vi.fn(),
+  startMerge: vi.fn(),
+  markResolved: vi.fn(),
+  abortMerge: vi.fn(),
   fetch: vi.fn(),
   pull: vi.fn(),
   push: vi.fn(),
@@ -281,5 +285,29 @@ describe('native git engine: revert (#142)', () => {
 
     plugin.revert.mockRejectedValueOnce({ code: 'MERGE_CONFLICT', message: 'clash', data: { paths: ['a.txt'] } });
     await expect(git.revert('work/app', 'abc')).rejects.toMatchObject({ code: 'MERGE_CONFLICT', paths: ['a.txt'] });
+  });
+});
+
+describe('native git engine: resolving a merge (#143)', () => {
+  it('starts, resolves and aborts through the plugin, announcing the files', async () => {
+    const state = { remote: true, upstream: 'origin/main', ahead: 1, behind: 1, lastFetched: null };
+    plugin.startMerge.mockResolvedValue({ state, written: ['a.txt'], removed: ['b.txt'] });
+    expect(await git.startMerge('work/app')).toEqual(state);
+    expect(announce).toHaveBeenCalledWith('fs.written', { path: 'work/app/a.txt' });
+    expect(announce).toHaveBeenCalledWith('fs.deleted', { path: 'work/app/b.txt' });
+
+    plugin.mergeState.mockResolvedValue({ merge: { theirs: 'origin/main', message: 'Merge' } });
+    expect(await git.mergeState('work/app')).toEqual({ theirs: 'origin/main', message: 'Merge' });
+
+    plugin.markResolved.mockResolvedValue(undefined);
+    await git.markResolved('work/app', 'a.txt');
+    expect(plugin.markResolved).toHaveBeenLastCalledWith({ path: 'work/app', file: 'a.txt' });
+
+    plugin.abortMerge.mockResolvedValue({ written: ['c.txt'], removed: [] });
+    await git.abortMerge('work/app');
+    expect(announce).toHaveBeenCalledWith('fs.written', { path: 'work/app/c.txt' });
+
+    plugin.startMerge.mockRejectedValueOnce({ code: 'CONFLICT', message: 'in the way', data: { paths: ['x'] } });
+    await expect(git.startMerge('work/app')).rejects.toMatchObject({ code: 'CONFLICT', paths: ['x'] });
   });
 });

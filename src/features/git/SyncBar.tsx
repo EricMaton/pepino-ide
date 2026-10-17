@@ -26,13 +26,15 @@ import { SyncStatusDialog } from './SyncStatus';
 const CLOCK_MS = 30_000;
 
 /** A refusal that needs more than a snackbar: what happened, and what to do. */
-type Problem = { kind: 'conflict' | 'inTheWay' | 'rejected'; paths: readonly string[] } | { kind: 'signIn' };
+type Problem =
+  { kind: 'conflict' | 'inTheWay' | 'rejected' | 'mergeInTheWay'; paths: readonly string[] } | { kind: 'signIn' };
 
 export function SyncBar({
   path,
   branch,
   refreshKey,
   onSynced,
+  onMergeStarted,
 }: {
   /** The repository (the active project). */
   path: string;
@@ -41,6 +43,8 @@ export function SyncBar({
   refreshKey: number;
   /** A pull or a push moved the branch against GitHub: changes, history and what can be undone to read again. */
   onSynced: () => void;
+  /** A pull's conflicts are left to resolve in Changes (#143). */
+  onMergeStarted: () => void;
 }) {
   const { git, github } = useServices();
   const showSnackbar = useSnackbar();
@@ -105,6 +109,20 @@ export function SyncBar({
       git.sync(path).then(setState, () => undefined);
     } finally {
       setBusy(null);
+    }
+  };
+
+  /** The pull that would conflict, done leaving its conflicts to resolve (#143). */
+  const startMerge = async () => {
+    setProblem(null);
+    try {
+      setState(await git.startMerge(path));
+      onMergeStarted();
+      showSnackbar(`Merging ${state.upstream}: resolve the conflicts in Changes`);
+    } catch (error) {
+      if (error instanceof GitError && error.code === 'CONFLICT') {
+        setProblem({ kind: 'mergeInTheWay', paths: error.paths });
+      } else showSnackbar(`Error: ${errorMessage(error)}`);
     }
   };
 
@@ -184,6 +202,7 @@ export function SyncBar({
             setProblem(null);
             void run('pull');
           }}
+          onMerge={() => void startMerge()}
           onSignedIn={() => {
             setProblem(null);
             void run(action);
@@ -214,12 +233,15 @@ function ProblemDialog({
   upstream,
   onClose,
   onPull,
+  onMerge,
   onSignedIn,
 }: {
   problem: Problem;
   upstream: string | null;
   onClose: () => void;
   onPull: () => void;
+  /** Merge anyway, leaving the conflicts to resolve. */
+  onMerge: () => void;
   onSignedIn: () => void;
 }) {
   if (problem.kind === 'signIn') {
@@ -240,9 +262,28 @@ function ProblemDialog({
         <p className="body">GitHub&apos;s changes and yours touch the same lines in:</p>
         <Files paths={problem.paths} />
         <p className="caption muted">
-          Nothing was changed: your files and commits are as they were. Resolving conflicts in Pepino is coming (#143).
-          For now, you can push your work to a new branch and merge it on GitHub.
+          Nothing was changed yet. Merge and resolve: GitHub&apos;s changes come in, and each clash is left for you to
+          choose yours or GitHub&apos;s in Changes; then commit the merge, or abort it to get back to how it was.
         </p>
+      </>
+    );
+    actions = (
+      <>
+        <Button variant="text" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button variant="filled" onClick={onMerge}>
+          Merge and resolve
+        </Button>
+      </>
+    );
+  } else if (problem.kind === 'mergeInTheWay') {
+    title = 'Commit your changes first';
+    body = (
+      <>
+        <p className="body">A merge to resolve starts from a branch without changes. You have changes to:</p>
+        <Files paths={problem.paths} />
+        <p className="caption muted">Commit or stash them, then pull again. Nothing was changed.</p>
       </>
     );
   } else if (problem.kind === 'inTheWay') {

@@ -55,6 +55,7 @@ import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.RepositoryCache;
+import org.eclipse.jgit.lib.RepositoryState;
 import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.lib.TreeFormatter;
 import org.eclipse.jgit.merge.MergeStrategy;
@@ -514,6 +515,7 @@ public final class GitOps {
         try (Git git = Git.open(folder)) {
             Repository repository = git.getRepository();
             requireOrigin(repository);
+            requireNoMerge(repository, "pulling");
             clearStaleLocks(repository);
             fetch(git, credentials, progress);
             SyncState state = syncState(repository);
@@ -1006,10 +1008,11 @@ public final class GitOps {
         Identity who,
         boolean amend
     ) throws IOException, GitAPIException {
-        if (paths.isEmpty() && !amend) throw new IllegalArgumentException("Choose at least one file to commit");
         if (message == null || message.trim().isEmpty()) throw new IllegalArgumentException("A commit needs a summary");
         try (Git git = Git.open(folder)) {
             Repository repository = git.getRepository();
+            if (merging(repository) && !amend) return commitMerge(git, folder, message, who);
+            if (paths.isEmpty() && !amend) throw new IllegalArgumentException("Choose at least one file to commit");
             if (amend) requireLocalCommit(repository, "amending");
             clearStaleLocks(repository);
             excludePepino(repository);
@@ -1268,6 +1271,7 @@ public final class GitOps {
 
     /** The last commit, to undo or amend ([doing]): there, not on GitHub ([PushedException]), not a merge. */
     private static ObjectId requireLocalCommit(Repository repository, String doing) throws IOException {
+        requireNoMerge(repository, doing);
         ObjectId head = repository.resolve(Constants.HEAD);
         if (head == null) throw new IllegalStateException("There is no commit yet");
         try (RevWalk walk = new RevWalk(repository)) {
@@ -1333,6 +1337,158 @@ public final class GitOps {
         }
     }
 
+    /** A merge in progress (#143): GitHub's branch being merged ("origin/main"), and its commit's summary. */
+    public record MergeState(String theirs, String message) {}
+
+    /** Whether a merge is in progress: MERGE_HEAD is there, its conflicts resolved or not. */
+    private static boolean merging(Repository repository) {
+        RepositoryState state = repository.getRepositoryState();
+        return state == RepositoryState.MERGING || state == RepositoryState.MERGING_RESOLVED;
+    }
+
+    private static void requireNoMerge(Repository repository, String doing) {
+        if (merging(repository)) throw new IllegalStateException("Finish or abort the merge before " + doing);
+    }
+
+    /** The merge in progress, or null. */
+    public static MergeState mergeState(File folder) throws IOException {
+        try (Git git = Git.open(folder)) {
+            Repository repository = git.getRepository();
+            List<ObjectId> heads = merging(repository) ? repository.readMergeHeads() : null;
+            if (heads == null || heads.isEmpty()) return null;
+            String theirs = heads.get(0).abbreviate(7).name();
+            for (Ref ref : repository.getRefDatabase().getRefsByPrefix(Constants.R_REMOTES)) {
+                if (heads.get(0).equals(ref.getObjectId())) {
+                    theirs = Repository.shortenRefName(ref.getName());
+                    break;
+                }
+            }
+            String message = repository.readMergeCommitMsg();
+            String summary = message == null || message.trim().isEmpty() ? "Merge " + theirs : message.trim().split("\\R", 2)[0];
+            return new MergeState(theirs, summary);
+        }
+    }
+
+    /**
+     * GitHub Desktop's pull with conflicts (#143): GitHub's commits merged into
+     * the current branch, the files that clash left with conflict markers
+     * («ours ======= theirs») to resolve, then committed ([commit]) or the
+     * merge aborted ([abortMerge]). Only from a branch without changes
+     * ([ConflictException]): aborting then puts everything back. As of the
+     * last fetch; the files are snapshotted first.
+     */
+    public static Pulled startMerge(File folder) throws IOException, GitAPIException {
+        try (Git git = Git.open(folder)) {
+            Repository repository = git.getRepository();
+            requireOrigin(repository);
+            requireNoMerge(repository, "merging again");
+            clearStaleLocks(repository);
+            SyncState state = syncState(repository);
+            if (state.upstream() == null) throw new IllegalStateException("This branch is not on GitHub yet: publish it first");
+            if (state.behind() == 0) return new Pulled(state, Collections.emptyList(), Collections.emptyList());
+            List<String> inTheWay = new ArrayList<>();
+            for (FileChange change : status(folder)) inTheWay.add(change.path());
+            if (!inTheWay.isEmpty()) throw new ConflictException(inTheWay, "merging");
+            snapshot(repository, "Before merging " + state.upstream());
+            ObjectId before = repository.resolve(Constants.HEAD);
+            MergeResult merged = git
+                .merge()
+                .include(repository.exactRef(Constants.R_REMOTES + state.upstream()))
+                .setFastForward(MergeCommand.FastForwardMode.FF)
+                .setCommit(false)
+                .setMessage("Merge " + state.upstream() + " into " + repository.getBranch())
+                .call();
+            switch (merged.getMergeStatus()) {
+                case CHECKOUT_CONFLICT:
+                    throw new ConflictException(merged.getCheckoutConflicts(), "merging");
+                case FAILED:
+                    throw new ConflictException(new ArrayList<>(merged.getFailingPaths().keySet()), "merging");
+                default:
+                    break;
+            }
+            List<String> written = new ArrayList<>();
+            List<String> removed = new ArrayList<>();
+            changedFiles(repository, before, repository.resolve(Constants.HEAD), written, removed);
+            // A merge left open: its files, conflicted or merged, differ from the last commit
+            for (FileChange change : status(folder)) {
+                if ("deleted".equals(change.kind())) removed.add(change.path());
+                else written.add(change.path());
+            }
+            return new Pulled(syncState(repository), written, removed);
+        }
+    }
+
+    /** Whether [file] still has a conflict's markers: a line starting <<<<<<< and one starting >>>>>>>. */
+    private static boolean hasConflictMarkers(File file) throws IOException {
+        String text = new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
+        return java.util.regex.Pattern.compile("^<<<<<<<", java.util.regex.Pattern.MULTILINE).matcher(text).find()
+            && java.util.regex.Pattern.compile("^>>>>>>>", java.util.regex.Pattern.MULTILINE).matcher(text).find();
+    }
+
+    /**
+     * [path], conflicted in the merge, is resolved as it is on disk now (gone:
+     * deleted). Refused while it still has conflict markers.
+     */
+    public static void markResolved(File folder, String path) throws IOException, GitAPIException {
+        File file = repoFile(folder, path);
+        try (Git git = Git.open(folder)) {
+            if (!merging(git.getRepository())) throw new IllegalStateException("There is no merge in progress");
+            if (file.exists()) {
+                if (hasConflictMarkers(file)) throw new IllegalStateException(file.getName() + " still has conflict markers");
+                git.add().addFilepattern(path).call();
+            } else {
+                git.rm().setCached(true).addFilepattern(path).call();
+            }
+        }
+    }
+
+    /** Finishes the merge: every change goes in (GitHub Desktop's way), once no file is conflicted. */
+    private static CommitResult commitMerge(Git git, File folder, String message, Identity who) throws IOException, GitAPIException {
+        Repository repository = git.getRepository();
+        clearStaleLocks(repository);
+        excludePepino(repository);
+        List<String> conflicted = new ArrayList<>(new java.util.TreeSet<>(git.status().call().getConflicting()));
+        if (!conflicted.isEmpty()) {
+            throw new IllegalStateException("Resolve the conflicts in " + ConflictException.describe(conflicted) + " first");
+        }
+        for (FileChange change : status(folder)) {
+            if (new File(folder, change.path()).exists()) git.add().addFilepattern(change.path()).call();
+            else git.rm().setCached(true).addFilepattern(change.path()).call();
+        }
+        PersonIdent ident = new PersonIdent(who.name(), who.email());
+        RevCommit commit = git.commit().setMessage(message.trim() + "\n").setAuthor(ident).setCommitter(ident).call();
+        return new CommitResult(commit.abbreviate(7).name(), commit.getShortMessage());
+    }
+
+    /**
+     * Aborts the merge in progress: the branch and its files as before it
+     * (files only GitHub's side added go away; new files of the user's stay).
+     * A snapshot keeps what was resolved so far.
+     */
+    public static Discarded abortMerge(File folder) throws IOException, GitAPIException {
+        try (Git git = Git.open(folder); RevWalk walk = new RevWalk(git.getRepository())) {
+            Repository repository = git.getRepository();
+            if (!merging(repository)) throw new IllegalStateException("There is no merge in progress");
+            clearStaleLocks(repository);
+            snapshot(repository, "Before aborting the merge");
+            RevTree theirs = walk.parseCommit(repository.readMergeHeads().get(0)).getTree();
+            List<FileChange> changes = status(folder);
+            git.reset().setMode(ResetCommand.ResetType.HARD).call();
+            List<String> written = new ArrayList<>();
+            List<String> removed = new ArrayList<>();
+            for (FileChange change : changes) {
+                File file = new File(folder, change.path());
+                boolean fromTheirs = TreeWalk.forPath(repository, change.path(), theirs) != null;
+                if ("new".equals(change.kind()) && fromTheirs && file.exists()) {
+                    Files.delete(file.toPath());
+                    removed.add(change.path());
+                } else if (file.exists()) written.add(change.path());
+                else removed.add(change.path());
+            }
+            return new Discarded(written, removed);
+        }
+    }
+
     /** What a revert did (#142): the new commit, and the files it wrote and removed. */
     public record Reverted(CommitResult commit, List<String> written, List<String> removed) {}
 
@@ -1349,6 +1505,7 @@ public final class GitOps {
         if (who == null) throw new IllegalStateException("Set your name and email for commits first");
         try (Git git = Git.open(folder); RevWalk walk = new RevWalk(git.getRepository())) {
             Repository repository = git.getRepository();
+            requireNoMerge(repository, "reverting");
             clearStaleLocks(repository);
             excludePepino(repository);
             RevCommit commit = parseCommit(repository, walk, id);
@@ -1489,6 +1646,7 @@ public final class GitOps {
         try (Git git = Git.open(folder)) {
             Repository repository = git.getRepository();
             if (repository.resolve(Constants.HEAD) == null) throw new IllegalStateException("Make the first commit before stashing");
+            requireNoMerge(repository, "stashing");
             clearStaleLocks(repository);
             excludePepino(repository);
             List<FileChange> changes = status(folder);
@@ -1779,6 +1937,7 @@ public final class GitOps {
     public static Switched checkout(File folder, String name) throws IOException, GitAPIException {
         try (Git git = Git.open(folder)) {
             Repository repository = git.getRepository();
+            requireNoMerge(repository, "switching branch");
             clearStaleLocks(repository);
             if (name.equals(repository.getBranch())) return new Switched(info(repository), Collections.emptyList(), Collections.emptyList());
             boolean local = repository.exactRef(Constants.R_HEADS + name) != null;

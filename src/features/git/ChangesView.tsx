@@ -9,6 +9,7 @@ import { errorMessage } from '../projects/errors';
 import { basename, isWithin, parentPath } from '../projects/paths';
 import type { LineExclusion } from './diff';
 import { DiffView } from './DiffView';
+import { AbortMergeDialog, ConflictView, MergeBar } from './MergeConflicts';
 import { ChangeActionsDialog, type Discarding, DiscardDialog } from './Discard';
 import { StashDialog, StashRow } from './Stash';
 import { LastCommitRow, PushedDialog, type Reopened } from './UndoCommit';
@@ -20,6 +21,7 @@ import {
   type Identity,
   type LastCommit,
   type LogEntry,
+  type MergeInfo,
   shortId,
   type StashInfo,
 } from './engine';
@@ -178,6 +180,35 @@ export function ChangesView({
     setDescription('');
   };
 
+  // A merge in progress (#143): its conflicted files open to be resolved, and the commit finishes it
+  const [merge, setMerge] = useState<MergeInfo | null>(null);
+  const [abortingMerge, setAbortingMerge] = useState(false);
+  const [mergeBusy, setMergeBusy] = useState(false);
+  useEffect(() => {
+    let active = true;
+    git.mergeState(path).then(
+      (found) => active && setMerge(found),
+      () => active && setMerge(null),
+    );
+    return () => {
+      active = false;
+    };
+  }, [git, path, changes]);
+  // A merge starting: its message ready in the box, every change in the commit
+  const [shownMerge, setShownMerge] = useState<MergeInfo | null>(null);
+  if (merge && !shownMerge) {
+    setShownMerge(merge);
+    if (!summary.trim()) setSummary(merge.message);
+    setExcluded(new Set());
+    setPartial({});
+    setAmending(null);
+  } else if (!merge && shownMerge) {
+    setShownMerge(null);
+  }
+  const conflicted = new Set(
+    (changes ?? []).filter((change) => change.kind === 'conflicted').map((change) => change.path),
+  );
+
   useEffect(() => {
     let active = true;
     git.stash(path).then(
@@ -202,8 +233,9 @@ export function ChangesView({
 
   const ticked = (changes ?? []).filter((change) => !excluded.has(change.path));
   const allTicked = changes !== null && changes.length > 0 && ticked.length === changes.length;
-  // Amending needs no files: a new message alone is enough
-  const canCommit = (ticked.length > 0 || amending !== null) && summary.trim() !== '' && !committing;
+  // Amending needs no files: a new message alone is enough; a merge takes every change, once resolved
+  const canCommit =
+    (merge ? conflicted.size === 0 : ticked.length > 0 || amending !== null) && summary.trim() !== '' && !committing;
 
   const selectionOf = (file: string): Selection => (excluded.has(file) ? 'none' : (partial[file] ?? 'all'));
   const select = useCallback((file: string, selection: Selection) => {
@@ -246,8 +278,10 @@ export function ChangesView({
     setCommitting(true);
     setLastCommit(null);
     const message = description.trim() ? `${summary.trim()}\n\n${description.trim()}` : summary.trim();
-    const paths = ticked.map((change) => change.path);
-    const lines = Object.fromEntries(paths.filter((file) => file in partial).map((file) => [file, partial[file]]));
+    const paths = (merge ? (changes ?? []) : ticked).map((change) => change.path);
+    const lines = merge
+      ? {}
+      : Object.fromEntries(paths.filter((file) => file in partial).map((file) => [file, partial[file]]));
     try {
       const result = await git.commit(path, { message, paths, excluded: lines, amend: amending !== null });
       setLastCommit(result);
@@ -312,6 +346,23 @@ export function ChangesView({
     }
   };
 
+  const abortMerge = async () => {
+    setAbortingMerge(false);
+    setMergeBusy(true);
+    try {
+      await git.abortMerge(path);
+      if (merge && summary.trim() === merge.message) setSummary('');
+      if (opened !== null) close();
+      refresh();
+      onCommitted();
+      showSnackbar('Merge aborted: the branch is as it was');
+    } catch (error) {
+      showSnackbar(`Error: ${errorMessage(error)}`);
+    } finally {
+      setMergeBusy(false);
+    }
+  };
+
   const discarded = () => {
     const what = discarding;
     setDiscarding(null);
@@ -330,13 +381,17 @@ export function ChangesView({
     );
   };
   const files = `${ticked.length} ${ticked.length === 1 ? 'file' : 'files'}`;
-  const commitLabel = amending
-    ? ticked.length > 0
-      ? `Amend ${shortId(amending.id)} with ${files}`
-      : `Amend ${shortId(amending.id)}`
-    : ticked.length > 0
-      ? `Commit ${files} to ${branch}`
-      : `Commit to ${branch}`;
+  const commitLabel = merge
+    ? conflicted.size > 0
+      ? `Resolve ${conflicted.size} ${conflicted.size === 1 ? 'conflict' : 'conflicts'} first`
+      : `Commit the merge to ${branch}`
+    : amending
+      ? ticked.length > 0
+        ? `Amend ${shortId(amending.id)} with ${files}`
+        : `Amend ${shortId(amending.id)}`
+      : ticked.length > 0
+        ? `Commit ${files} to ${branch}`
+        : `Commit to ${branch}`;
   // What the folded row says: the message so far, else the last commit, else what a commit would take
   const folded = summary.trim()
     ? `${amending ? `Amending ${shortId(amending.id)} · ` : ''}${summary.trim()}`
@@ -357,7 +412,7 @@ export function ChangesView({
             ref={(input) => {
               if (input) input.indeterminate = ticked.length > 0 && (!allTicked || anyPartial);
             }}
-            disabled={count === 0}
+            disabled={count === 0 || merge !== null}
             onChange={toggleAll}
           />
           <span className="label">
@@ -369,14 +424,25 @@ export function ChangesView({
           square
           className="muted"
           aria-label="Actions for the changes"
-          disabled={count === 0}
+          disabled={count === 0 || merge !== null}
           onClick={() => setChangesMenu(true)}
         >
           <MoreIcon size={18} />
         </Button>
       </div>
 
-      {stash?.info && (
+      {merge && (
+        <div className={styles.stashHolder} inert={opened !== null}>
+          <MergeBar
+            merge={merge}
+            conflicted={conflicted.size}
+            busy={mergeBusy}
+            onAbort={() => setAbortingMerge(true)}
+          />
+        </div>
+      )}
+
+      {stash?.info && !merge && (
         <div className={styles.stashHolder} inert={opened !== null}>
           <StashRow stash={stash.info} now={stash.at} onOpen={() => setShowingStash(true)} />
         </div>
@@ -404,7 +470,8 @@ export function ChangesView({
                     type="checkbox"
                     className={styles.check}
                     aria-label={`Commit ${change.path}`}
-                    checked={!excluded.has(change.path)}
+                    checked={merge !== null || !excluded.has(change.path)}
+                    disabled={merge !== null}
                     ref={(input) => {
                       if (input) input.indeterminate = someLines;
                     }}
@@ -426,22 +493,24 @@ export function ChangesView({
                     <span className="visually-hidden">{label}</span>
                   </span>
                 </button>
-                <Button
-                  variant="text"
-                  square
-                  className={cx('muted', styles.changeMore)}
-                  aria-label={`Actions for ${change.path}`}
-                  onClick={() => setActing(change)}
-                >
-                  <MoreIcon size={18} />
-                </Button>
+                {!merge && (
+                  <Button
+                    variant="text"
+                    square
+                    className={cx('muted', styles.changeMore)}
+                    aria-label={`Actions for ${change.path}`}
+                    onClick={() => setActing(change)}
+                  >
+                    <MoreIcon size={18} />
+                  </Button>
+                )}
               </div>
             );
           })
         )}
       </div>
 
-      {last?.info && !last.info.onGitHub && !last.info.merge && !amending && (
+      {last?.info && !last.info.onGitHub && !last.info.merge && !amending && !merge && (
         <div className={styles.stashHolder} inert={opened !== null}>
           <LastCommitRow
             commit={last.info.commit}
@@ -520,21 +589,43 @@ export function ChangesView({
         )}
       </form>
 
-      {opened !== null && visible && (
-        <DiffView
+      {opened !== null && visible && merge && conflicted.has(opened) ? (
+        <ConflictView
           path={path}
           file={opened}
-          picking={{
-            selection: selectionOf(opened),
-            onSelect: onSelectOpened,
-            onDiscardFile: () => {
-              const change = changes?.find((found) => found.path === opened);
-              if (change) setDiscarding({ kind: 'files', changes: [change], all: false });
-            },
-            onDiscardLines: (lines) => setDiscarding({ kind: 'lines', file: opened, lines }),
-          }}
+          merge={merge}
           onClose={close}
+          onResolved={() => {
+            close();
+            refresh();
+            showSnackbar(`${basename(opened)} resolved`);
+          }}
         />
+      ) : (
+        opened !== null &&
+        visible && (
+          <DiffView
+            path={path}
+            file={opened}
+            picking={
+              merge
+                ? undefined
+                : {
+                    selection: selectionOf(opened),
+                    onSelect: onSelectOpened,
+                    onDiscardFile: () => {
+                      const change = changes?.find((found) => found.path === opened);
+                      if (change) setDiscarding({ kind: 'files', changes: [change], all: false });
+                    },
+                    onDiscardLines: (lines) => setDiscarding({ kind: 'lines', file: opened, lines }),
+                  }
+            }
+            onClose={close}
+          />
+        )
+      )}
+      {abortingMerge && merge && (
+        <AbortMergeDialog merge={merge} onClose={() => setAbortingMerge(false)} onAbort={() => void abortMerge()} />
       )}
 
       {changesMenu && changes && (

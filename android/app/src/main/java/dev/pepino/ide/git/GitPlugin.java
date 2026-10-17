@@ -284,6 +284,58 @@ public class GitPlugin extends Plugin {
         });
     }
 
+    /** The merge in progress (#143): { merge: { theirs, message } }, null when none. */
+    @PluginMethod
+    public void mergeState(PluginCall call) {
+        run(call, () -> {
+            GitOps.MergeState merge = GitOps.mergeState(folder(call));
+            JSObject result = new JSObject();
+            if (merge == null) {
+                result.put("merge", JSObject.NULL);
+            } else {
+                JSObject json = new JSObject();
+                json.put("theirs", merge.theirs());
+                json.put("message", merge.message());
+                result.put("merge", json);
+            }
+            return result;
+        });
+    }
+
+    /** Merges GitHub's branch leaving its conflicts to resolve (#143), as of the last fetch: like pull's result. */
+    @PluginMethod
+    public void startMerge(PluginCall call) {
+        run(call, () -> {
+            File folder = folder(call);
+            GitOps.Pulled merged = GitOps.startMerge(folder);
+            JSObject result = new JSObject();
+            result.put("state", toJson(merged.state(), folder));
+            result.put("written", new JSArray(merged.written()));
+            result.put("removed", new JSArray(merged.removed()));
+            return result;
+        });
+    }
+
+    @PluginMethod
+    public void markResolved(PluginCall call) {
+        run(call, () -> {
+            GitOps.markResolved(folder(call), call.getString("file"));
+            return new JSObject();
+        });
+    }
+
+    /** Aborts the merge in progress: { written, removed }. */
+    @PluginMethod
+    public void abortMerge(PluginCall call) {
+        run(call, () -> {
+            GitOps.Discarded aborted = GitOps.abortMerge(folder(call));
+            JSObject result = new JSObject();
+            result.put("written", new JSArray(aborted.written()));
+            result.put("removed", new JSArray(aborted.removed()));
+            return result;
+        });
+    }
+
     @PluginMethod
     public void pull(PluginCall call) {
         run(call, () -> {

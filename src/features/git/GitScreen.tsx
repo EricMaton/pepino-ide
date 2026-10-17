@@ -589,6 +589,10 @@ function GitProject({ project, onOpen }: { project: ProjectInfo; onOpen: (path: 
           branch={repo.branch}
           refreshKey={tick}
           onSynced={() => setTick((value) => value + 1)}
+          onMergeStarted={() => {
+            setTab('changes');
+            setTick((value) => value + 1);
+          }}
         />
       )}
       {repo === undefined ? (

@@ -4,6 +4,7 @@ import { basename, isWithin, joinPath, parentPath, resolveInRoot } from '../proj
 import { canBeProject, GIT_DIR, isRepository, MARKER_DIR } from '../projects/projects';
 import type { FsEvents } from '../projects/observed';
 import type { ProjectSpace } from '../projects/projectSpace';
+import { hasConflicts } from './conflicts';
 import { applyExclusion, diffTexts, type FileDiff, type LineExclusion } from './diff';
 
 /*
@@ -66,6 +67,15 @@ export interface LastCommit {
   commit: LogEntry;
   onGitHub: boolean;
   merge: boolean;
+}
+
+/**
+ * A merge in progress (#143): GitHub's branch being merged ("origin/main")
+ * and the summary its commit gets. Its conflicted files show in status.
+ */
+export interface MergeInfo {
+  theirs: string;
+  message: string;
 }
 
 /** A branch's stashed changes (#139): when they were stashed, and the files. */
@@ -297,6 +307,21 @@ export interface GitEngine {
   originUrl(path: string): Promise<string | null>;
   /** The commits to pull and to push, as of the last fetch (no network); none for a branch not on GitHub. */
   syncCommits(path: string): Promise<SyncCommits>;
+  /** The merge in progress (#143), or null. */
+  mergeState(path: string): Promise<MergeInfo | null>;
+  /**
+   * GitHub Desktop's pull with conflicts (#143): GitHub's commits (as of the
+   * last fetch) merged into the branch, the clashing files left with
+   * conflict markers to resolve ([markResolved]); a commit then finishes
+   * the merge (every change goes in), or [abortMerge] puts it all back.
+   * Only from a branch without changes (CONFLICT). A snapshot is taken first;
+   * the files it writes are announced.
+   */
+  startMerge(path: string): Promise<SyncState>;
+  /** [file], conflicted in the merge, is resolved as it is now (gone: deleted). Refused while it has markers. */
+  markResolved(path: string, file: string): Promise<void>;
+  /** Aborts the merge: the branch and its files as before it; new files of the user's stay. */
+  abortMerge(path: string): Promise<void>;
   /** Brings GitHub's branches up to date, touching no local branch or file. */
   fetch(path: string, onProgress?: (progress: RemoteProgress) => void): Promise<SyncState>;
   /**
@@ -337,6 +362,10 @@ interface GitPlugin {
   dropStash(options: { path: string }): Promise<void>;
   lastCommit(options: { path: string }): Promise<{ last: LastCommit | null }>;
   undoCommit(options: { path: string }): Promise<{ commit: LogEntry }>;
+  mergeState(options: { path: string }): Promise<{ merge: MergeInfo | null }>;
+  startMerge(options: { path: string }): Promise<{ state: SyncState; written: string[]; removed: string[] }>;
+  markResolved(options: { path: string; file: string }): Promise<void>;
+  abortMerge(options: { path: string }): Promise<{ written: string[]; removed: string[] }>;
   revert(options: {
     path: string;
     commit: string;
@@ -536,6 +565,31 @@ export function createNativeGitEngine(announce: Announce): GitEngine {
       const folder = project(path);
       return remote(onProgress, () => git.fetch({ path: folder }));
     },
+    async mergeState(path) {
+      return (await git.mergeState({ path: project(path) })).merge;
+    },
+    async startMerge(path) {
+      const folder = project(path);
+      const merged = await git.startMerge({ path: folder }).catch((error: unknown) => {
+        throw gitError(error);
+      });
+      for (const file of merged.written) announce('fs.written', { path: joinPath(folder, file) });
+      for (const file of merged.removed) announce('fs.deleted', { path: joinPath(folder, file) });
+      return merged.state;
+    },
+    async markResolved(path, file) {
+      await git.markResolved({ path: project(path), file }).catch((error: unknown) => {
+        throw gitError(error);
+      });
+    },
+    async abortMerge(path) {
+      const folder = project(path);
+      const aborted = await git.abortMerge({ path: folder }).catch((error: unknown) => {
+        throw gitError(error);
+      });
+      for (const file of aborted.written) announce('fs.written', { path: joinPath(folder, file) });
+      for (const file of aborted.removed) announce('fs.deleted', { path: joinPath(folder, file) });
+    },
     async pull(path, onProgress) {
       const folder = project(path);
       const pulled = await remote(onProgress, () => git.pull({ path: folder }));
@@ -615,6 +669,20 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
   };
   const writeLog = (folder: string, log: Log) =>
     space.writeTextFile(gitPath(folder, 'pepino-log.json'), JSON.stringify(log));
+
+  /** The merge in progress: GitHub's side, its files, and the files still conflicted. */
+  type OpenMerge = { theirs: string; message: string; files: Snapshot; conflicted: string[] };
+  const readMerge = async (folder: string): Promise<OpenMerge | null> => {
+    const raw = await space.readTextFile(gitPath(folder, 'pepino-merge.json')).catch(() => null);
+    return raw === null ? null : (JSON.parse(raw) as OpenMerge);
+  };
+  const writeMerge = async (folder: string, merge: OpenMerge | null) => {
+    if (merge) await space.writeTextFile(gitPath(folder, 'pepino-merge.json'), JSON.stringify(merge));
+    else await space.delete(gitPath(folder, 'pepino-merge.json')).catch(() => undefined);
+  };
+  const requireNoMerge = async (folder: string, doing: string) => {
+    if (await readMerge(folder)) throw new Error(`Finish or abort the merge before ${doing}`);
+  };
 
   /** Whether one of GitHub's branches (origin/… in the log) has commit [id]. */
   const onGitHub = (log: Log, id: string) =>
@@ -723,6 +791,12 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
       for (const file of Object.keys(head)) {
         if (!files.has(file)) changes.push({ path: file, kind: 'deleted' });
       }
+      const merge = await readMerge(folder);
+      for (const file of merge?.conflicted ?? []) {
+        const at = changes.findIndex((change) => change.path === file);
+        if (at >= 0) changes[at] = { path: file, kind: 'conflicted' };
+        else changes.push({ path: file, kind: 'conflicted' });
+      }
       return changes.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
     },
 
@@ -755,6 +829,9 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
         readLog(folder),
       ]);
       // Amending: the commit replaced, which keeps its author
+      const merge = amend ? null : await readMerge(folder);
+      if (amend) await requireNoMerge(folder, 'amending');
+      if (merge) return commitMerge(folder, branch, merge, summary, message);
       const [amended, ...older] = amend ? (log[branch] ?? []) : [];
       if (amend && !amended) throw new Error('There is no commit yet');
       if (amended && onGitHub(log, amended.id)) {
@@ -835,6 +912,7 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
 
     async stashChanges(path) {
       const folder = await repository(path);
+      await requireNoMerge(folder, 'stashing');
       const [refs, branch, changes] = await Promise.all([readRefs(folder), currentBranch(folder), engine.status(path)]);
       if (!(branch in refs)) throw new Error('Make the first commit before stashing');
       if (changes.length === 0) throw new Error('No changes to stash');
@@ -908,6 +986,7 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
 
     async revert(path, commit) {
       const folder = await repository(path);
+      await requireNoMerge(folder, 'reverting');
       const { files: after, parent: before } = await findCommit(folder, commit);
       const [refs, branch, log, changes] = await Promise.all([
         readRefs(folder),
@@ -951,6 +1030,7 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
 
     async undoCommit(path) {
       const folder = await repository(path);
+      await requireNoMerge(folder, 'undoing');
       const [refs, log, branch] = await Promise.all([readRefs(folder), readLog(folder), currentBranch(folder)]);
       const [last, ...rest] = log[branch] ?? [];
       if (!last) throw new Error('There is no commit to undo');
@@ -1067,6 +1147,7 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
 
     async checkout(path, name) {
       const folder = await repository(path);
+      await requireNoMerge(folder, 'switching branch');
       const [refs, current, files, remotes] = await Promise.all([
         readRefs(folder),
         currentBranch(folder),
@@ -1199,8 +1280,82 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
       return syncOf(folder);
     },
 
+    async mergeState(path) {
+      const merge = await readMerge(await repository(path));
+      return merge ? { theirs: merge.theirs, message: merge.message } : null;
+    },
+
+    async startMerge(path) {
+      const folder = await repository(path);
+      await requireNoMerge(folder, 'merging again');
+      const state = await syncOf(folder);
+      if (!state.upstream) throw new Error('This branch is not on GitHub yet: publish it first');
+      if (state.behind === 0) return state;
+      const changes = await engine.status(path);
+      if (changes.length > 0) {
+        const paths = changes.map((change) => change.path);
+        throw new GitError('CONFLICT', `Commit your changes to ${basename(paths[0])} before merging`, paths);
+      }
+      const branch = await currentBranch(folder);
+      const [refs, remotes, log] = await Promise.all([readRefs(folder), readRemotes(folder), readLog(folder)]);
+      const ours = refs[branch] ?? {};
+      const theirs = remotes[branch];
+      const localIds = new Set((log[branch] ?? []).map((entry) => entry.id));
+      const base = (log[state.upstream] ?? []).find((entry) => localIds.has(entry.id))?.files ?? {};
+      const changed = (side: Snapshot) =>
+        [...new Set([...Object.keys(side), ...Object.keys(base)])].filter((file) => side[file] !== base[file]);
+      const mine = changed(ours);
+      const conflicted = changed(theirs)
+        .filter((file) => mine.includes(file) && ours[file] !== theirs[file])
+        .sort();
+      await engine.snapshot(folder, `Before merging ${state.upstream}`);
+      for (const file of changed(theirs)) {
+        if (mine.includes(file) && !conflicted.includes(file)) continue;
+        // The stand-in clashes on whole files; a side that deleted it leaves the other's text
+        const text = conflicted.includes(file)
+          ? ours[file] !== undefined && theirs[file] !== undefined
+            ? `<<<<<<< HEAD\n${ours[file]}=======\n${theirs[file]}>>>>>>> ${state.upstream}\n`
+            : (ours[file] ?? theirs[file])
+          : theirs[file];
+        if (text === undefined) await space.delete(joinPath(folder, file));
+        else await writeFile(folder, file, text);
+      }
+      await writeMerge(folder, {
+        theirs: state.upstream,
+        message: `Merge ${state.upstream} into ${branch}`,
+        files: theirs,
+        conflicted,
+      });
+      return state;
+    },
+
+    async markResolved(path, file) {
+      const folder = await repository(path);
+      const merge = await readMerge(folder);
+      if (!merge) throw new Error('There is no merge in progress');
+      const text = await space.readTextFile(joinPath(folder, file)).catch(() => null);
+      if (text !== null && hasConflicts(text)) throw new Error(`${basename(file)} still has conflict markers`);
+      await writeMerge(folder, { ...merge, conflicted: merge.conflicted.filter((other) => other !== file) });
+    },
+
+    async abortMerge(path) {
+      const folder = await repository(path);
+      const merge = await readMerge(folder);
+      if (!merge) throw new Error('There is no merge in progress');
+      await engine.snapshot(folder, 'Before aborting the merge');
+      const [refs, branch, changes] = await Promise.all([readRefs(folder), currentBranch(folder), engine.status(path)]);
+      const head = refs[branch] ?? {};
+      for (const { path: file } of changes) {
+        if (file in head) await writeFile(folder, file, head[file]);
+        // New files of the user's stay; GitHub's go
+        else if (file in merge.files) await space.delete(joinPath(folder, file)).catch(() => undefined);
+      }
+      await writeMerge(folder, null);
+    },
+
     async pull(path, onProgress) {
       const folder = await repository(path);
+      await requireNoMerge(folder, 'pulling');
       await fetchInto(folder, onProgress);
       const state = await syncOf(folder);
       if (!state.upstream) throw new Error('This branch is not on GitHub yet: publish it first');
@@ -1287,6 +1442,26 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
       return syncOf(folder);
     },
   };
+
+  /** A commit finishing the merge: every change goes in, once nothing is conflicted. */
+  async function commitMerge(folder: string, branch: string, merge: OpenMerge, summary: string, message: string) {
+    if (merge.conflicted.length > 0) {
+      throw new Error(`Resolve the conflicts in ${basename(merge.conflicted[0])} first`);
+    }
+    const [refs, log, files] = await Promise.all([readRefs(folder), readLog(folder), readFiles(folder)]);
+    const next: Snapshot = Object.fromEntries(files);
+    await writeRefs(folder, { ...refs, [branch]: next });
+    const localIds = new Set((log[branch] ?? []).map((entry) => entry.id));
+    const theirsOnly = (log[merge.theirs] ?? []).filter((entry) => !localIds.has(entry.id));
+    commits += 1;
+    const time = Date.now();
+    const id = hashOf(`merge:${folder}:${commits}:${time}`).padStart(8, '0').repeat(5);
+    const description = message.trim().split('\n').slice(1).join('\n').trim();
+    const entry = { id, summary, description, author: identity!.name, email: identity!.email, time, files: next };
+    await writeLog(folder, { ...log, [branch]: [entry, ...(log[branch] ?? []), ...theirsOnly] });
+    await writeMerge(folder, null);
+    return { id: shortId(id), summary };
+  }
 
   /** The stand-in's GitHub: a clone's branches there ([readRemotes]) and their history as `origin/…` in the log. */
   async function syncOf(folder: string): Promise<SyncState> {
