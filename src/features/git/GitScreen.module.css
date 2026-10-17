@@ -946,3 +946,26 @@ button.line {
 .undoCommit p {
   margin: 0;
 }
+
+.undoActions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.undoActions > * {
+  flex: 1;
+}
+
+/* Amending (#141): what the commit box does now, and the way out */
+.amending {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-right: calc(var(--space-2) * -1);
+}
+
+.amendingText {
+  flex: 1;
+  min-width: 0;
+  white-space: normal;
+}

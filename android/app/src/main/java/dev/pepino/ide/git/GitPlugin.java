@@ -328,7 +328,14 @@ public class GitPlugin extends Plugin {
             JSArray rawPaths = call.getArray("paths", new JSArray());
             List<String> paths = new ArrayList<>();
             for (int i = 0; i < rawPaths.length(); i++) paths.add(rawPaths.getString(i));
-            GitOps.CommitResult commit = GitOps.commit(folder(call), call.getString("message"), paths, exclusions(call, "excluded"), who);
+            GitOps.CommitResult commit = GitOps.commit(
+                folder(call),
+                call.getString("message"),
+                paths,
+                exclusions(call, "excluded"),
+                who,
+                call.getBoolean("amend", false)
+            );
             JSObject result = new JSObject();
             result.put("id", commit.id());
             result.put("summary", commit.summary());

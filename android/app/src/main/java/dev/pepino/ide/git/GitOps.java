@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import org.eclipse.jgit.api.CheckoutCommand;
+import org.eclipse.jgit.api.CommitCommand;
 import org.eclipse.jgit.api.CreateBranchCommand;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.MergeCommand;
@@ -982,10 +983,28 @@ public final class GitOps {
         Map<String, LineExclusion> excluded,
         Identity who
     ) throws IOException, GitAPIException {
-        if (paths.isEmpty()) throw new IllegalArgumentException("Choose at least one file to commit");
+        return commit(folder, message, paths, excluded, who, false);
+    }
+
+    /**
+     * Like [commit]; with [amend], GitHub Desktop's Amend (#141): the last
+     * commit is replaced by one with [message] and its changes plus those
+     * chosen now (none: just the message), keeping its author. Never a commit
+     * on GitHub ([PushedException]) or a merge.
+     */
+    public static CommitResult commit(
+        File folder,
+        String message,
+        List<String> paths,
+        Map<String, LineExclusion> excluded,
+        Identity who,
+        boolean amend
+    ) throws IOException, GitAPIException {
+        if (paths.isEmpty() && !amend) throw new IllegalArgumentException("Choose at least one file to commit");
         if (message == null || message.trim().isEmpty()) throw new IllegalArgumentException("A commit needs a summary");
         try (Git git = Git.open(folder)) {
             Repository repository = git.getRepository();
+            if (amend) requireLocalCommit(repository, "amending");
             clearStaleLocks(repository);
             excludePepino(repository);
             // Files with some (not all, not none) of their lines picked: committed as built from those lines.
@@ -1030,13 +1049,11 @@ public final class GitOps {
             if (!partials.isEmpty()) stage(repository, partials);
             PersonIdent ident = new PersonIdent(who.name(), who.email());
             try {
-                RevCommit commit = git
-                    .commit()
-                    .setMessage(message.trim() + "\n")
-                    .setAuthor(ident)
-                    .setCommitter(ident)
-                    .setAllowEmpty(false)
-                    .call();
+                CommitCommand command = git.commit().setMessage(message.trim() + "\n").setCommitter(ident);
+                // Amending keeps the commit's author; a new message alone is enough
+                if (amend) command.setAmend(true).setAllowEmpty(true);
+                else command.setAuthor(ident).setAllowEmpty(false);
+                RevCommit commit = command.call();
                 return new CommitResult(commit.abbreviate(7).name(), commit.getShortMessage());
             } catch (EmptyCommitException e) {
                 throw new IllegalArgumentException("Those files have no changes to commit");
@@ -1236,10 +1253,22 @@ public final class GitOps {
     /** The branch's last commit (#140): whether GitHub has it (it can no longer be undone) and whether it is a merge. */
     public record LastCommit(LogEntry commit, boolean onGitHub, boolean merge) {}
 
-    /** The commit to undo is on GitHub already: undoing it would need a force push. */
+    /** The commit to undo or amend is on GitHub already: changing it would need a force push. */
     public static final class PushedException extends IllegalStateException {
-        PushedException(String summary) {
-            super("\"" + summary + "\" is on GitHub already: undoing it there needs a force push");
+        PushedException(String summary, String doing) {
+            super("\"" + summary + "\" is on GitHub already: " + doing + " it needs a force push");
+        }
+    }
+
+    /** The last commit, to undo or amend ([doing]): there, not on GitHub ([PushedException]), not a merge. */
+    private static ObjectId requireLocalCommit(Repository repository, String doing) throws IOException {
+        ObjectId head = repository.resolve(Constants.HEAD);
+        if (head == null) throw new IllegalStateException("There is no commit yet");
+        try (RevWalk walk = new RevWalk(repository)) {
+            RevCommit commit = walk.parseCommit(head);
+            if (onGitHub(repository, walk, commit)) throw new PushedException(entryOf(commit).summary(), doing);
+            if (commit.getParentCount() > 1) throw new IllegalStateException("A merge commit cannot be changed");
+            return head;
         }
     }
 
@@ -1273,12 +1302,8 @@ public final class GitOps {
     public static LogEntry undoCommit(File folder) throws IOException, GitAPIException {
         try (Git git = Git.open(folder); RevWalk walk = new RevWalk(git.getRepository())) {
             Repository repository = git.getRepository();
-            ObjectId head = repository.resolve(Constants.HEAD);
-            if (head == null) throw new IllegalStateException("There is no commit to undo");
+            RevCommit commit = walk.parseCommit(requireLocalCommit(repository, "undoing"));
             clearStaleLocks(repository);
-            RevCommit commit = walk.parseCommit(head);
-            if (onGitHub(repository, walk, commit)) throw new PushedException(entryOf(commit).summary());
-            if (commit.getParentCount() > 1) throw new IllegalStateException("A merge commit cannot be undone");
             if (commit.getParentCount() == 1) {
                 git.reset().setMode(ResetCommand.ResetType.MIXED).setRef(commit.getParent(0).name()).call();
             } else {

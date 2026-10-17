@@ -5,22 +5,31 @@ import { type LogEntry, shortId } from './engine';
 import styles from './GitScreen.module.css';
 
 /*
- * GitHub Desktop's Undo (#140): the last commit goes and its changes are
- * uncommitted again, its message back in the commit box. Only while GitHub
- * does not have it: then this explains why not.
+ * GitHub Desktop's Undo (#140) and Amend (#141) of the last commit. Undo
+ * takes it away, its changes uncommitted again and its message back in the
+ * commit box; Amend replaces it, with a new message or more changes. Only
+ * while GitHub does not have it: then this explains why not.
  */
 
-/** "Last commit · Fix the parser · 2M AGO", with Undo, under the changed files. */
+/** A commit back in the commit box: undone, to commit again, or to amend. */
+export interface Reopened {
+  commit: LogEntry;
+  amend: boolean;
+}
+
+/** "Last commit · Fix the parser · 2M AGO", with Amend and Undo, under the changed files. */
 export function LastCommitRow({
   commit,
   now,
   busy,
   onUndo,
+  onAmend,
 }: {
   commit: LogEntry;
   now: number;
   busy: boolean;
   onUndo: () => void;
+  onAmend: () => void;
 }) {
   return (
     <div className={styles.lastCommit}>
@@ -30,6 +39,9 @@ export function LastCommitRow({
         </span>
         <span className="body ellipsis">{commit.summary}</span>
       </span>
+      <Button variant="text" disabled={busy} onClick={onAmend}>
+        Amend
+      </Button>
       <Button variant="text" className={cx(busy && 'cursor')} disabled={busy} onClick={onUndo}>
         {busy ? 'Undoing' : 'Undo'}
       </Button>
@@ -37,12 +49,12 @@ export function LastCommitRow({
   );
 }
 
-/** Undo refused: the commit is on GitHub already. */
-export function PushedDialog({ commit, onClose }: { commit: LogEntry; onClose: () => void }) {
+/** Undo or Amend refused: the commit is on GitHub already. */
+export function PushedDialog({ commit, amend, onClose }: { commit: LogEntry; amend: boolean; onClose: () => void }) {
   return (
     <Dialog
       title="Already on GitHub"
-      eyebrow={`UNDO · ${shortId(commit.id)}`}
+      eyebrow={`${amend ? 'AMEND' : 'UNDO'} · ${shortId(commit.id)}`}
       onClose={onClose}
       actions={
         <Button variant="filled" onClick={onClose}>
@@ -52,10 +64,16 @@ export function PushedDialog({ commit, onClose }: { commit: LogEntry; onClose: (
     >
       <div className={styles.identityFields}>
         <p className="body">
-          “{commit.summary}” has been pushed. Undoing it here would leave your branch behind GitHub’s, and only a force
-          push, which rewrites GitHub’s history, would bring them back together.
+          “{commit.summary}” has been pushed.{' '}
+          {amend
+            ? 'Amending it here would replace a commit GitHub has, and only a force push, which rewrites GitHub’s history, would get GitHub to take the new one.'
+            : 'Undoing it here would leave your branch behind GitHub’s, and only a force push, which rewrites GitHub’s history, would bring them back together.'}
         </p>
-        <p className="caption muted">To take its changes back safely, a new commit has to undo them: a revert.</p>
+        <p className="caption muted">
+          {amend
+            ? 'Make the fix a new commit instead.'
+            : 'To take its changes back safely, a new commit has to undo them: a revert.'}
+        </p>
       </div>
     </Dialog>
   );

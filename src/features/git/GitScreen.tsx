@@ -16,12 +16,13 @@ import { useFolderStack } from '../projects/useFolderStack';
 import { BranchesDialog } from './BranchesDialog';
 import { ChangesView } from './ChangesView';
 import { CloneRepositoryDialog } from './CloneDialog';
-import type { LogEntry, RepoInfo } from './engine';
+import type { RepoInfo } from './engine';
 import styles from './GitScreen.module.css';
 import { HistoryView } from './HistoryView';
 import { GitMark, LocationDialog } from './LocationDialog';
 import { isGitDir, nameError, shown } from './locations';
 import { SyncBar } from './SyncBar';
+import type { Reopened } from './UndoCommit';
 
 /*
  * GIT works like GitHub Desktop on the one active project, which the editor
@@ -497,10 +498,10 @@ function GitProject({ project, onOpen }: { project: ProjectInfo; onOpen: (path: 
   const [tab, setTab] = useState<'changes' | 'history'>('changes');
   const [initializing, setInitializing] = useState(false);
   const [tick, setTick] = useState(0);
-  // The commit just undone (#140): its message goes back to Changes
-  const [undone, setUndone] = useState<LogEntry | null>(null);
-  const undoneCommit = (commit: LogEntry) => {
-    setUndone(commit);
+  // A commit just undone (#140), or to amend (#141): its message goes back to Changes
+  const [reopened, setReopened] = useState<Reopened | null>(null);
+  const reopen = (commit: Reopened) => {
+    setReopened(commit);
     setTab('changes');
     setTick((value) => value + 1);
   };
@@ -616,14 +617,14 @@ function GitProject({ project, onOpen }: { project: ProjectInfo; onOpen: (path: 
               branch={repo.branch}
               visible={tab === 'changes'}
               refreshKey={tick}
-              undone={undone}
+              reopened={reopened}
               onCommitted={() => setTick((value) => value + 1)}
-              onUndone={undoneCommit}
+              onReopened={reopen}
             />
           </div>
           {tab === 'history' && (
             <div className={styles.tabPanel} role="tabpanel">
-              <HistoryView key={repo.branch} path={project.path} onUndone={undoneCommit} />
+              <HistoryView key={repo.branch} path={project.path} onReopened={reopen} />
             </div>
           )}
         </>

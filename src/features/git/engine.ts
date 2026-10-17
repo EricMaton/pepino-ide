@@ -188,10 +188,18 @@ export interface GitEngine {
    * like GitHub Desktop's ticked files: whatever was staged before is left out.
    * The files in [excluded] go without the changed lines picked there; when
    * one changed since, nothing is committed (a STALE [GitError]).
+   * With [amend], GitHub Desktop's Amend (#141): the last commit is replaced
+   * by one with [message] and its changes plus [paths] (none: just the
+   * message), keeping its author. Never a commit on GitHub (PUSHED) or a merge.
    */
   commit(
     path: string,
-    commit: { message: string; paths: readonly string[]; excluded?: Readonly<Record<string, LineExclusion>> },
+    commit: {
+      message: string;
+      paths: readonly string[];
+      excluded?: Readonly<Record<string, LineExclusion>>;
+      amend?: boolean;
+    },
   ): Promise<CommitResult>;
   /**
    * GitHub Desktop's Discard changes (#138): [paths] go back to the last
@@ -308,6 +316,7 @@ interface GitPlugin {
     message: string;
     paths: string[];
     excluded: Record<string, LineExclusion>;
+    amend: boolean;
   }): Promise<CommitResult>;
   discard(options: {
     path: string;
@@ -389,9 +398,9 @@ export function createNativeGitEngine(announce: Announce): GitEngine {
     diff(path, file) {
       return git.diff({ path: project(path), file });
     },
-    commit(path, { message, paths, excluded = {} }) {
+    commit(path, { message, paths, excluded = {}, amend = false }) {
       return git
-        .commit({ path: project(path), message, paths: [...paths], excluded: { ...excluded } })
+        .commit({ path: project(path), message, paths: [...paths], excluded: { ...excluded }, amend })
         .catch((error: unknown) => {
           throw gitError(error);
         });
@@ -712,13 +721,24 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
       return { version, binary: false, tooLarge: false, hunks: diffTexts(before, after) };
     },
 
-    async commit(path, { message, paths, excluded = {} }) {
+    async commit(path, { message, paths, excluded = {}, amend = false }) {
       const folder = await repository(path);
       if (!identity) throw new Error('Set your name and email for commits first');
-      if (paths.length === 0) throw new Error('Choose at least one file to commit');
+      if (paths.length === 0 && !amend) throw new Error('Choose at least one file to commit');
       const summary = summaryOf(message);
       if (!summary) throw new Error('A commit needs a summary');
-      const [refs, branch, files] = await Promise.all([readRefs(folder), currentBranch(folder), readFiles(folder)]);
+      const [refs, branch, files, log] = await Promise.all([
+        readRefs(folder),
+        currentBranch(folder),
+        readFiles(folder),
+        readLog(folder),
+      ]);
+      // Amending: the commit replaced, which keeps its author
+      const [amended, ...older] = amend ? (log[branch] ?? []) : [];
+      if (amend && !amended) throw new Error('There is no commit yet');
+      if (amended && onGitHub(log, amended.id)) {
+        throw new GitError('PUSHED', `"${amended.summary}" is on GitHub already: amending it needs a force push`);
+      }
       const head = refs[branch] ?? {};
       const stale = paths.filter((file) => {
         const exclusion = excluded[file];
@@ -738,7 +758,7 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
         } else if (text === undefined) delete next[file];
         else next[file] = text;
       }
-      if (branch in refs && JSON.stringify(next) === JSON.stringify(head)) {
+      if (!amend && branch in refs && JSON.stringify(next) === JSON.stringify(head)) {
         throw new Error('Those files have no changes to commit');
       }
       await writeRefs(folder, { ...refs, [branch]: next });
@@ -747,10 +767,10 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
       const id = [0, 1, 2, 3, 4]
         .map((part) => hashOf(`${part}:${folder}:${branch}:${commits}:${time}:${message}`).padStart(8, '0'))
         .join('');
-      const log = await readLog(folder);
       const description = message.trim().split('\n').slice(1).join('\n').trim();
-      const entry = { id, summary, description, author: identity.name, email: identity.email, time, files: next };
-      await writeLog(folder, { ...log, [branch]: [entry, ...(log[branch] ?? [])] });
+      const author = amended ?? { author: identity.name, email: identity.email };
+      const entry = { id, summary, description, author: author.author, email: author.email, time, files: next };
+      await writeLog(folder, { ...log, [branch]: [entry, ...(amended ? older : (log[branch] ?? []))] });
       return { id: shortId(id), summary };
     },
 
