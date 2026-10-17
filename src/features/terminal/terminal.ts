@@ -11,6 +11,18 @@ import { resolveInRoot } from '../projects/paths';
  * project space) can come in behind the same interface later.
  */
 
+/** A running shell: its id, and the project folder it started in (relative to the space root). */
+export interface TerminalInfo {
+  id: number;
+  cwd: string;
+}
+
+/** What a shell printed last, and where it ends in all it printed (see [TerminalBackend.onData]). */
+export interface TerminalHistory {
+  data: string;
+  end: number;
+}
+
 export interface TerminalBackend {
   /** Whether shells can be started here: false on iOS and the web. */
   readonly available: boolean;
@@ -23,9 +35,15 @@ export interface TerminalBackend {
   /** Ends shell [id] and what it runs, as closing a terminal window does (SIGHUP). */
   kill(id: number): Promise<void>;
   /** The shells still running, which outlive the page (a reload, the app in the background). */
-  sessions(): Promise<number[]>;
-  /** What shells print; returns the way to stop listening. */
-  onData(listener: (id: number, data: string) => void): () => void;
+  sessions(): Promise<TerminalInfo[]>;
+  /** What shell [id] printed last (the last 256 KB), to show again on attaching to it. */
+  history(id: number): Promise<TerminalHistory>;
+  /**
+   * What shells print; [end] counts every character shell [id] printed so
+   * far, these included, so one already in a [history] is told apart.
+   * Returns the way to stop listening.
+   */
+  onData(listener: (id: number, data: string, end: number) => void): () => void;
   /** Shells that ended, with their exit code (128 + n for signal n). */
   onExit(listener: (id: number, code: number) => void): () => void;
 }
@@ -35,8 +53,12 @@ interface TerminalPlugin {
   write(options: { id: number; data: string }): Promise<void>;
   resize(options: { id: number; cols: number; rows: number }): Promise<void>;
   kill(options: { id: number }): Promise<void>;
-  sessions(): Promise<{ sessions: { id: number; pid: number }[] }>;
-  addListener(event: 'data', listener: (event: { id: number; data: string }) => void): Promise<PluginListenerHandle>;
+  sessions(): Promise<{ sessions: { id: number; pid: number; cwd: string }[] }>;
+  history(options: { id: number }): Promise<TerminalHistory>;
+  addListener(
+    event: 'data',
+    listener: (event: { id: number; data: string; end: number }) => void,
+  ): Promise<PluginListenerHandle>;
   addListener(event: 'exit', listener: (event: { id: number; code: number }) => void): Promise<PluginListenerHandle>;
 }
 
@@ -66,9 +88,10 @@ export function createNativeTerminal(): TerminalBackend {
     resize: (id, cols, rows) => plugin.resize({ id, cols, rows }),
     kill: (id) => plugin.kill({ id }),
     async sessions() {
-      return (await plugin.sessions()).sessions.map((session) => session.id);
+      return (await plugin.sessions()).sessions.map(({ id, cwd }) => ({ id, cwd }));
     },
-    onData: (listener) => listen(plugin.addListener('data', ({ id, data }) => listener(id, data))),
+    history: (id) => plugin.history({ id }),
+    onData: (listener) => listen(plugin.addListener('data', ({ id, data, end }) => listener(id, data, end))),
     onExit: (listener) => listen(plugin.addListener('exit', ({ id, code }) => listener(id, code))),
   };
 }
@@ -83,6 +106,7 @@ export function createUnavailableTerminal(): TerminalBackend {
     resize: unavailable,
     kill: unavailable,
     sessions: async () => [],
+    history: unavailable,
     onData: () => () => undefined,
     onExit: () => () => undefined,
   };

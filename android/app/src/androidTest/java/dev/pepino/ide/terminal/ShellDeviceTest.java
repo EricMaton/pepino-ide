@@ -31,7 +31,7 @@ public class ShellDeviceTest {
         volatile int code = -1;
 
         @Override
-        public synchronized void onData(int id, String text) {
+        public synchronized void onData(int id, String text, long end) {
             output.append(text);
         }
 

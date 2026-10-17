@@ -23,7 +23,8 @@ import java.nio.charset.StandardCharsets;
 public final class TerminalSession {
 
     public interface Listener {
-        void onData(int id, String text);
+        /** [text] printed; [end] counts every character printed so far, this one's last included. */
+        void onData(int id, String text, long end);
 
         void onExit(int id, int code);
     }
@@ -31,16 +32,25 @@ public final class TerminalSession {
     /** One read hands over at most this much: output that keeps coming goes in chunks this size. */
     private static final int CHUNK = 64 * 1024;
 
+    /** How much of what it printed a session keeps, for a page that attaches again (#39). */
+    private static final int RECENT = 256 * 1024;
+
     public final int id;
     public final int pid;
+    /** Where it started. */
+    public final String cwd;
+    // The last RECENT characters printed, and how many were printed in all
+    private final StringBuilder recent = new StringBuilder();
+    private long printed;
     private final ParcelFileDescriptor master;
     private final FileOutputStream out;
     private final Thread reader;
     private volatile boolean closed;
 
-    private TerminalSession(int id, int pid, int fd, Listener listener) {
+    private TerminalSession(int id, int pid, int fd, String cwd, Listener listener) {
         this.id = id;
         this.pid = pid;
+        this.cwd = cwd;
         this.master = ParcelFileDescriptor.adoptFd(fd);
         this.out = new FileOutputStream(master.getFileDescriptor());
         FileInputStream in = new FileInputStream(master.getFileDescriptor());
@@ -68,7 +78,7 @@ public final class TerminalSession {
         throws IOException {
         int[] pid = new int[1];
         int fd = Pty.spawn(cwd, args, env, pid, Math.max(1, rows), Math.max(1, cols));
-        return new TerminalSession(id, pid[0], fd, listener);
+        return new TerminalSession(id, pid[0], fd, cwd, listener);
     }
 
     private void read(InputStream in, Listener listener) {
@@ -94,13 +104,32 @@ public final class TerminalSession {
                 decoder.decode(bytes, chars, false);
                 bytes.compact();
                 chars.flip();
-                if (chars.hasRemaining()) listener.onData(id, chars.toString());
+                if (chars.hasRemaining()) {
+                    String text = chars.toString();
+                    long end;
+                    synchronized (recent) {
+                        recent.append(text);
+                        if (recent.length() > RECENT) recent.delete(0, recent.length() - RECENT);
+                        printed += text.length();
+                        end = printed;
+                    }
+                    listener.onData(id, text, end);
+                }
                 chars.clear();
             }
         } catch (IOException e) {
             // EIO: the shell ended and the PTY's other side is gone
         }
     }
+
+    /** What it printed last (at most RECENT characters), and the count [Listener.onData] gives at its end. */
+    public Recent recent() {
+        synchronized (recent) {
+            return new Recent(recent.toString(), printed);
+        }
+    }
+
+    public record Recent(String text, long end) {}
 
     public void write(byte[] data) throws IOException {
         if (closed) throw new IOException("The terminal has ended");

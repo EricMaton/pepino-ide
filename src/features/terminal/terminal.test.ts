@@ -13,6 +13,7 @@ const plugin = vi.hoisted(() => ({
   resize: vi.fn(),
   kill: vi.fn(),
   sessions: vi.fn(),
+  history: vi.fn(),
   addListener: vi.fn(async (event: string, listener: (event: never) => void) => {
     const handle = { event, listener, remove: vi.fn() };
     handles.push(handle);
@@ -43,8 +44,11 @@ describe('native terminal (#37)', () => {
     expect(plugin.resize).toHaveBeenCalledWith({ id: 7, cols: 100, rows: 40 });
     expect(plugin.kill).toHaveBeenCalledWith({ id: 7 });
 
-    plugin.sessions.mockResolvedValue({ sessions: [{ id: 7, pid: 1234 }] });
-    expect(await terminal.sessions()).toEqual([7]);
+    plugin.sessions.mockResolvedValue({ sessions: [{ id: 7, pid: 1234, cwd: 'work/app' }] });
+    expect(await terminal.sessions()).toEqual([{ id: 7, cwd: 'work/app' }]);
+    plugin.history.mockResolvedValue({ data: '$ ls\r\n', end: 42 });
+    expect(await terminal.history(7)).toEqual({ data: '$ ls\r\n', end: 42 });
+    expect(plugin.history).toHaveBeenCalledWith({ id: 7 });
   });
 
   it('passes on what shells print and when they end, until told to stop', async () => {
@@ -57,9 +61,9 @@ describe('native terminal (#37)', () => {
 
     const fire = (event: string, payload: unknown) =>
       handles.filter((handle) => handle.event === event).forEach((handle) => handle.listener(payload as never));
-    fire('data', { id: 7, data: 'hello\r\n' });
+    fire('data', { id: 7, data: 'hello\r\n', end: 7 });
     fire('exit', { id: 7, code: 130 });
-    expect(data).toHaveBeenCalledWith(7, 'hello\r\n');
+    expect(data).toHaveBeenCalledWith(7, 'hello\r\n', 7);
     expect(exit).toHaveBeenCalledWith(7, 130);
 
     stopData();

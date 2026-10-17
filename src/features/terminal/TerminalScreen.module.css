@@ -1,0 +1,58 @@
+.screen {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.screen[hidden] {
+  display: none;
+}
+
+.note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-4);
+}
+
+.note p {
+  margin: 0;
+}
+
+.view {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+/* xterm fills what is left; its own padding keeps the text off the edges */
+.xterm {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--space-2) var(--space-2) 0;
+}
+
+.xterm :global(.xterm) {
+  height: 100%;
+}
+
+/* The shell ended (or would not start): a new one */
+.ended {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border-top: var(--border);
+  background: var(--surface-variant);
+}
+
+.endedError {
+  color: var(--error);
+}

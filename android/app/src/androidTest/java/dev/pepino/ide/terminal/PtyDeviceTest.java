@@ -27,7 +27,7 @@ public class PtyDeviceTest {
         volatile int code = -1;
 
         @Override
-        public synchronized void onData(int id, String text) {
+        public synchronized void onData(int id, String text, long end) {
             output.append(text);
         }
 
@@ -104,11 +104,15 @@ public class PtyDeviceTest {
         int size = 5 * 1024 * 1024;
         Recorder recorder = new Recorder();
         long start = System.nanoTime();
-        run(recorder, "head -c " + size + " /dev/zero | tr '\\0' x");
+        TerminalSession session = run(recorder, "head -c " + size + " /dev/zero | tr '\\0' x");
 
         assertTrue(recorder.ended.await(60, TimeUnit.SECONDS));
         double seconds = (System.nanoTime() - start) / 1e9;
         assertEquals(size, recorder.output().length());
+        // A page attaching again gets the last 256 KB, and where they end
+        TerminalSession.Recent recent = session.recent();
+        assertEquals(size, recent.end());
+        assertEquals(256 * 1024, recent.text().length());
         android.util.Log.i("PtyDeviceTest", String.format("5 MB through the PTY in %.2f s: %.1f MB/s", seconds, 5 / seconds));
     }
 
