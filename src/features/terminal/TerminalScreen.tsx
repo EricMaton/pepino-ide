@@ -9,6 +9,7 @@ import { cx } from '../../ui/cx';
 import { errorMessage } from '../projects/errors';
 import { resolveInRoot } from '../projects/paths';
 import type { ProjectInfo } from '../projects/projects';
+import { keySequence, TERMINAL_KEYS, withControl } from './keys';
 import styles from './TerminalScreen.module.css';
 import type { TerminalBackend } from './terminal';
 
@@ -92,6 +93,13 @@ function TerminalView({ backend, path, visible }: { backend: TerminalBackend; pa
   const [ended, setEnded] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [generation, setGeneration] = useState(0);
+  // Ctrl from the row of keys (#40): sticky until the next key; the ref is what typing reads
+  const [ctrl, setCtrl] = useState(false);
+  const ctrlHeld = useRef(false);
+  const holdCtrl = (held: boolean) => {
+    ctrlHeld.current = held;
+    setCtrl(held);
+  };
 
   useEffect(() => {
     const element = holder.current;
@@ -130,8 +138,16 @@ function TerminalView({ backend, path, visible }: { backend: TerminalBackend; pa
       term.write(`\r\n\x1b[2m[The shell ended: exit code ${code}]\x1b[0m\r\n`);
       setEnded(code);
     });
-    const typing = term.onData((data) => {
-      if (current.id !== null) void backend.write(current.id, data);
+    const typing = term.onData((typed) => {
+      if (current.id === null) return;
+      let data = typed;
+      // Ctrl held from the row: the key typed now goes as its control code
+      if (ctrlHeld.current) {
+        data = withControl(typed);
+        ctrlHeld.current = false;
+        setCtrl(false);
+      }
+      void backend.write(current.id, data);
     });
 
     (async () => {
@@ -187,6 +203,20 @@ function TerminalView({ backend, path, visible }: { backend: TerminalBackend; pa
     return () => observer.disconnect();
   }, [backend, visible, generation]);
 
+  const press = (id: string) => {
+    const current = view.current;
+    if (id === 'ctrl') {
+      holdCtrl(!ctrlHeld.current);
+      return;
+    }
+    const sequence = keySequence(id, {
+      ctrl: ctrlHeld.current,
+      applicationCursor: current?.term.modes.applicationCursorKeysMode ?? false,
+    });
+    holdCtrl(false);
+    if (current && current.id !== null && sequence) void backend.write(current.id, sequence);
+  };
+
   const restart = () => {
     setEnded(null);
     setError(null);
@@ -196,6 +226,7 @@ function TerminalView({ backend, path, visible }: { backend: TerminalBackend; pa
   return (
     <div className={styles.view}>
       <div ref={holder} className={styles.xterm} onClick={() => view.current?.term.focus()} />
+      <TerminalKeys ctrl={ctrl} onPress={press} />
       {(ended !== null || error) && (
         <div className={cx(styles.ended, error && styles.endedError)} role={error ? 'alert' : 'status'}>
           <span className="caption ellipsis">{error ? `✕ ${error}` : `Exit code ${ended}`}</span>
@@ -204,6 +235,36 @@ function TerminalView({ backend, path, visible }: { backend: TerminalBackend; pa
           </Button>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * The row of keys a phone's keyboard lacks (#40), under the terminal. Keys
+ * never take focus (pointerdown is cancelled), so the keyboard stays open.
+ */
+function TerminalKeys({ ctrl, onPress }: { ctrl: boolean; onPress: (id: string) => void }) {
+  return (
+    <div className={styles.keys} role="toolbar" aria-label="Terminal keys">
+      {TERMINAL_KEYS.map((key) => (
+        <button
+          key={key.id}
+          type="button"
+          className={cx(
+            'body',
+            styles.key,
+            key.label.length > 2 && styles.wideKey,
+            key.id === 'ctrl' && ctrl && styles.held,
+          )}
+          aria-label={key.title}
+          aria-pressed={key.id === 'ctrl' ? ctrl : undefined}
+          title={key.title}
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={() => onPress(key.id)}
+        >
+          {key.label}
+        </button>
+      ))}
     </div>
   );
 }

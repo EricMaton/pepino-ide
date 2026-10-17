@@ -56,3 +56,49 @@
 .endedError {
   color: var(--error);
 }
+
+/* The keys a phone's keyboard lacks (#40): like the editor's row, sliding sideways */
+.keys {
+  flex: none;
+  display: flex;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-top: var(--border);
+  background: var(--surface-variant);
+}
+
+.keys::-webkit-scrollbar {
+  display: none;
+}
+
+.key {
+  flex: none;
+  min-width: 44px;
+  height: var(--touch-target);
+  padding: 0 var(--space-2);
+  border: none;
+  border-right: 1px solid var(--hairline);
+  background: none;
+  color: var(--fg);
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.key:active {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.wideKey {
+  font-size: var(--label-size);
+  letter-spacing: var(--label-tracking);
+}
+
+/* Ctrl held: the next key goes as Ctrl+key */
+.key.held {
+  background: var(--primary);
+  color: var(--on-primary);
+}
