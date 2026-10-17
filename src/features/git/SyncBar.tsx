@@ -32,15 +32,15 @@ export function SyncBar({
   path,
   branch,
   refreshKey,
-  onPulled,
+  onSynced,
 }: {
   /** The repository (the active project). */
   path: string;
   branch: string;
   /** Changes after a commit or a branch switch: the counts are read again. */
   refreshKey: number;
-  /** A pull rewrote files and added commits: changes and history to read again. */
-  onPulled: () => void;
+  /** A pull or a push moved the branch against GitHub: changes, history and what can be undone to read again. */
+  onSynced: () => void;
 }) {
   const { git, github } = useServices();
   const showSnackbar = useSnackbar();
@@ -80,11 +80,12 @@ export function SyncBar({
       } else if (action === 'pull') {
         const after = await git.pull(path, onProgress);
         setState(after);
-        onPulled();
+        onSynced();
         showSnackbar(`Pulled ${commits(before.behind)} from ${before.upstream}`);
       } else {
         const after = await git.push(path, onProgress);
         setState(after);
+        onSynced();
         showSnackbar(action === 'publish' ? `Published ${branch} to GitHub` : `Pushed to ${after.upstream}`);
       }
     } catch (error) {

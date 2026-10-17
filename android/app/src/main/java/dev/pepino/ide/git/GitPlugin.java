@@ -68,6 +68,8 @@ public class GitPlugin extends Plugin {
                 call.reject(e.getMessage(), "NOT_MERGED", e);
             } catch (GitOps.RemoteException e) {
                 call.reject(e.getMessage(), e.code, e);
+            } catch (GitOps.PushedException e) {
+                call.reject(e.getMessage(), "PUSHED", e);
             } catch (GitOps.StaleSelectionException e) {
                 JSObject data = new JSObject();
                 data.put("paths", new JSArray(e.paths));
@@ -179,19 +181,50 @@ public class GitPlugin extends Plugin {
         return json;
     }
 
+    private static JSObject toJson(GitOps.LogEntry entry) {
+        JSObject json = new JSObject();
+        json.put("id", entry.id());
+        json.put("summary", entry.summary());
+        json.put("description", entry.description());
+        json.put("author", entry.author());
+        json.put("email", entry.email());
+        json.put("time", entry.time());
+        return json;
+    }
+
     private static JSArray toJson(List<GitOps.LogEntry> entries) {
         JSArray commits = new JSArray();
-        for (GitOps.LogEntry entry : entries) {
-            JSObject json = new JSObject();
-            json.put("id", entry.id());
-            json.put("summary", entry.summary());
-            json.put("description", entry.description());
-            json.put("author", entry.author());
-            json.put("email", entry.email());
-            json.put("time", entry.time());
-            commits.put(json);
-        }
+        for (GitOps.LogEntry entry : entries) commits.put(toJson(entry));
         return commits;
+    }
+
+    /** The branch's last commit (#140): { last: { commit, onGitHub, merge } }, null before the first. */
+    @PluginMethod
+    public void lastCommit(PluginCall call) {
+        run(call, () -> {
+            GitOps.LastCommit last = GitOps.lastCommit(folder(call));
+            JSObject result = new JSObject();
+            if (last == null) {
+                result.put("last", JSObject.NULL);
+            } else {
+                JSObject json = new JSObject();
+                json.put("commit", toJson(last.commit()));
+                json.put("onGitHub", last.onGitHub());
+                json.put("merge", last.merge());
+                result.put("last", json);
+            }
+            return result;
+        });
+    }
+
+    /** Undoes the branch's last commit (#140): { commit }, the one undone. */
+    @PluginMethod
+    public void undoCommit(PluginCall call) {
+        run(call, () -> {
+            JSObject result = new JSObject();
+            result.put("commit", toJson(GitOps.undoCommit(folder(call))));
+            return result;
+        });
     }
 
     /** The commits behind the sync counts (#35): GitHub's to pull, this branch's to push. */

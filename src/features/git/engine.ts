@@ -57,6 +57,17 @@ export interface LogEntry {
   time: number;
 }
 
+/**
+ * The branch's last commit (#140): whether GitHub has it already, on any of
+ * its branches as of the last fetch (then it can no longer be undone), and
+ * whether it is a merge (never undone either).
+ */
+export interface LastCommit {
+  commit: LogEntry;
+  onGitHub: boolean;
+  merge: boolean;
+}
+
 /** A branch's stashed changes (#139): when they were stashed, and the files. */
 export interface StashInfo {
   branch: string;
@@ -94,10 +105,19 @@ export interface Branch {
  * (NETWORK), a pull would merge both sides' changes into the same lines of
  * [paths] (MERGE_CONFLICT), a push found commits on GitHub this branch does
  * not have (REJECTED). Pulling with uncommitted changes to [paths] in the
- * way is a CONFLICT, as when switching branch.
+ * way is a CONFLICT, as when switching branch. The commit to undo is on
+ * GitHub already (PUSHED, #140).
  */
 export type GitErrorCode =
-  'CONFLICT' | 'NOT_MERGED' | 'STALE' | 'CANCELLED' | 'UNAUTHORIZED' | 'NETWORK' | 'MERGE_CONFLICT' | 'REJECTED';
+  | 'CONFLICT'
+  | 'NOT_MERGED'
+  | 'STALE'
+  | 'CANCELLED'
+  | 'UNAUTHORIZED'
+  | 'NETWORK'
+  | 'MERGE_CONFLICT'
+  | 'REJECTED'
+  | 'PUSHED';
 
 const GIT_ERROR_CODES: readonly GitErrorCode[] = [
   'CONFLICT',
@@ -108,6 +128,7 @@ const GIT_ERROR_CODES: readonly GitErrorCode[] = [
   'NETWORK',
   'MERGE_CONFLICT',
   'REJECTED',
+  'PUSHED',
 ];
 
 /**
@@ -199,6 +220,16 @@ export interface GitEngine {
   restoreStash(path: string): Promise<void>;
   /** Throws the branch's stashed changes away. */
   dropStash(path: string): Promise<void>;
+  /** The current branch's last commit (#140), or null before the first one. */
+  lastCommit(path: string): Promise<LastCommit | null>;
+  /**
+   * GitHub Desktop's Undo: the branch goes back to the commit before its
+   * last one, whose changes are uncommitted again (the files stay as they
+   * are). Undoing the first commit leaves the branch with none. Never a
+   * commit on GitHub (PUSHED) or a merge. Returns the commit undone, for
+   * its message.
+   */
+  undoCommit(path: string): Promise<LogEntry>;
   /** The commits reachable from HEAD, newest first: [limit] after skipping [skip]. None before the first commit. */
   log(path: string, page?: { skip?: number; limit?: number }): Promise<LogEntry[]>;
   /** The files [commit] changed against its first parent (all new in a first commit), sorted by path. */
@@ -287,6 +318,8 @@ interface GitPlugin {
   stashChanges(options: { path: string }): Promise<{ stash: StashInfo; written: string[]; removed: string[] }>;
   restoreStash(options: { path: string }): Promise<{ written: string[]; removed: string[] }>;
   dropStash(options: { path: string }): Promise<void>;
+  lastCommit(options: { path: string }): Promise<{ last: LastCommit | null }>;
+  undoCommit(options: { path: string }): Promise<{ commit: LogEntry }>;
   log(options: { path: string; skip: number; limit: number }): Promise<{ commits: LogEntry[] }>;
   commitChanges(options: { path: string; commit: string }): Promise<{ changes: FileChange[] }>;
   commitDiff(options: { path: string; commit: string; file: string }): Promise<FileDiff>;
@@ -397,6 +430,15 @@ export function createNativeGitEngine(announce: Announce): GitEngine {
       await git.dropStash({ path: project(path) }).catch((error: unknown) => {
         throw gitError(error);
       });
+    },
+    async lastCommit(path) {
+      return (await git.lastCommit({ path: project(path) })).last;
+    },
+    async undoCommit(path) {
+      const undone = await git.undoCommit({ path: project(path) }).catch((error: unknown) => {
+        throw gitError(error);
+      });
+      return undone.commit;
     },
     async log(path, { skip = 0, limit = LOG_PAGE } = {}) {
       return (await git.log({ path: project(path), skip, limit })).commits;
@@ -543,6 +585,12 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
   };
   const writeLog = (folder: string, log: Log) =>
     space.writeTextFile(gitPath(folder, 'pepino-log.json'), JSON.stringify(log));
+
+  /** Whether one of GitHub's branches (origin/… in the log) has commit [id]. */
+  const onGitHub = (log: Log, id: string) =>
+    Object.entries(log).some(
+      ([name, entries]) => name.startsWith('origin/') && entries.some((entry) => entry.id === id),
+    );
 
   /** Stashed changes by branch: each file as stashed (null: deleted), and as the branch had it then. */
   type StashedFiles = {
@@ -806,6 +854,33 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
       const rest = { ...stashes };
       delete rest[branch];
       await writeStashes(folder, rest);
+    },
+
+    async lastCommit(path) {
+      const folder = await repository(path);
+      const [log, branch] = await Promise.all([readLog(folder), currentBranch(folder)]);
+      const last = log[branch]?.[0];
+      if (!last) return null;
+      const { files: _files, ...commit } = last;
+      return { commit, onGitHub: onGitHub(log, last.id), merge: false };
+    },
+
+    async undoCommit(path) {
+      const folder = await repository(path);
+      const [refs, log, branch] = await Promise.all([readRefs(folder), readLog(folder), currentBranch(folder)]);
+      const [last, ...rest] = log[branch] ?? [];
+      if (!last) throw new Error('There is no commit to undo');
+      if (onGitHub(log, last.id)) {
+        throw new GitError('PUSHED', `"${last.summary}" is on GitHub already: undoing it there needs a force push`);
+      }
+      // The files stay as they are: only the branch goes back
+      const nextRefs = { ...refs };
+      if (rest.length > 0) nextRefs[branch] = rest[0].files;
+      else delete nextRefs[branch];
+      await writeRefs(folder, nextRefs);
+      await writeLog(folder, { ...log, [branch]: rest });
+      const { files: _files, ...commit } = last;
+      return commit;
     },
 
     async log(path, { skip = 0, limit = LOG_PAGE } = {}) {

@@ -16,7 +16,7 @@ import { useFolderStack } from '../projects/useFolderStack';
 import { BranchesDialog } from './BranchesDialog';
 import { ChangesView } from './ChangesView';
 import { CloneRepositoryDialog } from './CloneDialog';
-import type { RepoInfo } from './engine';
+import type { LogEntry, RepoInfo } from './engine';
 import styles from './GitScreen.module.css';
 import { HistoryView } from './HistoryView';
 import { GitMark, LocationDialog } from './LocationDialog';
@@ -497,6 +497,13 @@ function GitProject({ project, onOpen }: { project: ProjectInfo; onOpen: (path: 
   const [tab, setTab] = useState<'changes' | 'history'>('changes');
   const [initializing, setInitializing] = useState(false);
   const [tick, setTick] = useState(0);
+  // The commit just undone (#140): its message goes back to Changes
+  const [undone, setUndone] = useState<LogEntry | null>(null);
+  const undoneCommit = (commit: LogEntry) => {
+    setUndone(commit);
+    setTab('changes');
+    setTick((value) => value + 1);
+  };
   // undefined while reading; null when the project is not a repository
   const [repo, setRepo] = useState<RepoInfo | null | undefined>(undefined);
   // `.git` appearing or going away changes the answer
@@ -580,7 +587,7 @@ function GitProject({ project, onOpen }: { project: ProjectInfo; onOpen: (path: 
           path={project.path}
           branch={repo.branch}
           refreshKey={tick}
-          onPulled={() => setTick((value) => value + 1)}
+          onSynced={() => setTick((value) => value + 1)}
         />
       )}
       {repo === undefined ? (
@@ -608,12 +615,15 @@ function GitProject({ project, onOpen }: { project: ProjectInfo; onOpen: (path: 
               path={project.path}
               branch={repo.branch}
               visible={tab === 'changes'}
+              refreshKey={tick}
+              undone={undone}
               onCommitted={() => setTick((value) => value + 1)}
+              onUndone={undoneCommit}
             />
           </div>
           {tab === 'history' && (
             <div className={styles.tabPanel} role="tabpanel">
-              <HistoryView key={repo.branch} path={project.path} />
+              <HistoryView key={repo.branch} path={project.path} onUndone={undoneCommit} />
             </div>
           )}
         </>
