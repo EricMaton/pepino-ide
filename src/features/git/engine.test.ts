@@ -489,3 +489,46 @@ describe('memory git engine: amend (#141)', () => {
     });
   });
 });
+
+describe('memory git engine: revert (#142)', () => {
+  beforeEach(async () => {
+    await git.init('app');
+    await git.setIdentity({ name: 'Pepino', email: 'me@pepino.dev' });
+    await space.writeTextFile('app/a.txt', 'one\n');
+    await space.writeTextFile('app/b.txt', 'bee\n');
+    await git.commit('app', { message: 'first', paths: ['a.txt', 'b.txt'] });
+  });
+
+  it('undoes an earlier commit with a new one, later changes kept', async () => {
+    await space.writeTextFile('app/a.txt', 'two\n');
+    await space.writeTextFile('app/new.txt', 'fresh\n');
+    await git.commit('app', { message: 'change', paths: ['a.txt', 'new.txt'] });
+    const [changed] = await git.log('app');
+    await space.writeTextFile('app/b.txt', 'later\n');
+    await git.commit('app', { message: 'later', paths: ['b.txt'] });
+
+    const result = await git.revert('app', changed.id);
+
+    expect(result.summary).toBe('Revert "change"');
+    const [last] = await git.log('app');
+    expect(last.description).toBe(`This reverts commit ${changed.id}.`);
+    expect(await space.readTextFile('app/a.txt')).toBe('one\n');
+    await expect(space.readTextFile('app/new.txt')).rejects.toThrow();
+    expect(await space.readTextFile('app/b.txt')).toBe('later\n');
+    expect(await git.status('app')).toEqual([]);
+    await expect(git.revert('app', changed.id)).rejects.toThrow(/nothing to revert/);
+  });
+
+  it('changes nothing when later commits or uncommitted changes touch its files', async () => {
+    await space.writeTextFile('app/a.txt', 'two\n');
+    await git.commit('app', { message: 'change', paths: ['a.txt'] });
+    const [changed] = await git.log('app');
+
+    await space.writeTextFile('app/a.txt', 'mine\n');
+    await expect(git.revert('app', changed.id)).rejects.toMatchObject({ code: 'CONFLICT', paths: ['a.txt'] });
+
+    await git.commit('app', { message: 'again', paths: ['a.txt'] });
+    await expect(git.revert('app', changed.id)).rejects.toMatchObject({ code: 'MERGE_CONFLICT', paths: ['a.txt'] });
+    expect(await space.readTextFile('app/a.txt')).toBe('mine\n');
+  });
+});

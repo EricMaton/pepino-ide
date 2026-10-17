@@ -624,7 +624,13 @@ function GitProject({ project, onOpen }: { project: ProjectInfo; onOpen: (path: 
           </div>
           {tab === 'history' && (
             <div className={styles.tabPanel} role="tabpanel">
-              <HistoryView key={repo.branch} path={project.path} onReopened={reopen} />
+              <HistoryView
+                key={repo.branch}
+                path={project.path}
+                refreshKey={tick}
+                onReopened={reopen}
+                onReverted={() => setTick((value) => value + 1)}
+              />
             </div>
           )}
         </>

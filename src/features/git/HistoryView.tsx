@@ -13,13 +13,13 @@ import { KIND_MARKS } from './changeKinds';
 import { DiffView } from './DiffView';
 import { type FileChange, GitError, type LastCommit, LOG_PAGE, type LogEntry, shortId } from './engine';
 import styles from './GitScreen.module.css';
-import { PushedDialog, type Reopened } from './UndoCommit';
+import { PushedDialog, type Reopened, type RevertProblem, RevertProblemDialog } from './UndoCommit';
 
 /** How close to the end of the list (px) the next page starts loading. */
 const LOAD_MORE_MARGIN = 600;
 
 /** The history, a page at a time; [loadMore] reads the next one while there may be more. */
-function useHistory(path: string) {
+function useHistory(path: string, refreshKey: number) {
   const { git } = useServices();
   const showSnackbar = useSnackbar();
   const [commits, setCommits] = useState<LogEntry[] | null>(null);
@@ -44,7 +44,7 @@ function useHistory(path: string) {
     return () => {
       active = false;
     };
-  }, [git, path]);
+  }, [git, path, refreshKey]);
 
   const loadMore = () => {
     if (!commits || !more || loading) return;
@@ -69,8 +69,20 @@ function useHistory(path: string) {
  * GitHub Desktop's History: the commits of the current branch, newest first,
  * with who made each and when. Tapping one shows what it changed.
  */
-export function HistoryView({ path, onReopened }: { path: string; onReopened: (reopened: Reopened) => void }) {
-  const { commits, error, more, at, loadMore } = useHistory(path);
+export function HistoryView({
+  path,
+  refreshKey,
+  onReopened,
+  onReverted,
+}: {
+  path: string;
+  /** Changes after a commit, a revert, a pull or a push: the history is read again. */
+  refreshKey: number;
+  onReopened: (reopened: Reopened) => void;
+  /** A revert made a new commit (#142). */
+  onReverted: () => void;
+}) {
+  const { commits, error, more, at, loadMore } = useHistory(path, refreshKey);
   const [opened, setOpened] = useState<LogEntry | null>(null);
   const open = (commit: LogEntry) => navigate('forward', () => setOpened(commit));
   const close = useCallback(() => navigate('back', () => setOpened(null)), []);
@@ -119,6 +131,10 @@ export function HistoryView({ path, onReopened }: { path: string; onReopened: (r
           newest={commits?.[0]?.id === opened.id}
           onClose={close}
           onReopened={onReopened}
+          onReverted={() => {
+            close();
+            onReverted();
+          }}
         />
       )}
     </div>
@@ -127,8 +143,8 @@ export function HistoryView({ path, onReopened }: { path: string; onReopened: (r
 
 /**
  * One commit: its whole message, who and when, and the files it changed,
- * each opening its diff. The branch's newest one can be undone (#140) or
- * amended (#141).
+ * each opening its diff. Any can be reverted (#142); the branch's newest
+ * one can also be undone (#140) or amended (#141).
  */
 function CommitView({
   path,
@@ -136,12 +152,14 @@ function CommitView({
   newest,
   onClose,
   onReopened,
+  onReverted,
 }: {
   path: string;
   commit: LogEntry;
   newest: boolean;
   onClose: () => void;
   onReopened: (reopened: Reopened) => void;
+  onReverted: () => void;
 }) {
   const { git } = useServices();
   const showSnackbar = useSnackbar();
@@ -197,6 +215,24 @@ function CommitView({
     }
   };
 
+  const [reverting, setReverting] = useState(false);
+  const [revertProblem, setRevertProblem] = useState<RevertProblem | null>(null);
+  const revert = async () => {
+    setPushed(null);
+    setReverting(true);
+    try {
+      const made = await git.revert(path, commit.id);
+      showSnackbar(`Reverted “${commit.summary}” with ${made.id}`);
+      onReverted();
+    } catch (error) {
+      if (error instanceof GitError && (error.code === 'MERGE_CONFLICT' || error.code === 'CONFLICT')) {
+        setRevertProblem({ clash: error.code === 'MERGE_CONFLICT', paths: error.paths });
+      } else showSnackbar(`Error: ${errorMessage(error)}`);
+      setReverting(false);
+    }
+  };
+  const busy = undoing || reverting;
+
   const count = changes?.length ?? 0;
 
   return (
@@ -224,29 +260,41 @@ function CommitView({
           </p>
           <p className={cx('caption', 'muted', styles.commitHash)}>{commit.id}</p>
         </div>
-        {last && !last.merge && (
+        {!last?.merge && (
           <div className={styles.undoCommit}>
-            <div className={styles.undoActions}>
-              <Button
-                variant="outlined"
-                disabled={undoing}
-                onClick={() => (last.onGitHub ? setPushed('amend') : onReopened({ commit, amend: true }))}
-              >
-                Amend commit
-              </Button>
-              <Button
-                variant="outlined"
-                className={cx(undoing && 'cursor')}
-                disabled={undoing}
-                onClick={() => void undo()}
-              >
-                {undoing ? 'Undoing' : 'Undo commit'}
-              </Button>
-            </div>
+            {last && (
+              <div className={styles.undoActions}>
+                <Button
+                  variant="outlined"
+                  disabled={busy}
+                  onClick={() => (last.onGitHub ? setPushed('amend') : onReopened({ commit, amend: true }))}
+                >
+                  Amend commit
+                </Button>
+                <Button
+                  variant="outlined"
+                  className={cx(undoing && 'cursor')}
+                  disabled={busy}
+                  onClick={() => void undo()}
+                >
+                  {undoing ? 'Undoing' : 'Undo commit'}
+                </Button>
+              </div>
+            )}
+            <Button
+              variant="outlined"
+              className={cx(reverting && 'cursor')}
+              disabled={busy}
+              onClick={() => void revert()}
+            >
+              {reverting ? 'Reverting' : 'Revert commit'}
+            </Button>
             <p className="caption muted">
-              {last.onGitHub
-                ? 'Already on GitHub: it can no longer be amended or undone here.'
-                : 'Amend changes its message or adds changes to it. Undo puts its changes back in Changes, uncommitted.'}
+              {last && !last.onGitHub
+                ? 'Amend changes its message or adds changes to it. Undo puts its changes back in Changes, uncommitted. Revert adds a new commit that undoes it.'
+                : last
+                  ? 'Already on GitHub: it can no longer be amended or undone here. Revert adds a new commit that undoes it, which is safe.'
+                  : 'Revert adds a new commit that undoes its changes, safe even when GitHub has it.'}
             </p>
           </div>
         )}
@@ -283,7 +331,17 @@ function CommitView({
         )}
       </div>
       {file !== null && <DiffView path={path} file={file} commit={commit.id} onClose={closeFile} />}
-      {pushed && <PushedDialog commit={commit} amend={pushed === 'amend'} onClose={() => setPushed(null)} />}
+      {pushed && (
+        <PushedDialog
+          commit={commit}
+          amend={pushed === 'amend'}
+          onClose={() => setPushed(null)}
+          onRevert={() => void revert()}
+        />
+      )}
+      {revertProblem && (
+        <RevertProblemDialog commit={commit} problem={revertProblem} onClose={() => setRevertProblem(null)} />
+      )}
     </div>
   );
 }

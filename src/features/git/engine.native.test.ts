@@ -37,6 +37,7 @@ const plugin = vi.hoisted(() => ({
   dropStash: vi.fn(),
   lastCommit: vi.fn(),
   undoCommit: vi.fn(),
+  revert: vi.fn(),
   fetch: vi.fn(),
   pull: vi.fn(),
   push: vi.fn(),
@@ -263,5 +264,22 @@ describe('native git engine: undo (#140)', () => {
 
     plugin.undoCommit.mockRejectedValueOnce({ code: 'PUSHED', message: 'on GitHub' });
     await expect(git.undoCommit('work/app')).rejects.toMatchObject({ code: 'PUSHED' });
+  });
+});
+
+describe('native git engine: revert (#142)', () => {
+  it('reverts through the plugin, announcing the files; a clash as MERGE_CONFLICT', async () => {
+    plugin.revert.mockResolvedValue({
+      commit: { id: 'def', summary: 'Revert "x"' },
+      written: ['a.txt'],
+      removed: ['n.txt'],
+    });
+    expect(await git.revert('work/app', 'abc')).toEqual({ id: 'def', summary: 'Revert "x"' });
+    expect(plugin.revert).toHaveBeenLastCalledWith({ path: 'work/app', commit: 'abc' });
+    expect(announce).toHaveBeenCalledWith('fs.written', { path: 'work/app/a.txt' });
+    expect(announce).toHaveBeenCalledWith('fs.deleted', { path: 'work/app/n.txt' });
+
+    plugin.revert.mockRejectedValueOnce({ code: 'MERGE_CONFLICT', message: 'clash', data: { paths: ['a.txt'] } });
+    await expect(git.revert('work/app', 'abc')).rejects.toMatchObject({ code: 'MERGE_CONFLICT', paths: ['a.txt'] });
   });
 });
