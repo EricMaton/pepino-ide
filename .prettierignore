@@ -4,3 +4,5 @@ ios
 node_modules
 package-lock.json
 docs
+# Bundles js-beautify, minified as published
+src/plugins/formatter/main.js

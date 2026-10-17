@@ -53,6 +53,7 @@ plugin.onActivate(api => {
 | `plugin.onActivate(api => …)` / `plugin.onDeactivate(() => …)` | — | Al activar / desactivar el plugin |
 | `api.commands.register(id, fn)` | — | El comando sale en la paleta como `Plugin: Título` (id de la app: `<plugin id>.<id>`); tiene que estar en `contributes.commands` |
 | `api.commands.execute(id)` | — | Un comando suyo por su id corto, o cualquier otro por el id de la app |
+| `api.editor.getPath()` | `editor.read` | La ruta del archivo abierto (`proyecto/src/a.js`), p. ej. para saber su lenguaje (#51) |
 | `api.editor.getText()` | `editor.read` | El texto del archivo abierto en el editor |
 | `api.editor.setText(text)` | `editor.write` | Lo sustituye entero (una sola edición, deshacible) |
 | `api.editor.onSave(fn)` / `onOpen(fn)` / `onChange(fn)` | — | Reciben `{ path }`; `onChange`, una vez por pausa al escribir (300 ms) |

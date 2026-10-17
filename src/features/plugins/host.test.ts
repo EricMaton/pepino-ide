@@ -101,14 +101,14 @@ describe('plugin host (#48)', () => {
         `plugin.onActivate((api) => {
           api.commands.register('run', async () => {
             const text = await api.editor.getText();
-            await api.editor.setText(text.toUpperCase());
+            await api.editor.setText((await api.editor.getPath()) + ': ' + text.toUpperCase());
           });
         });`,
         ['editor.read', 'editor.write'],
       ),
     );
     await reading.dispatcher.execute('dev.test.tool.run');
-    expect(reading.text()).toBe('HELLO');
+    expect(reading.text()).toBe('app/a.ts: HELLO');
 
     const blocked = setUp();
     await blocked.host.start(

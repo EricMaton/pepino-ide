@@ -206,6 +206,7 @@ export class PluginHost {
       return current;
     };
     return {
+      'editor.getPath': { permission: 'editor.read', run: () => editor().path },
       'editor.getText': { permission: 'editor.read', run: () => editor().getText() },
       'editor.setText': {
         permission: 'editor.write',
