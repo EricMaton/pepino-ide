@@ -1,0 +1,26 @@
+# Pepino's terminal (#38): what an interactive shell runs first, in place of
+# Android's /system/etc/mkshrc. The app copies it to $ENV on every start.
+
+set +o nohup
+
+# The prompt: the folder within the projects ("app/src"), green, and the last
+# command's exit code in red when it failed. \001 marks what takes no room
+# (the colours are set here: $'...' is not read inside the prompt's ${| }).
+_pepino_red=$'\001\e[31m\001'
+_pepino_green=$'\001\e[32m\001'
+_pepino_reset=$'\001\e[0m\001'
+PS1=$'\001\r''${|
+	local e=$? p=${PWD:-?}
+	[[ $p = "$PROJECTS" ]] && p="~projects"
+	[[ $p = "$PROJECTS"/* ]] && p=${p#"$PROJECTS"/}
+	[[ $p = "$HOME" ]] && p="~"
+	(( e )) && REPLY+=$_pepino_red"$e|"$_pepino_reset
+	REPLY+=$_pepino_green$p$_pepino_reset
+	return $e
+} $ '
+
+alias ls='ls --color=auto'
+alias ll='ls -la --color=auto'
+alias grep='grep --color=auto'
+# Back to the projects' folder from anywhere
+alias projects='cd "$PROJECTS"'
