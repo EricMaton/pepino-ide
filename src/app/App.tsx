@@ -15,7 +15,7 @@ import { NoFileOpen } from '../features/workspace/WorkspaceDrawer';
 import { dispatchBack, useBackHandler } from '../ui/back';
 import { cx } from '../ui/cx';
 import { Button } from '../ui/components';
-import { BranchIcon, CloseIcon, FolderIcon, ProjectIcon, SlidersIcon } from '../ui/icons';
+import { BranchIcon, CloseIcon, FolderIcon, ProjectIcon, PromptIcon, SlidersIcon } from '../ui/icons';
 import { useKeyboardVisible } from '../ui/keyboard';
 import { navigate } from '../ui/motion';
 import { useSnackbar } from '../ui/useSnackbar';
@@ -32,6 +32,8 @@ type SpaceState = 'creating' | 'ready' | 'error';
 
 // The editor and its grammars load on first use, keeping them out of the start-up bundle.
 const EditorScreen = lazy(() => import('../features/editor/EditorScreen'));
+// xterm.js loads with the first visit to TERMINAL (#39)
+const TerminalScreen = lazy(() => import('../features/terminal/TerminalScreen'));
 
 interface OpenFile {
   /** One per editing session: a rename changes [path] but keeps the same editor. */
@@ -45,6 +47,7 @@ interface OpenFile {
 const NAV_ICONS: Record<AppDestination, typeof FolderIcon> = {
   projects: FolderIcon,
   git: BranchIcon,
+  terminal: PromptIcon,
   settings: SlidersIcon,
 };
 
@@ -63,6 +66,9 @@ export function App() {
   const { registry, events, projectSpace, session, workspace } = useServices();
   const showSnackbar = useSnackbar();
   const [destination, setDestination] = useState<AppDestination>(HOME);
+  // TERMINAL stays mounted from its first visit, hidden while other tabs show: its scrollback stays (#39)
+  const [terminalOpened, setTerminalOpened] = useState(false);
+  if (destination === 'terminal' && !terminalOpened) setTerminalOpened(true);
   const [space, setSpace] = useState<SpaceState>('creating');
   const [project, setProject] = useState<ProjectInfo | null>(null);
   // PROJECTS shows the active project's workspace, or the explorer.
@@ -425,7 +431,7 @@ export function App() {
         <main className={styles.content}>
           {destination === 'git' && state === 'ready' ? (
             <GitScreen project={project} onOpen={openProject} />
-          ) : destination === 'settings' ? (
+          ) : destination === 'terminal' ? null : destination === 'settings' ? (
             <SettingsScreen subtitle={BRAND} />
           ) : current.teaser ? (
             <ComingSoon label={current.label} {...current.teaser} />
@@ -451,6 +457,9 @@ export function App() {
             <SpaceStatus state={state} />
           )}
           <Suspense fallback={<span hidden data-loading />}>
+            {terminalOpened && (
+              <TerminalScreen project={state === 'ready' ? project : null} visible={destination === 'terminal'} />
+            )}
             {tabEditor && (
               <EditorScreen
                 key={tabEditor.id}

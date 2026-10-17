@@ -1,4 +1,4 @@
-export type AppDestination = 'projects' | 'git' | 'settings';
+export type AppDestination = 'projects' | 'git' | 'terminal' | 'settings';
 
 export interface DestinationInfo {
   id: AppDestination;
@@ -14,6 +14,7 @@ export const DESTINATIONS: readonly DestinationInfo[] = [
     label: 'GIT',
     teaser: { sprint: 'SPRINTS 3–4', description: 'Commits, branches, diffs and GitHub sync, all by touch.' },
   },
+  { id: 'terminal', label: 'TERMINAL' },
   { id: 'settings', label: 'SETTINGS' },
 ];
 

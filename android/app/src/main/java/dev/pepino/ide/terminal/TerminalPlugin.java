@@ -32,10 +32,11 @@ public class TerminalPlugin extends Plugin {
 
     private final TerminalSession.Listener listener = new TerminalSession.Listener() {
         @Override
-        public void onData(int id, String text) {
+        public void onData(int id, String text, long end) {
             JSObject event = new JSObject();
             event.put("id", id);
             event.put("data", text);
+            event.put("end", end);
             notifyListeners("data", event);
         }
 
@@ -115,18 +116,39 @@ public class TerminalPlugin extends Plugin {
         call.resolve();
     }
 
-    /** The running terminals: { sessions: [{ id, pid }] }. */
+    /** The running terminals: { sessions: [{ id, pid, cwd }] }, cwd relative to the projects' folder. */
     @PluginMethod
     public void sessions(PluginCall call) {
+        String projects;
+        try {
+            projects = ShellEnvironment.projects(getContext()).getCanonicalPath();
+        } catch (java.io.IOException e) {
+            call.reject(e.getMessage(), e);
+            return;
+        }
         JSArray list = new JSArray();
         for (TerminalSession session : sessions.values()) {
             JSObject json = new JSObject();
             json.put("id", session.id);
             json.put("pid", session.pid);
+            String cwd = session.cwd.startsWith(projects + "/") ? session.cwd.substring(projects.length() + 1) : "";
+            json.put("cwd", cwd);
             list.put(json);
         }
         JSObject result = new JSObject();
         result.put("sessions", list);
+        call.resolve(result);
+    }
+
+    /** What terminal `id` printed last, for a page attaching to it again: { data, end }. */
+    @PluginMethod
+    public void history(PluginCall call) {
+        TerminalSession session = session(call);
+        if (session == null) return;
+        TerminalSession.Recent recent = session.recent();
+        JSObject result = new JSObject();
+        result.put("data", recent.text());
+        result.put("end", recent.end());
         call.resolve(result);
     }
 
