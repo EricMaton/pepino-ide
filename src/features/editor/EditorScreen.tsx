@@ -25,7 +25,8 @@ import { languageFor } from './languages';
 import { detectLineSeparator, type LineSeparator, serialize } from './text';
 import { DEFAULT_TOOLBAR } from './toolbar';
 import { VersionsView } from './VersionsView';
-import { clampFontSize, DEFAULT_FONT_SIZE, FONT_SIZE_KEY, ZOOM_STEP } from './zoom';
+import { useEditorSettings } from './useEditorSettings';
+import { DEFAULT_FONT_SIZE, ZOOM_STEP } from './zoom';
 
 /** Quiet time after the last keystroke before autosaving. */
 const AUTOSAVE_DELAY_MS = 1000;
@@ -80,7 +81,7 @@ export default function EditorScreen({
   initialViewState,
   onViewState,
 }: EditorScreenProps) {
-  const { projectSpace, registry, dispatcher, events, workspace, preferences, fileHistory } = useServices();
+  const { projectSpace, registry, dispatcher, events, workspace, editorSettings, fileHistory } = useServices();
   const showSnackbar = useSnackbar();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('saved');
@@ -97,29 +98,13 @@ export default function EditorScreen({
     [],
   );
   const files = useFileSource();
-  const [fontSize, setFontSize] = useState(DEFAULT_FONT_SIZE);
-
-  // The editor font size is a user preference shared by every file (pinch or Zoom commands).
-  useEffect(() => {
-    let active = true;
-    preferences
-      .get(FONT_SIZE_KEY)
-      .then((saved) => {
-        if (active && saved !== null) setFontSize(clampFontSize(Number(saved)));
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, [preferences]);
-
+  // The editor's settings (#45), shared by every file: the font size changes by pinching, the Zoom
+  // commands or SETTINGS; tabs, wrap and line numbers in SETTINGS
+  const settings = useEditorSettings();
+  const { fontSize } = settings;
   const changeFontSize = useCallback(
-    (size: number, persist = true) => {
-      const next = clampFontSize(size);
-      setFontSize(next);
-      if (persist) preferences.set(FONT_SIZE_KEY, String(next)).catch(() => undefined);
-    },
-    [preferences],
+    (size: number, persist = true) => void editorSettings.set({ fontSize: size }, persist).catch(() => undefined),
+    [editorSettings],
   );
   const inWorkspace = tabs !== null;
   const doc = useRef<Text | null>(null);
@@ -480,6 +465,7 @@ export default function EditorScreen({
             initialViewState={initialViewState}
             onViewState={queueViewState}
             fontSize={fontSize}
+            settings={settings}
             onFontSize={(size, final) => changeFontSize(size, final)}
           />
           <EditorToolbar keys={DEFAULT_TOOLBAR} onRun={runKey} />

@@ -6,7 +6,7 @@ import { Button, Dialog } from '../../ui/components';
 import { cx } from '../../ui/cx';
 import { BackIcon, MoreIcon } from '../../ui/icons';
 import { useSnackbar } from '../../ui/useSnackbar';
-import { clampFontSize, DEFAULT_FONT_SIZE, FONT_SIZE_KEY } from '../editor/zoom';
+import { useEditorSettings } from '../editor/useEditorSettings';
 import { errorMessage } from '../projects/errors';
 import { basename, joinPath, parentPath } from '../projects/paths';
 import { changedLines, type DiffLine, type FileDiff, type Hunk, type LineExclusion } from './diff';
@@ -65,21 +65,9 @@ function useDiff(path: string, file: string, commit?: string): { diff: FileDiff 
   return result;
 }
 
-/** The editor's font size (pinch or Zoom there): diffs read at the size the user reads code at. */
+/** The editor's font size (pinch, Zoom or SETTINGS, #45): diffs read at the size the user reads code at. */
 function useCodeFontSize(): number {
-  const { preferences } = useServices();
-  const [size, setSize] = useState(DEFAULT_FONT_SIZE);
-  useEffect(() => {
-    let active = true;
-    preferences
-      .get(FONT_SIZE_KEY)
-      .then((saved) => active && saved !== null && setSize(clampFontSize(Number(saved))))
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, [preferences]);
-  return size;
+  return useEditorSettings().fontSize;
 }
 
 const MARKS: Record<DiffLine['kind'], string> = { added: '+', removed: '−', context: ' ' };

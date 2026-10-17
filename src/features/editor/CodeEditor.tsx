@@ -14,6 +14,7 @@ import {
 import { useEffect, useRef } from 'react';
 import type { EditorViewState } from '../../app/session';
 import { languageFor } from './languages';
+import { type EditorSettings, indentOf } from './editorSettings';
 import { pinchFontSize } from './zoom';
 import { pepinoEditorTheme, pepinoHighlight } from './theme';
 
@@ -30,6 +31,8 @@ interface CodeEditorProps {
   onViewState?: (state: EditorViewState) => void;
   /** Font size in px; pinching with two fingers proposes a new one through [onFontSize]. */
   fontSize: number;
+  /** Tabs, wrap and line numbers (#45); a change applies to the open file at once. */
+  settings: Pick<EditorSettings, 'tabSize' | 'insertSpaces' | 'wordWrap' | 'lineNumbers'>;
   /** [final] is true when the pinch ends (persist then). */
   onFontSize?: (size: number, final: boolean) => void;
   className?: string;
@@ -48,6 +51,7 @@ export function CodeEditor({
   initialViewState,
   onViewState,
   fontSize,
+  settings,
   onFontSize,
   className,
 }: CodeEditorProps) {
@@ -55,6 +59,9 @@ export function CodeEditor({
   const viewRef = useRef<EditorView | null>(null);
   const language = useRef(new Compartment());
   const fontTheme = useRef(new Compartment());
+  const indentation = useRef(new Compartment());
+  const wrapping = useRef(new Compartment());
+  const gutter = useRef(new Compartment());
   const callbacks = useRef({ onChange, onReady, onViewState, onFontSize, fontSize });
   useEffect(() => {
     callbacks.current = { onChange, onReady, onViewState, onFontSize, fontSize };
@@ -70,8 +77,7 @@ export function CodeEditor({
           ? EditorSelection.single(clamp(initialViewState.anchor), clamp(initialViewState.head))
           : undefined,
         extensions: [
-          lineNumbers(),
-          highlightActiveLineGutter(),
+          gutter.current.of(gutterFor(settings.lineNumbers)),
           highlightActiveLine(),
           history(),
           drawSelection(),
@@ -81,9 +87,8 @@ export function CodeEditor({
           highlightSelectionMatches(),
           syntaxHighlighting(pepinoHighlight),
           pepinoEditorTheme,
-          EditorView.lineWrapping,
-          EditorState.tabSize.of(2),
-          indentUnit.of('  '),
+          wrapping.current.of(settings.wordWrap ? EditorView.lineWrapping : []),
+          indentation.current.of(indentationFor(settings)),
           // Mobile keyboards: no auto-capitalisation or autocorrect inside code.
           EditorView.contentAttributes.of({ autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false' }),
           keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
@@ -172,7 +177,28 @@ export function CodeEditor({
     viewRef.current?.dispatch({ effects: fontTheme.current.reconfigure(fontSizeTheme(fontSize)) });
   }, [fontSize]);
 
+  // The settings (#45) apply to the open file as they change
+  const { tabSize, insertSpaces, wordWrap, lineNumbers: numbered } = settings;
+  useEffect(() => {
+    viewRef.current?.dispatch({
+      effects: [
+        indentation.current.reconfigure(indentationFor({ tabSize, insertSpaces })),
+        wrapping.current.reconfigure(wordWrap ? EditorView.lineWrapping : []),
+        gutter.current.reconfigure(gutterFor(numbered)),
+      ],
+    });
+  }, [tabSize, insertSpaces, wordWrap, numbered]);
+
   return <div ref={hostRef} className={className} />;
+}
+
+/** How wide a tab shows, and what Tab (and the toolbar's TAB) inserts. */
+function indentationFor(settings: Pick<EditorSettings, 'tabSize' | 'insertSpaces'>): Extension {
+  return [EditorState.tabSize.of(settings.tabSize), indentUnit.of(indentOf(settings))];
+}
+
+function gutterFor(lineNumbered: boolean): Extension {
+  return lineNumbered ? [lineNumbers(), highlightActiveLineGutter()] : [];
 }
 
 function fontSizeTheme(size: number) {
