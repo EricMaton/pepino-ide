@@ -11,9 +11,8 @@ _pepino_green=$'\001\e[32m\001'
 _pepino_reset=$'\001\e[0m\001'
 PS1=$'\001\r''${|
 	local e=$? p=${PWD:-?}
-	[[ $p = "$PROJECTS" ]] && p="~projects"
+	[[ $p = "$PROJECTS" ]] && p="~"
 	[[ $p = "$PROJECTS"/* ]] && p=${p#"$PROJECTS"/}
-	[[ $p = "$HOME" ]] && p="~"
 	(( e )) && REPLY+=$_pepino_red"$e|"$_pepino_reset
 	REPLY+=$_pepino_green$p$_pepino_reset
 	return $e
@@ -22,8 +21,51 @@ PS1=$'\001\r''${|
 alias ls='ls --color=auto'
 alias ll='ls -la --color=auto'
 alias grep='grep --color=auto'
-# Back to the projects' folder from anywhere
+# Back to the projects' folder from anywhere ($HOME is it too: cd, cd ~)
 alias projects='cd "$PROJECTS"'
+
+# The terminal stays in the projects (#161). Android can't jail a process in
+# a folder, but outside the projects there is only Pepino's own data (the
+# GitHub sign-in, settings): cd does not leave them, and rm and mv touch
+# nothing outside them, nor the projects' folder itself.
+
+# Whether every path given resolves inside the projects' folder (not to it)
+_pepino_inside() {
+	local path real
+	for path in "$@"; do
+		real=$(realpath -m -- "$path" 2>/dev/null) || real=$path
+		[[ $real = "$PROJECTS"/* ]] || return 1
+	done
+}
+
+cd() {
+	builtin cd "$@" || return
+	if [[ $PWD != "$PROJECTS" && $PWD != "$PROJECTS"/* ]]; then
+		print -u2 "pepino: the terminal stays inside the projects"
+		builtin cd "$OLDPWD" 2>/dev/null || builtin cd "$PROJECTS"
+		return 1
+	fi
+}
+
+# rm and mv: their file arguments (options aside) must all be in the projects
+_pepino_guard() {
+	local tool=$1 arg files=1
+	shift
+	for arg in "$@"; do
+		if (( files )) && [[ $arg = -- ]]; then
+			files=2
+			continue
+		fi
+		[[ $files = 1 && $arg = -* ]] && continue
+		if ! _pepino_inside "$arg"; then
+			print -u2 "$tool: $arg: outside the projects, Pepino keeps it"
+			return 1
+		fi
+	done
+	command "$tool" "$@"
+}
+rm() { _pepino_guard rm "$@"; }
+mv() { _pepino_guard mv "$@"; }
 
 # git (#41): Android has none; this is the JGit the app ships, through
 # app_process as Android's own am and pm run (see dev.pepino.ide.cli.GitCli)

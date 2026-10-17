@@ -100,7 +100,9 @@ public final class GitCli {
 
     public static void main(String[] args) throws java.io.UnsupportedEncodingException {
         // JGit reads the git config from the home folder: the app's, as the GIT tab's
-        String home = System.getenv("HOME");
+        // (the shell's HOME is the projects, #161; the app's is PEPINO_HOME)
+        String home = System.getenv("PEPINO_HOME");
+        if (home == null) home = System.getenv("HOME");
         if (home != null) System.setProperty("user.home", home);
         // (PrintStream with a Charset is API 33; minSdk is 26)
         PrintStream out = new PrintStream(new java.io.FileOutputStream(FileDescriptor.out), true, "UTF-8");

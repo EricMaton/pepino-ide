@@ -26,7 +26,11 @@ export interface TerminalHistory {
 export interface TerminalBackend {
   /** Whether shells can be started here: false on iOS and the web. */
   readonly available: boolean;
-  /** Starts a shell in project folder [cwd] (relative to the space root), [cols] x [rows]. Returns its id. */
+  /**
+   * Starts a shell in project folder [cwd] (relative to the space root; ''
+   * for the space itself, when no project is open), [cols] x [rows].
+   * Returns its id.
+   */
   spawn(options: { cwd: string; cols: number; rows: number }): Promise<number>;
   /** Types [data] into shell [id]: text, control characters included ("\u0003" is Ctrl+C). */
   write(id: number, data: string): Promise<void>;
@@ -81,8 +85,9 @@ export function createNativeTerminal(): TerminalBackend {
   return {
     available: true,
     async spawn({ cwd, cols, rows }) {
-      if (!canBeProject(cwd)) throw new ProjectSpaceError('InvalidName', 'Open a project to start a terminal in');
-      return (await plugin.spawn({ cwd: resolveInRoot(cwd), cols, rows })).id;
+      const folder = resolveInRoot(cwd);
+      if (folder !== '' && !canBeProject(folder)) throw new ProjectSpaceError('InvalidName', `Not a project: ${cwd}`);
+      return (await plugin.spawn({ cwd: folder, cols, rows })).id;
     },
     write: (id, data) => plugin.write({ id, data }),
     resize: (id, cols, rows) => plugin.resize({ id, cols, rows }),
