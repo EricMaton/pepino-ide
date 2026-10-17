@@ -238,4 +238,40 @@ public class GitSyncTest {
         assertThrows(IllegalStateException.class, () -> GitOps.pull(mine, null, QUIET, null));
         assertEquals("one\ntwo\nTHREE\n", read(mine, "a.txt"));
     }
+
+    @Test
+    public void theLastFetchIsTheCloneOrTheLatestFetchEvenWhenItFoundNothing() throws Exception {
+        File marker = new File(mine, ".git/pepino-fetched");
+        long cloned = GitOps.lastFetched(mine);
+        assertTrue(cloned > 0);
+        assertTrue(marker.setLastModified(cloned - 60_000)); // a minute ago
+
+        GitOps.fetch(mine, null, QUIET); // nothing new on GitHub
+
+        assertTrue(GitOps.lastFetched(mine) > cloned - 60_000);
+        File local = new File(mine.getParentFile(), "local");
+        assertTrue(local.mkdirs());
+        GitOps.init(local);
+        assertEquals(0, GitOps.lastFetched(local));
+    }
+
+    @Test
+    public void syncCommitsAreTheOnesBehindTheCounts() throws Exception {
+        assertEquals(new GitOps.SyncCommits(List.of(), List.of()), GitOps.syncCommits(mine, 100));
+        matePushes("b.txt", "bee\nbuzz\n");
+        commit("a.txt", "one\nTWO\nthree\n");
+        commit("c.txt", "sea\n");
+        GitOps.fetch(mine, null, QUIET);
+
+        GitOps.SyncCommits found = GitOps.syncCommits(mine, 100);
+
+        assertEquals(List.of("Mate edits b.txt"), found.toPull().stream().map(GitOps.LogEntry::summary).toList());
+        assertEquals("Mate", found.toPull().get(0).author());
+        assertEquals(List.of("Edit c.txt", "Edit a.txt"), found.toPush().stream().map(GitOps.LogEntry::summary).toList());
+        assertEquals(1, GitOps.syncCommits(mine, 1).toPush().size());
+
+        // A branch not on GitHub yet has nothing to compare with
+        GitOps.createBranch(mine, "feature");
+        assertEquals(new GitOps.SyncCommits(List.of(), List.of()), GitOps.syncCommits(mine, 100));
+    }
 }

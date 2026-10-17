@@ -106,15 +106,26 @@ const GIT_ERROR_CODES: readonly GitErrorCode[] = [
 /**
  * Where the current branch stands against GitHub's, as of the last fetch:
  * whether the repository has GitHub as its origin ([remote]), the branch it
- * follows there ("origin/main"; null when it is not on GitHub yet), and how
- * many commits each side has that the other does not.
+ * follows there ("origin/main"; null when it is not on GitHub yet), how
+ * many commits each side has that the other does not, and when that fetch
+ * was ([lastFetched], in millis since the epoch; null when never).
  */
 export interface SyncState {
   remote: boolean;
   upstream: string | null;
   ahead: number;
   behind: number;
+  lastFetched: number | null;
 }
+
+/** The commits behind [SyncState]'s counts (#35), newest first: GitHub's to pull, and the branch's to push. */
+export interface SyncCommits {
+  toPull: LogEntry[];
+  toPush: LogEntry[];
+}
+
+/** How many of each side [GitEngine.syncCommits] lists; the counts say how many more. */
+export const SYNC_COMMITS = 100;
 
 /** How a clone, fetch, pull or push goes: the step git is on ("Receiving objects"…), and how far; [total] is 0 when unknown. */
 export interface RemoteProgress {
@@ -203,6 +214,8 @@ export interface GitEngine {
   sync(path: string): Promise<SyncState>;
   /** The URL of the repository's origin (GitHub's, for a clone), or null. */
   originUrl(path: string): Promise<string | null>;
+  /** The commits to pull and to push, as of the last fetch (no network); none for a branch not on GitHub. */
+  syncCommits(path: string): Promise<SyncCommits>;
   /** Brings GitHub's branches up to date, touching no local branch or file. */
   fetch(path: string, onProgress?: (progress: RemoteProgress) => void): Promise<SyncState>;
   /**
@@ -246,6 +259,7 @@ interface GitPlugin {
   clone(options: { path: string; url: string }): Promise<RepoInfo>;
   cancelRemote(): Promise<void>;
   sync(options: { path: string }): Promise<SyncState>;
+  syncCommits(options: { path: string; limit: number }): Promise<SyncCommits>;
   originUrl(options: { path: string }): Promise<{ url: string | null }>;
   fetch(options: { path: string }): Promise<SyncState>;
   pull(options: { path: string }): Promise<{ state: SyncState; written: string[]; removed: string[] }>;
@@ -364,6 +378,9 @@ export function createNativeGitEngine(announce: Announce): GitEngine {
     },
     async originUrl(path) {
       return (await git.originUrl({ path: project(path) })).url;
+    },
+    syncCommits(path) {
+      return git.syncCommits({ path: project(path), limit: SYNC_COMMITS });
     },
     fetch(path, onProgress) {
       const folder = project(path);
@@ -779,6 +796,7 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
       const develop: Snapshot = { ...files, 'CHANGELOG.md': '# Changelog\n\n- Work in progress\n' };
       await writeRemotes(folder, { [DEFAULT_BRANCH]: files, develop });
       await space.writeTextFile(gitPath(folder, 'pepino-origin'), url);
+      await space.writeTextFile(gitPath(folder, 'pepino-last-fetch'), String(Date.now()));
       const ahead = {
         ...entry,
         id: hashOf(`${url}:develop`).padStart(8, '0').repeat(5),
@@ -803,6 +821,23 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
     async originUrl(path) {
       const folder = await repository(path);
       return space.readTextFile(gitPath(folder, 'pepino-origin')).catch(() => null);
+    },
+
+    async syncCommits(path) {
+      const folder = await repository(path);
+      const state = await syncOf(folder);
+      if (!state.upstream) return { toPull: [], toPush: [] };
+      const [branch, log] = await Promise.all([currentBranch(folder), readLog(folder)]);
+      const local = log[branch] ?? [];
+      const there = log[state.upstream] ?? [];
+      const only = (side: typeof local, other: typeof local) => {
+        const ids = new Set(other.map((entry) => entry.id));
+        return side
+          .filter((entry) => !ids.has(entry.id))
+          .slice(0, SYNC_COMMITS)
+          .map(({ files: _files, ...entry }) => entry);
+      };
+      return { toPull: only(there, local), toPush: only(local, there) };
     },
 
     async fetch(path, onProgress) {
@@ -906,8 +941,14 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
       .readTextFile(gitPath(folder, 'pepino-remotes.json'))
       .then(() => true)
       .catch(() => false);
-    const [branch, remotes, log] = await Promise.all([currentBranch(folder), readRemotes(folder), readLog(folder)]);
-    if (!remote || !(branch in remotes)) return { remote, upstream: null, ahead: 0, behind: 0 };
+    const [branch, remotes, log, fetched] = await Promise.all([
+      currentBranch(folder),
+      readRemotes(folder),
+      readLog(folder),
+      space.readTextFile(gitPath(folder, 'pepino-last-fetch')).catch(() => null),
+    ]);
+    const lastFetched = fetched === null ? null : Number(fetched);
+    if (!remote || !(branch in remotes)) return { remote, upstream: null, ahead: 0, behind: 0, lastFetched };
     const local = (log[branch] ?? []).map((entry) => entry.id);
     const there = (log[`origin/${branch}`] ?? []).map((entry) => entry.id);
     return {
@@ -915,6 +956,7 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
       upstream: `origin/${branch}`,
       ahead: local.filter((id) => !there.includes(id)).length,
       behind: there.filter((id) => !local.includes(id)).length,
+      lastFetched,
     };
   }
 
@@ -935,6 +977,7 @@ export function createMemoryGitEngine(space: ProjectSpace, { cloneStepMs = 250 }
     const state = await syncOf(folder);
     if (!state.remote) throw new Error('This repository is not connected to GitHub');
     await remoteSteps(['Receiving objects'], onProgress);
+    await space.writeTextFile(gitPath(folder, 'pepino-last-fetch'), String(Date.now()));
     const branch = await currentBranch(folder);
     const marker = gitPath(folder, `pepino-fetched-${branch.replaceAll('/', '_')}`);
     if (

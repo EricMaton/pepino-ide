@@ -8,6 +8,7 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import dev.pepino.ide.github.GitHubPlugin;
 import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -146,13 +147,43 @@ public class GitPlugin extends Plugin {
         call.resolve();
     }
 
-    private static JSObject toJson(GitOps.SyncState state) {
+    /** [state], and when [folder] last fetched from GitHub (null when never). */
+    private static JSObject toJson(GitOps.SyncState state, File folder) throws IOException {
         JSObject json = new JSObject();
         json.put("remote", state.remote());
         json.put("upstream", state.upstream() == null ? JSObject.NULL : state.upstream());
         json.put("ahead", state.ahead());
         json.put("behind", state.behind());
+        long fetched = GitOps.lastFetched(folder);
+        json.put("lastFetched", fetched == 0 ? JSObject.NULL : fetched);
         return json;
+    }
+
+    private static JSArray toJson(List<GitOps.LogEntry> entries) {
+        JSArray commits = new JSArray();
+        for (GitOps.LogEntry entry : entries) {
+            JSObject json = new JSObject();
+            json.put("id", entry.id());
+            json.put("summary", entry.summary());
+            json.put("description", entry.description());
+            json.put("author", entry.author());
+            json.put("email", entry.email());
+            json.put("time", entry.time());
+            commits.put(json);
+        }
+        return commits;
+    }
+
+    /** The commits behind the sync counts (#35): GitHub's to pull, this branch's to push. */
+    @PluginMethod
+    public void syncCommits(PluginCall call) {
+        run(call, () -> {
+            GitOps.SyncCommits found = GitOps.syncCommits(folder(call), call.getInt("limit", 100));
+            JSObject result = new JSObject();
+            result.put("toPull", toJson(found.toPull()));
+            result.put("toPush", toJson(found.toPush()));
+            return result;
+        });
     }
 
     /** The URL of the repository's origin (GitHub's, for a clone), or null. */
@@ -169,14 +200,17 @@ public class GitPlugin extends Plugin {
     /** Where the current branch stands against GitHub's (#33), as of the last fetch: no network. */
     @PluginMethod
     public void sync(PluginCall call) {
-        run(call, () -> toJson(GitOps.syncState(folder(call))));
+        run(call, () -> {
+            File folder = folder(call);
+            return toJson(GitOps.syncState(folder), folder);
+        });
     }
 
     @PluginMethod
     public void fetch(PluginCall call) {
         run(call, () -> {
             File folder = folder(call);
-            return toJson(GitOps.fetch(folder, credentials(GitOps.originUrl(folder)), remoteProgress()));
+            return toJson(GitOps.fetch(folder, credentials(GitOps.originUrl(folder)), remoteProgress()), folder);
         });
     }
 
@@ -191,7 +225,7 @@ public class GitPlugin extends Plugin {
                 GitOps.identity(configFile())
             );
             JSObject result = new JSObject();
-            result.put("state", toJson(pulled.state()));
+            result.put("state", toJson(pulled.state(), folder));
             result.put("written", new JSArray(pulled.written()));
             result.put("removed", new JSArray(pulled.removed()));
             return result;
@@ -202,7 +236,7 @@ public class GitPlugin extends Plugin {
     public void push(PluginCall call) {
         run(call, () -> {
             File folder = folder(call);
-            return toJson(GitOps.push(folder, credentials(GitOps.originUrl(folder)), remoteProgress()));
+            return toJson(GitOps.push(folder, credentials(GitOps.originUrl(folder)), remoteProgress()), folder);
         });
     }
 
@@ -303,19 +337,8 @@ public class GitPlugin extends Plugin {
     @PluginMethod
     public void log(PluginCall call) {
         run(call, () -> {
-            JSArray commits = new JSArray();
-            for (GitOps.LogEntry entry : GitOps.log(folder(call), call.getInt("skip", 0), call.getInt("limit", 50))) {
-                JSObject json = new JSObject();
-                json.put("id", entry.id());
-                json.put("summary", entry.summary());
-                json.put("description", entry.description());
-                json.put("author", entry.author());
-                json.put("email", entry.email());
-                json.put("time", entry.time());
-                commits.put(json);
-            }
             JSObject result = new JSObject();
-            result.put("commits", commits);
+            result.put("commits", toJson(GitOps.log(folder(call), call.getInt("skip", 0), call.getInt("limit", 50))));
             return result;
         });
     }
