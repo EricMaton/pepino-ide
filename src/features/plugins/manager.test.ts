@@ -74,7 +74,14 @@ function setUp(permissions: string[], saved: Record<string, string> = {}) {
   const registry = new CommandRegistry();
   const dispatcher = new CommandDispatcher(registry);
   const activeEditor = createActiveEditor();
-  activeEditor.set({ path: 'a.txt', getText: () => 'secret', setText: () => undefined });
+  activeEditor.set({
+    path: 'a.txt',
+    getText: () => 'secret',
+    setText: () => undefined,
+    getSelection: () => '',
+    insert: () => undefined,
+    insertSnippet: () => undefined,
+  });
   const pluginPermissions = createPluginPermissions(store);
   const host = new PluginHost({
     registry,

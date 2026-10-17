@@ -18,6 +18,7 @@ import { errorMessage } from '../projects/errors';
 import { fileBadge } from '../projects/files';
 import { basename, isWithin } from '../projects/paths';
 import { WorkspaceDrawer } from '../workspace/WorkspaceDrawer';
+import { insertSnippet, insertText } from './actions';
 import { CodeEditor } from './CodeEditor';
 import styles from './EditorScreen.module.css';
 import { EditorToolbar } from './EditorToolbar';
@@ -392,6 +393,9 @@ export default function EditorScreen({
       },
       getText: () => view.state.doc.toString(),
       setText: (text) => view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } }),
+      getSelection: () => view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to),
+      insert: (text) => view.dispatch(insertText(view.state, text)),
+      insertSnippet: (body) => view.dispatch(insertSnippet(view.state, body)),
     });
   }, [activeEditor, view, visible]);
 

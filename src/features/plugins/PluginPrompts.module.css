@@ -1,0 +1,42 @@
+/* A plugin's quick pick (#53): rows like the clone dialog's */
+.list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--hairline);
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: var(--touch-target);
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-bottom: 1px solid var(--hairline);
+  background: none;
+  color: var(--fg);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.row:active {
+  background: var(--surface-variant);
+  box-shadow: inset 4px 0 0 var(--primary);
+}
+
+.label {
+  font-weight: 700;
+}
+
+.detail {
+  overflow: hidden;
+  white-space: pre;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+}
+
+.empty {
+  margin: 0;
+  padding: var(--space-4) var(--space-3);
+}

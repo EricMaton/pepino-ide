@@ -10,8 +10,11 @@ import type { Permission, PluginManifest } from './manifest';
 
 /** Each permission, as the approval dialog explains it. */
 export const PERMISSION_INFO: Record<Permission, { title: string; detail: string }> = {
-  'editor.read': { title: 'Read the editor', detail: 'The text of the file open in the editor.' },
-  'editor.write': { title: 'Change the editor', detail: 'Replace the text of the file open in the editor.' },
+  'editor.read': { title: 'Read the editor', detail: 'The file open in the editor: its name, text and selection.' },
+  'editor.write': {
+    title: 'Change the editor',
+    detail: 'Insert or replace text in the file open in the editor (you can undo it).',
+  },
   'git.read': { title: 'Read git', detail: "Your repositories' status, history and diffs." },
   'git.write': { title: 'Write git', detail: 'Commit and push, each time with your confirmation.' },
   network: { title: 'Use the internet', detail: 'Send and receive data over the network.' },

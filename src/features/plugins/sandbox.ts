@@ -94,12 +94,33 @@ const PRELUDE = `
       getPath: () => call('editor.getPath'),
       getText: () => call('editor.getText'),
       setText: (text) => call('editor.setText', String(text)),
+      getSelection: () => call('editor.getSelection'),
+      insert: (text) => call('editor.insert', String(text)),
+      insertSnippet: (body) => call('editor.insertSnippet', String(body)),
       onSave: (listener) => on('file.saved', listener),
       onChange: (listener) => on('editor.changed', listener),
       onOpen: (listener) => on('file.opened', listener),
     }),
     settings: Object.freeze({ get: (key) => settings[key] }),
-    window: Object.freeze({ showMessage: (text) => call('window.showMessage', String(text)) }),
+    window: Object.freeze({
+      showMessage: (text) => call('window.showMessage', String(text)),
+      showQuickPick: (items, options) =>
+        call(
+          'window.showQuickPick',
+          Array.from(items, (item) =>
+            typeof item === 'object' && item !== null
+              ? { label: String(item.label), ...(item.detail !== undefined && { detail: String(item.detail) }) }
+              : { label: String(item) },
+          ),
+          options === undefined ? {} : options,
+        ),
+      showInput: (options) => call('window.showInput', options === undefined ? {} : options),
+    }),
+    storage: Object.freeze({
+      get: (key) => call('storage.get', String(key)),
+      set: (key, value) => call('storage.set', String(key), value === undefined ? null : value),
+      delete: (key) => call('storage.delete', String(key)),
+    }),
     // Only a plugin allowed the network gets a way to it (#49); the host checks again on each call
     ...(capabilities.includes('network') && {
       network: Object.freeze({

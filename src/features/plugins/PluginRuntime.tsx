@@ -1,12 +1,13 @@
 import { useEffect } from 'react';
 import { useServices } from '../../app/services';
 import { useSnackbar } from '../../ui/useSnackbar';
+import { PluginPrompts } from './PluginPrompts';
 
 /**
  * Starts the plugins when the app starts (#48): the ones that come with
  * Pepino for now (installing more is #56), each once it is on and its
- * permissions approved (#49). A plugin's messages show as snackbars.
- * Renders nothing.
+ * permissions approved (#49). A plugin's messages show as snackbars, and
+ * what it asks the user as dialogs (#53).
  */
 export function PluginRuntime() {
   const { plugins, pluginHost } = useServices();
@@ -21,5 +22,5 @@ export function PluginRuntime() {
     return () => void pluginHost.stopAll();
   }, [plugins, pluginHost]);
 
-  return null;
+  return <PluginPrompts />;
 }
