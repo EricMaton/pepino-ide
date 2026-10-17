@@ -134,6 +134,14 @@ export class PluginHost {
         return handler.run(args);
       },
       log: (level, text) => this.record(running, level, text),
+      // Past the sandbox's deadline, the worker itself stopped answering: it is gone (#50)
+      unresponsive: () => {
+        running.stop();
+        const error = 'It stopped responding, and Pepino stopped it';
+        running.status = { ...running.status, state: 'failed', error };
+        this.record(running, 'error', error);
+        this.notifier(`${manifest.name}: ${error}`);
+      },
     });
     running.connection = connection;
     disposers.push(() => connection.terminate());
