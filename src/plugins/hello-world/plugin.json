@@ -1,0 +1,12 @@
+{
+  "id": "dev.pepino.hello-world",
+  "name": "Hello world",
+  "version": "1.0.0",
+  "apiVersion": "1",
+  "description": "The smallest plugin: one command that says hello.",
+  "permissions": [],
+  "contributes": {
+    "commands": [{ "id": "hello", "title": "Say hello" }],
+    "settings": [{ "key": "name", "type": "string", "default": "Pepino", "title": "Who to greet" }]
+  }
+}
