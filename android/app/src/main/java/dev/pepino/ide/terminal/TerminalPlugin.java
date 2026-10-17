@@ -57,12 +57,14 @@ public class TerminalPlugin extends Plugin {
         return session;
     }
 
-    /** Starts a shell in the project folder `cwd` (relative to the project space), `cols` x `rows`: { id }. */
+    /** Starts a shell in the project folder `cwd` (relative to the project space; "" for the space itself), `cols` x `rows`: { id }. */
     @PluginMethod
     public void spawn(PluginCall call) {
         try {
             File projects = ShellEnvironment.projects(getContext());
-            File cwd = GitOps.resolve(projects, call.getString("cwd", ""));
+            // No project: the projects' folder itself (#161)
+            String folder = call.getString("cwd", "");
+            File cwd = folder.isEmpty() ? projects : GitOps.resolve(projects, folder);
             if (!cwd.isDirectory()) cwd = projects;
             int id = nextId.getAndIncrement();
             TerminalSession session = TerminalSession.start(

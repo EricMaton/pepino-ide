@@ -35,7 +35,11 @@ describe('native terminal (#37)', () => {
 
     expect(await terminal.spawn({ cwd: 'work/app', cols: 80, rows: 24 })).toBe(7);
     expect(plugin.spawn).toHaveBeenCalledWith({ cwd: 'work/app', cols: 80, rows: 24 });
-    await expect(terminal.spawn({ cwd: '', cols: 80, rows: 24 })).rejects.toThrow(/project/);
+    // No project open: the projects' folder itself (#161)
+    plugin.spawn.mockResolvedValue({ id: 8, pid: 1235 });
+    expect(await terminal.spawn({ cwd: '', cols: 80, rows: 24 })).toBe(8);
+    expect(plugin.spawn).toHaveBeenLastCalledWith({ cwd: '', cols: 80, rows: 24 });
+    await expect(terminal.spawn({ cwd: '../outside', cols: 80, rows: 24 })).rejects.toThrow(/escapes/);
 
     await terminal.write(7, 'ls\r');
     await terminal.resize(7, 100, 40);

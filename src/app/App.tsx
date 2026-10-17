@@ -63,7 +63,7 @@ const SPACE_NAME = '~/projects';
  * terminal and the editor work on it.
  */
 export function App() {
-  const { registry, events, projectSpace, session, workspace } = useServices();
+  const { registry, events, projectSpace, session, workspace, terminal } = useServices();
   const showSnackbar = useSnackbar();
   const [destination, setDestination] = useState<AppDestination>(HOME);
   // TERMINAL stays mounted from its first visit, hidden while other tabs show: its scrollback stays (#39)
@@ -492,7 +492,8 @@ export function App() {
           </Suspense>
         </main>
         <nav className={styles.nav}>
-          {DESTINATIONS.map(({ id, label }) => {
+          {/* TERMINAL only where there is one: Android (#161) */}
+          {DESTINATIONS.filter(({ id }) => id !== 'terminal' || terminal.available).map(({ id, label }) => {
             const NavIcon = NAV_ICONS[id];
             return (
               <button

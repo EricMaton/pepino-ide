@@ -32,12 +32,17 @@ public final class ShellEnvironment {
         File home = context.getFilesDir().getCanonicalFile();
         File rc = new File(new File(home, "terminal"), "shellrc");
         writeStartupFile(context, rc);
+        File projects = projects(context).getCanonicalFile();
+        if (!projects.isDirectory() && !projects.mkdirs()) throw new IOException("Cannot create " + projects);
         java.util.List<String> env = new java.util.ArrayList<>(java.util.Arrays.asList(
             "TERM=xterm-256color",
             "COLORTERM=truecolor",
             "LANG=en_US.UTF-8",
-            "HOME=" + home.getPath(),
-            "PROJECTS=" + projects(context).getCanonicalPath(),
+            // HOME is the projects (cd, ~): the app's own files stay out of reach (#161).
+            // Its git config is in PEPINO_HOME, read by the terminal's git (#41).
+            "HOME=" + projects.getPath(),
+            "PEPINO_HOME=" + home.getPath(),
+            "PROJECTS=" + projects.getPath(),
             "ENV=" + rc.getPath(),
             "SHELL=" + SHELL[0],
             // The APK, whose JGit the shell's `git` runs (#41, res/raw/shellrc)

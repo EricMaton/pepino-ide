@@ -53,7 +53,7 @@ const FONT_SIZE = 13;
 
 export default function TerminalScreen({ project, visible }: { project: ProjectInfo | null; visible: boolean }) {
   const { terminal } = useServices();
-  const subtitle = !terminal.available ? 'ANDROID ONLY' : project ? `${project.name} · sh` : 'NO PROJECT';
+  const subtitle = !terminal.available ? 'ANDROID ONLY' : `${project ? project.name : '~projects'} · sh`;
   return (
     <div className={styles.screen} hidden={!visible}>
       {visible && <TopBar title="Terminal" subtitle={subtitle} label="Search commands · Terminal" />}
@@ -61,10 +61,9 @@ export default function TerminalScreen({ project, visible }: { project: ProjectI
         <Note title="The terminal runs on Android">
           iOS lets no app start programs, and the browser has no shell. Everything else in Pepino works the same.
         </Note>
-      ) : project ? (
-        <TerminalView key={project.path} backend={terminal} path={project.path} visible={visible} />
       ) : (
-        <Note title="Open a project first">The terminal starts in the open project&apos;s folder.</Note>
+        // In the open project; with none, in the projects' folder (#161)
+        <TerminalView key={project?.path ?? ''} backend={terminal} path={project?.path ?? ''} visible={visible} />
       )}
     </div>
   );
@@ -183,25 +182,115 @@ function TerminalView({ backend, path, visible }: { backend: TerminalBackend; pa
     };
   }, [backend, path, generation]);
 
-  // The size follows the holder: the screen turning, the keyboard opening or closing
+  // The size follows the holder: the screen turning, the keyboard opening or closing. The keyboard
+  // resizes the window over an animation, so the window's and the visible viewport's resizes refit
+  // too, and again once it has settled. Output followed to the end stays at the end (#161).
   useEffect(() => {
     const element = holder.current;
     if (!element || !visible) return;
     const refit = () => {
       const current = view.current;
       if (!current || element.clientWidth === 0 || element.clientHeight === 0) return;
-      const { cols, rows } = current.term;
+      const { term } = current;
+      const { cols, rows } = term;
+      const atEnd = term.buffer.active.viewportY >= term.buffer.active.baseY;
       current.fit.fit();
-      if (current.id !== null && (current.term.cols !== cols || current.term.rows !== rows)) {
-        void backend.resize(current.id, current.term.cols, current.term.rows);
-      }
+      if (term.cols === cols && term.rows === rows) return;
+      if (atEnd) term.scrollToBottom();
+      if (current.id !== null) void backend.resize(current.id, term.cols, term.rows);
+    };
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const settle = () => {
+      refit();
+      timers.splice(0).forEach(clearTimeout);
+      for (const delay of [80, 250, 500]) timers.push(setTimeout(refit, delay));
     };
     const observer = new ResizeObserver(refit);
     observer.observe(element);
+    window.addEventListener('resize', settle);
+    window.visualViewport?.addEventListener('resize', settle);
     refit();
     view.current?.term.focus();
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', settle);
+      window.visualViewport?.removeEventListener('resize', settle);
+      timers.forEach(clearTimeout);
+    };
   }, [backend, visible, generation]);
+
+  // Scrolling the history with a finger (#161): xterm 6 scrolls with the wheel only. A drag moves
+  // it a line at a time, and keeps going for a moment after letting go, slowing down.
+  useEffect(() => {
+    const element = holder.current;
+    if (!element) return;
+    let lastY: number | null = null;
+    let lastTime = 0;
+    let carried = 0;
+    let velocity = 0;
+    let frame = 0;
+    const rowHeight = () => {
+      const term = view.current?.term;
+      const screen = term?.element?.querySelector('.xterm-screen');
+      return term && screen ? screen.clientHeight / term.rows : 16;
+    };
+    // [pixels] of finger travel (up is positive) as lines scrolled; the rest carries over
+    const scrollBy = (pixels: number) => {
+      const term = view.current?.term;
+      if (!term) return;
+      carried += pixels;
+      const lines = Math.trunc(carried / rowHeight());
+      if (lines !== 0) {
+        term.scrollLines(lines);
+        carried -= lines * rowHeight();
+      }
+    };
+    const start = (event: TouchEvent) => {
+      cancelAnimationFrame(frame);
+      if (event.touches.length !== 1) return;
+      lastY = event.touches[0].clientY;
+      lastTime = event.timeStamp;
+      carried = 0;
+      velocity = 0;
+    };
+    const move = (event: TouchEvent) => {
+      if (lastY === null || event.touches.length !== 1) return;
+      const y = event.touches[0].clientY;
+      const elapsed = Math.max(1, event.timeStamp - lastTime);
+      velocity = (lastY - y) / elapsed;
+      scrollBy(lastY - y);
+      lastY = y;
+      lastTime = event.timeStamp;
+      // The page itself must not move instead
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    const end = () => {
+      if (lastY === null) return;
+      lastY = null;
+      let previous = performance.now();
+      const glide = (now: number) => {
+        const elapsed = now - previous;
+        previous = now;
+        velocity *= Math.pow(0.995, elapsed);
+        if (Math.abs(velocity) < 0.02) return;
+        scrollBy(velocity * elapsed);
+        frame = requestAnimationFrame(glide);
+      };
+      frame = requestAnimationFrame(glide);
+    };
+    element.addEventListener('touchstart', start, { capture: true, passive: true });
+    element.addEventListener('touchmove', move, { capture: true, passive: false });
+    element.addEventListener('touchend', end, { capture: true });
+    element.addEventListener('touchcancel', end, { capture: true });
+    return () => {
+      cancelAnimationFrame(frame);
+      element.removeEventListener('touchstart', start, { capture: true });
+      element.removeEventListener('touchmove', move, { capture: true });
+      element.removeEventListener('touchend', end, { capture: true });
+      element.removeEventListener('touchcancel', end, { capture: true });
+    };
+  }, [generation]);
 
   const press = (id: string) => {
     const current = view.current;

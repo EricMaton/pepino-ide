@@ -1,6 +1,7 @@
+/* Pinned to the content area: the keyboard shrinking it never makes the terminal overflow it (#161) */
 .screen {
-  flex: 1;
-  min-height: 0;
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
 }
@@ -34,6 +35,8 @@
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  /* Drags scroll the history (TerminalView), never the page */
+  touch-action: none;
   padding: var(--space-2) var(--space-2) 0;
 }
 

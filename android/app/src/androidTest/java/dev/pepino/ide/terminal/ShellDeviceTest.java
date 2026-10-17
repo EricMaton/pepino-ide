@@ -82,11 +82,13 @@ public class ShellDeviceTest {
         recorder.await(mark, "demo/src");
 
         mark = recorder.output().length();
-        shell.write("echo \"[$PATH][$HOME][$PROJECTS]\"; projects; pwd\r".getBytes(StandardCharsets.UTF_8));
+        shell.write("echo \"[$PATH][$HOME][$PEPINO_HOME]\"; projects; pwd\r".getBytes(StandardCharsets.UTF_8));
         String nativeLibs = context.getApplicationInfo().nativeLibraryDir;
+        String projects = ShellEnvironment.projects(context).getCanonicalPath();
         recorder.await(mark, "[" + nativeLibs + ":/system/bin");
-        recorder.await(mark, "][" + context.getFilesDir().getCanonicalPath() + "][");
-        recorder.await(mark, "\r\n" + ShellEnvironment.projects(context).getCanonicalPath() + "\r\n");
+        // HOME is the projects (#161); the app's own folder is only for git's config
+        recorder.await(mark, "][" + projects + "][" + context.getFilesDir().getCanonicalPath() + "]");
+        recorder.await(mark, "\r\n" + projects + "\r\n");
 
         // toybox, with colours through the alias
         mark = recorder.output().length();
@@ -98,6 +100,52 @@ public class ShellDeviceTest {
         shell.write("exit 5\r".getBytes(StandardCharsets.UTF_8));
         assertTrue(recorder.ended.await(10, TimeUnit.SECONDS));
         assertEquals(5, recorder.code);
+    }
+
+    /** The terminal stays in the projects (#161): cd does not leave them, rm and mv touch nothing outside. */
+    @Test
+    public void theShellStaysInTheProjects() throws Exception {
+        Recorder recorder = new Recorder();
+        TerminalSession shell = TerminalSession.start(
+            1,
+            project.getCanonicalPath(),
+            ShellEnvironment.SHELL,
+            ShellEnvironment.of(context),
+            24,
+            120,
+            recorder
+        );
+        recorder.await(0, " $ ");
+        String projects = ShellEnvironment.projects(context).getCanonicalPath();
+        File outside = new File(context.getFilesDir(), "keep-me.txt");
+        java.nio.file.Files.write(outside.toPath(), "app data\n".getBytes(StandardCharsets.UTF_8));
+
+        int mark = recorder.output().length();
+        // Up to the projects is fine, past them not; cd alone is the projects too
+        shell.write("cd ..; pwd; cd ..; pwd; cd /; pwd; cd demo; cd; pwd; echo e\"\"nd-of-cd\r".getBytes(StandardCharsets.UTF_8));
+        recorder.await(mark, "end-of-cd");
+        String cds = recorder.output().substring(mark);
+        assertTrue(cds, cds.contains("pepino: the terminal stays inside the projects"));
+        // Every pwd printed the projects' folder: after cd .., after both refusals, and after cd alone
+        int pwds = 0;
+        for (int at = cds.indexOf("\r\n" + projects + "\r"); at >= 0; at = cds.indexOf("\r\n" + projects + "\r", at + 1)) pwds++;
+        assertEquals(cds, 4, pwds);
+
+        mark = recorder.output().length();
+        shell.write(
+            ("rm ../keep-me.txt; rm -rf \"$PROJECTS\"; mv demo/src ..; touch demo/gone.txt; rm demo/gone.txt; ls demo; echo e\"\"nd-of-rm\r").getBytes(
+                StandardCharsets.UTF_8
+            )
+        );
+        recorder.await(mark, "end-of-rm");
+        String rms = recorder.output().substring(mark);
+        assertTrue(rms, rms.contains("rm: ../keep-me.txt: outside the projects, Pepino keeps it"));
+        assertTrue(rms, rms.contains("rm: " + projects + ": outside the projects, Pepino keeps it"));
+        assertTrue(rms, rms.contains("mv: ..: outside the projects, Pepino keeps it"));
+        assertTrue(outside.exists());
+        assertTrue(new File(project, "src").isDirectory());
+        assertTrue(!new File(project, "gone.txt").exists());
+        shell.kill();
     }
 
     /** git (#41): the app's JGit through app_process, from the shell, with the app's identity. */
