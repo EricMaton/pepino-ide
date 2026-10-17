@@ -969,3 +969,107 @@ button.line {
   min-width: 0;
   white-space: normal;
 }
+
+/* A merge in progress (#143): above the changed files */
+.mergeBar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 56px;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface-variant);
+}
+
+/* A conflicted file: its clashes, each side's lines and the choice */
+.conflictAll {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-2);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.conflictContext,
+.conflictLines {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 4;
+}
+
+.conflictContext {
+  padding: var(--space-2) var(--space-4);
+  color: var(--fg);
+  opacity: 0.75;
+}
+
+.conflict {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-2) var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+}
+
+.conflictSide {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border-radius: var(--radius);
+  background: var(--surface-variant);
+}
+
+.conflictSide:first-child {
+  background: var(--diff-removed);
+}
+
+.conflictSide:nth-child(2) {
+  background: var(--diff-added);
+}
+
+.conflictChosen {
+  outline: 2px solid var(--primary);
+}
+
+.conflictChoices {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.conflictChoices > * {
+  flex: 1;
+}
+
+.conflictEdit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.conflictEdit p {
+  margin: 0;
+}
+
+.conflictEdit textarea {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.conflictFoot {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: var(--border);
+  background: var(--surface-variant);
+}

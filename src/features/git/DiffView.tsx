@@ -122,7 +122,8 @@ export function DiffView({
   /** Relative to the repository. */
   file: string;
   onClose: () => void;
-} & ({ picking: Picking; commit?: never } | { commit: string; picking?: never })) {
+  // No picking: only to read (a merge's files take no line picking, #143)
+} & ({ picking?: Picking; commit?: never } | { commit: string; picking?: never })) {
   const { selection, onSelect, onDiscardFile, onDiscardLines } = picking ?? NOT_PICKING;
   const [menu, setMenu] = useState(false);
   // The lines picked to discard, on the diff version they were picked on: once it changes, the picking is over
