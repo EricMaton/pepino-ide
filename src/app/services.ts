@@ -8,6 +8,9 @@ import { createMemoryGitEngine, createNativeGitEngine, type GitEngine } from '..
 import { createNativeTerminal, createUnavailableTerminal, type TerminalBackend } from '../features/terminal/terminal';
 import { createThemeStore, type ThemeStore } from '../ui/themeStore';
 import { createEditorSettingsStore, type EditorSettingsStore } from '../features/editor/editorSettings';
+import { type ActiveEditor, createActiveEditor } from '../features/editor/activeEditor';
+import { createWorkerConnection } from '../features/plugins/connection';
+import { PluginHost } from '../features/plugins/host';
 import { createRepositories, type Repositories } from '../features/git/repositories';
 import { createMemoryGitHub, createNativeGitHub, type GitHub } from '../features/github/github';
 import { createCapacitorBackend } from '../features/projects/capacitorBackend';
@@ -26,6 +29,8 @@ export type AppEvents = FsEvents &
     'project.closed': ProjectInfo;
     'file.opened': { path: string };
     'file.saved': { path: string };
+    /** An edit in the editor (#48): plugins' api.editor.onChange. */
+    'editor.changed': { path: string };
   };
 
 export interface Services {
@@ -46,6 +51,10 @@ export interface Services {
   github: GitHub;
   /** Shells on a PTY (#37): Android only; iOS and the web have none. */
   terminal: TerminalBackend;
+  /** The editor on screen (#48), for plugins' api.editor. */
+  activeEditor: ActiveEditor;
+  /** The plugins (#46–#50): each in a sandboxed worker, reached through commands and events. */
+  plugins: PluginHost;
   /** The editor's settings (#45): font size, tabs, wrap, line numbers; every editor follows. */
   editorSettings: EditorSettingsStore;
   /** The theme (#44): dark, light, the phone's, or custom; applied to the whole page. */
@@ -103,9 +112,13 @@ export function createServices(): Services {
     recentProjects.record(project.path).catch((error: unknown) => console.error('Cannot record recent project', error));
   });
 
+  const dispatcher = new CommandDispatcher(registry);
+  const activeEditor = createActiveEditor();
+  const plugins = new PluginHost({ registry, dispatcher, events, activeEditor, connect: createWorkerConnection });
+
   return {
     registry,
-    dispatcher: new CommandDispatcher(registry),
+    dispatcher,
     events,
     projectSpace,
     recentProjects,
@@ -118,6 +131,8 @@ export function createServices(): Services {
     terminal: Capacitor.getPlatform() === 'android' ? createNativeTerminal() : createUnavailableTerminal(),
     theme: createThemeStore(preferences),
     editorSettings: createEditorSettingsStore(preferences),
+    activeEditor,
+    plugins,
     preferences,
   };
 }
