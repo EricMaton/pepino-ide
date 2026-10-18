@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useServices } from '../../app/services';
 import { Button, Dialog, TextField } from '../../ui/components';
 import { cx } from '../../ui/cx';
 import { useSnackbar } from '../../ui/useSnackbar';
 import { errorMessage } from '../projects/errors';
-import type { SettingValue } from '../plugins/manifest';
+import type { PluginManifest, SecretDeclaration, SettingValue } from '../plugins/manifest';
+import { SecretDialog } from '../plugins/PluginPrompts';
 import { PERMISSION_INFO } from '../plugins/permissions';
 import styles from './SettingsScreen.module.css';
 import { usePlugins } from './usePlugins';
@@ -88,6 +89,8 @@ export function PluginManage({ id, onClose }: { id: string; onClose: () => void 
           )}
         </section>
 
+        {manifest.secrets.length > 0 && <Secrets manifest={manifest} />}
+
         {manifest.contributes.settings.length > 0 && (
           <section className={styles.manageSection} aria-label="Settings">
             <h3 className="label muted">Settings</h3>
@@ -163,5 +166,80 @@ export function PluginManage({ id, onClose }: { id: string; onClose: () => void 
         </section>
       </div>
     </Dialog>
+  );
+}
+
+/** The plugin's keys of the user's own (#186): whether each is saved, to save, change or forget. */
+function Secrets({ manifest }: { manifest: PluginManifest }) {
+  const { pluginHost } = useServices();
+  const showSnackbar = useSnackbar();
+  const [saved, setSaved] = useState<Record<string, boolean>>({});
+  const [checked, setChecked] = useState(0);
+  const [entering, setEntering] = useState<SecretDeclaration | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    Promise.all(
+      manifest.secrets.map(async ({ key }) => [key, await pluginHost.hasSecret(manifest, key)] as const),
+    ).then(
+      (found) => active && setSaved(Object.fromEntries(found)),
+      () => undefined,
+    );
+    return () => {
+      active = false;
+    };
+  }, [pluginHost, manifest, checked]);
+
+  const act = (work: Promise<void>, done: string) =>
+    work.then(
+      () => {
+        setChecked((count) => count + 1);
+        showSnackbar(done);
+      },
+      (error: unknown) => showSnackbar(`Error: ${errorMessage(error)}`),
+    );
+
+  return (
+    <section className={styles.manageSection} aria-label="Your keys">
+      <h3 className="label muted">Your keys</h3>
+      {manifest.secrets.map((secret) => (
+        <div key={secret.key} className={styles.manageSection}>
+          <p>
+            <span className="body">{secret.label}</span>
+            <span className={cx('caption', !saved[secret.key] && 'muted')}>
+              {' '}
+              · {saved[secret.key] ? `Saved, only sent to ${secret.host}` : 'Not set'}
+            </span>
+          </p>
+          <div className={styles.cardButtons}>
+            <Button variant="outlined" onClick={() => setEntering(secret)}>
+              {saved[secret.key] ? 'Change' : 'Set'}
+            </Button>
+            {saved[secret.key] && (
+              <Button
+                variant="text"
+                onClick={() => void act(pluginHost.forgetSecret(manifest, secret.key), `${secret.label} forgotten`)}
+              >
+                Forget
+              </Button>
+            )}
+          </div>
+        </div>
+      ))}
+      {entering && (
+        <SecretDialog
+          label={entering.label}
+          plugin={manifest.name}
+          host={entering.host}
+          help={entering.help}
+          replacing={saved[entering.key]}
+          onAnswer={(value) => {
+            const secret = entering;
+            setEntering(null);
+            if (value) void act(pluginHost.saveSecret(manifest, secret.key, value), `${secret.label} saved`);
+          }}
+        />
+      )}
+    </section>
   );
 }

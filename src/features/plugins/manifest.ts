@@ -63,6 +63,23 @@ export interface PageContribution {
 /** The name of a page's file: an .html in the plugin's own folder. */
 export const PAGE_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]*\.html$/;
 
+/**
+ * A key of the user's own the plugin needs (#186), such as an API key: kept
+ * encrypted by the app, sent only to [host] in [header], never shown to the
+ * plugin.
+ */
+export interface SecretDeclaration {
+  key: string;
+  /** What the user is asked for: "Anthropic API key". */
+  label: string;
+  /** The only host it goes to, over HTTPS: "api.anthropic.com". */
+  host: string;
+  /** The request header it goes in: "x-api-key". */
+  header: string;
+  /** Where the user gets one, shown when asked: an https URL. */
+  help?: string;
+}
+
 export interface PluginManifest {
   /** Reverse-domain: "com.example.beautifier". */
   id: string;
@@ -73,6 +90,8 @@ export interface PluginManifest {
   permissions: Permission[];
   /** Why the plugin needs the network: required with the `network` permission (spec v1). */
   networkJustification?: string;
+  /** The user's own keys it needs (#186); they need the `network` permission. */
+  secrets: SecretDeclaration[];
   contributes: {
     commands: CommandContribution[];
     toolbar: ToolbarContribution[];
@@ -87,6 +106,8 @@ export type ManifestResult = { ok: true; manifest: PluginManifest } | { ok: fals
 const ID = /^[a-z0-9]+(?:[-_][a-z0-9]+)*(?:\.[a-z0-9]+(?:[-_][a-z0-9]+)*)+$/;
 const LOCAL_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const VERSION = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+const HOST = /^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
+const HEADER = /^[A-Za-z0-9-]+$/;
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -121,6 +142,37 @@ export function parseManifest(text: string): ManifestResult {
   }
   if (permissions.includes('network') && !isText(raw.networkJustification)) {
     errors.push('networkJustification: say why the plugin needs the network');
+  }
+
+  const secrets: SecretDeclaration[] = [];
+  if (raw.secrets !== undefined && !Array.isArray(raw.secrets)) errors.push('secrets: a list');
+  for (const [i, secret] of (Array.isArray(raw.secrets) ? raw.secrets : []).entries()) {
+    if (
+      !isObject(secret) ||
+      !isText(secret.key) ||
+      !LOCAL_ID.test(secret.key) ||
+      !isText(secret.label) ||
+      !isText(secret.host) ||
+      !HOST.test(secret.host) ||
+      !isText(secret.header) ||
+      !HEADER.test(secret.header) ||
+      (secret.help !== undefined && (!isText(secret.help) || !secret.help.startsWith('https://')))
+    ) {
+      errors.push(`secrets[${i}]: { key, label, host (a domain), header, help? (https URL) }`);
+    } else if (secrets.some((other) => other.key === secret.key)) {
+      errors.push(`secrets[${i}]: "${secret.key}" twice`);
+    } else {
+      secrets.push({
+        key: secret.key,
+        label: secret.label.trim(),
+        host: secret.host.toLowerCase(),
+        header: secret.header,
+        ...(isText(secret.help) && { help: secret.help }),
+      });
+    }
+  }
+  if (secrets.length > 0 && !permissions.includes('network')) {
+    errors.push('secrets: the plugin needs the network permission to use them');
   }
 
   const contributes = raw.contributes === undefined ? {} : raw.contributes;
@@ -218,6 +270,7 @@ export function parseManifest(text: string): ManifestResult {
       ...(typeof raw.description === 'string' && { description: raw.description }),
       permissions,
       ...(isText(raw.networkJustification) && { networkJustification: raw.networkJustification }),
+      secrets,
       contributes: { commands, toolbar, settings, themes, pages },
     },
   };

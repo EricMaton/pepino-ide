@@ -15,6 +15,7 @@ import { builtinSource } from '../features/plugins/loader';
 import { capacitorPluginFolders, installedPlugins } from '../features/plugins/installed';
 import { PluginManager } from '../features/plugins/manager';
 import { createRegistry, type PluginRegistry } from '../features/plugins/registry';
+import { memorySecretVault, nativeSecretVault } from '../features/plugins/secrets';
 import { createPluginPermissions } from '../features/plugins/permissions';
 import { createRepositories, type Repositories } from '../features/git/repositories';
 import { createMemoryGitHub, createNativeGitHub, type GitHub } from '../features/github/github';
@@ -133,6 +134,8 @@ export function createServices(): Services {
     allowed: (plugin, permission) => pluginPermissions.allowed(plugin, permission),
     storage: preferences,
     settings: (plugin) => pluginPermissions.settings(plugin),
+    // Kept encrypted on Android; elsewhere only for the session
+    secrets: Capacitor.getPlatform() === 'android' ? nativeSecretVault() : memorySecretVault(),
   });
   const installed = installedPlugins(capacitorPluginFolders());
   const plugins = new PluginManager(pluginHost, pluginPermissions, () => [builtinSource(), installed], installed);
