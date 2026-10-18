@@ -4,6 +4,8 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { folderLabelFor } from '../features/editor/labels';
 import { GitScreen } from '../features/git/GitScreen';
 import { PluginRuntime } from '../features/plugins/PluginRuntime';
+import { PluginPages } from '../features/plugins/PluginPages';
+import { usePluginPages } from '../features/plugins/usePluginPages';
 import { PluginsScreen } from '../features/settings/PluginsScreen';
 import { SettingsScreen } from '../features/settings/SettingsScreen';
 import { errorMessage } from '../features/projects/errors';
@@ -24,7 +26,7 @@ import { useSnackbar } from '../ui/useSnackbar';
 import styles from './App.module.css';
 import { restoreSession } from './restoreSession';
 import { type EditorViewState, withEditorState } from './session';
-import { type AppDestination, DESTINATIONS, HOME } from './destinations';
+import { type AppDestination, DESTINATIONS, HOME, isPluginPage } from './destinations';
 import { useServices } from './services';
 import { NavBar } from './NavBar';
 import { TopBar, TopBarFrame } from './TopBar';
@@ -61,7 +63,11 @@ const SPACE_NAME = '~/projects';
 export function App() {
   const { registry, events, projectSpace, session, workspace, terminal } = useServices();
   const showSnackbar = useSnackbar();
-  const [destination, setDestination] = useState<AppDestination>(HOME);
+  const [chosen, setDestination] = useState<AppDestination>(HOME);
+  const pluginPages = usePluginPages();
+  // A plugin's page whose plugin went (off, uninstalled) leaves for home
+  const destination: AppDestination =
+    isPluginPage(chosen) && !pluginPages.some((page) => page.destination === chosen) ? HOME : chosen;
   // TERMINAL stays mounted from its first visit, hidden while other tabs show: its scrollback stays (#39)
   const [terminalOpened, setTerminalOpened] = useState(false);
   if (destination === 'terminal' && !terminalOpened) setTerminalOpened(true);
@@ -401,7 +407,7 @@ export function App() {
     };
   }, []);
 
-  const current = DESTINATIONS.find((d) => d.id === destination)!;
+  const current = DESTINATIONS.find((d) => d.id === destination);
 
   // Screens portal their part of the top bar into these layers (see TopBar).
   const [slots, setSlots] = useState<TopBarSlots>({ screen: null, overlay: null });
@@ -432,7 +438,7 @@ export function App() {
             <PluginsScreen subtitle={BRAND} />
           ) : destination === 'settings' ? (
             <SettingsScreen subtitle={BRAND} />
-          ) : current.teaser ? (
+          ) : isPluginPage(destination) ? null : current?.teaser ? (
             <ComingSoon label={current.label} {...current.teaser} />
           ) : state === 'ready' && showProject && project ? (
             <WorkspaceScreen
@@ -489,11 +495,16 @@ export function App() {
               />
             )}
           </Suspense>
+          <PluginPages pages={pluginPages} current={destination} />
         </main>
         <NavBar
           destination={destination}
           // TERMINAL only where there is one: Android (#161)
-          available={DESTINATIONS.map(({ id }) => id).filter((id) => id !== 'terminal' || terminal.available)}
+          available={[
+            ...DESTINATIONS.map(({ id }) => id).filter((id) => id !== 'terminal' || terminal.available),
+            ...pluginPages.map((page) => page.destination),
+          ]}
+          pages={pluginPages}
           // PROJECTS again, from inside PROJECTS, goes out to the explorer; any other tap only navigates.
           onSelect={(id) => (id === HOME && destination === HOME ? showExplorer() : setDestination(id))}
         />

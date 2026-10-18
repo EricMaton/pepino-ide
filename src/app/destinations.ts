@@ -1,7 +1,14 @@
-export type AppDestination = 'projects' | 'git' | 'terminal' | 'plugins' | 'settings';
+export type NativeDestination = 'projects' | 'git' | 'terminal' | 'plugins' | 'settings';
+
+/** A plugin's own page (#185): `plugin:<plugin id>.<page id>`. */
+export type PluginPageDestination = `plugin:${string}`;
+
+export type AppDestination = NativeDestination | PluginPageDestination;
+
+export const isPluginPage = (id: AppDestination): id is PluginPageDestination => id.startsWith('plugin:');
 
 export interface DestinationInfo {
-  id: AppDestination;
+  id: NativeDestination;
   label: string;
   /** What it is, in the MORE sheet (#171). */
   description: string;
@@ -22,4 +29,4 @@ export const DESTINATIONS: readonly DestinationInfo[] = [
   { id: 'settings', label: 'SETTINGS', description: 'Accounts, theme and editor' },
 ];
 
-export const HOME: AppDestination = 'projects';
+export const HOME: NativeDestination = 'projects';

@@ -1,5 +1,6 @@
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem';
 import type { PluginSource } from './loader';
+import { PAGE_FILE } from './manifest';
 import type { PluginFilesContent } from './registry';
 
 /*
@@ -26,7 +27,15 @@ export function installedPlugins(folders: PluginFolders): InstalledPlugins {
       const found = await Promise.all(
         (await folders.ids()).map(async (id) => {
           const files = await folders.read(id);
-          return files && { origin: `installed:${id}`, manifest: files.manifest, main: files.main, builtin: false };
+          return (
+            files && {
+              origin: `installed:${id}`,
+              manifest: files.manifest,
+              main: files.main,
+              assets: files.assets ?? {},
+              builtin: false,
+            }
+          );
         }),
       );
       return found.filter((plugin) => plugin !== null);
@@ -61,7 +70,14 @@ export function capacitorPluginFolders(): PluginFolders {
     },
     async read(id) {
       const manifest = await read(`${ROOT}/${id}/plugin.json`);
-      return manifest === null ? null : { manifest, main: (await read(`${ROOT}/${id}/main.js`)) ?? '' };
+      if (manifest === null) return null;
+      const { files } = await Filesystem.readdir({ path: `${ROOT}/${id}`, directory });
+      const assets: Record<string, string> = {};
+      for (const file of files.filter((found) => PAGE_FILE.test(found.name))) {
+        const html = await read(`${ROOT}/${id}/${file.name}`);
+        if (html !== null) assets[file.name] = html;
+      }
+      return { manifest, main: (await read(`${ROOT}/${id}/main.js`)) ?? '', assets };
     },
     async write(id, files) {
       // A new version replaces the old one whole
@@ -73,6 +89,10 @@ export function capacitorPluginFolders(): PluginFolders {
         data: files.manifest,
         encoding: Encoding.UTF8,
       });
+      for (const [name, html] of Object.entries(files.assets ?? {})) {
+        if (!PAGE_FILE.test(name)) continue;
+        await Filesystem.writeFile({ path: `${ROOT}/${id}/${name}`, directory, data: html, encoding: Encoding.UTF8 });
+      }
       if (files.main !== '') {
         await Filesystem.writeFile({
           path: `${ROOT}/${id}/main.js`,

@@ -57,11 +57,12 @@ El comando sale en la búsqueda de arriba como **Hola: Say hello** y el aviso co
 | `contributes.commands` | no | `[{ id, title }]`. `id`: letras, números, `-`, `_`. Cada uno tiene que registrarse en `main.js` |
 | `contributes.settings` | no | `[{ key, type, default, title? }]`, `type`: `"number"`, `"string"` o `"boolean"`, y `default` de ese tipo. El usuario los cambia en PLUGINS → Manage |
 | `contributes.themes` | no | Ver [Temas](#temas) |
+| `contributes.pages` | no | `[{ id, title, file }]`: páginas propias, ver [Páginas](#páginas). `file`, un `.html` de la carpeta del plugin |
 | `contributes.toolbar` | no | `[{ command, icon?, label? }]`, que nombra uno de sus comandos. Se valida, pero la app **todavía no lo muestra** en la barra del editor |
 
 Un manifest con errores no se carga: PLUGINS lista todos sus problemas, no solo el primero.
 
-`main.js` es **un único archivo**, sin `import` ni `require`. Si necesitas una librería, va dentro (Formatter lleva js-beautify al final de su `main.js`). Un plugin sin comandos, como uno que solo trae temas, puede no tener `main.js`; entonces no se le arranca ningún sandbox.
+`main.js` es **un único archivo**, sin `import` ni `require`. Los únicos otros archivos de un plugin son los `.html` de sus páginas. Si necesitas una librería, va dentro (Formatter lleva js-beautify al final de su `main.js`). Un plugin sin comandos, como uno que solo trae temas, puede no tener `main.js`; entonces no se le arranca ningún sandbox.
 
 ## API (`main.js`)
 
@@ -95,6 +96,8 @@ Todo lo de `api` que habla con la app devuelve una **promesa**; `api.settings.ge
 | `api.window.showInput({ title, placeholder, value })` | — | Pide una línea de texto; resuelve al texto, o `null` si se cancela |
 | `api.storage.get(key)` / `set(key, value)` / `delete(key)` | — | Datos del propio plugin (cualquier valor JSON), guardados entre arranques; hasta 256 KB por plugin. `get` de una clave que no hay da `null`; `set(key, null)` la borra. Se borran al desinstalar |
 | `api.network.fetch(url, { method, headers, body })` | `network` | Solo existe si el usuario lo permitió. Resuelve a `{ status, headers, text }` |
+| `api.pages.postMessage(pageId, data)` | — | Manda `data` (JSON, hasta 1 MB) a su página `pageId`. Si aún no está abierta, espera a que se abra |
+| `api.pages.onMessage(pageId, fn)` | — | `fn(data)` con lo que su página le manda |
 | `console.log` / `warn` / `error` | — | Al log del plugin, en PLUGINS → Manage |
 
 Una llamada sin su permiso se rechaza: la promesa falla con `Not allowed: <permiso>` y queda en el log. Un error dentro de un comando también va al log, y el usuario ve el aviso "Error: …".
@@ -126,6 +129,20 @@ Un plugin puede traer temas en `contributes.themes`, sin código: solo colores s
 
 - Solo esos nombres y solo `#rrggbb`: un tema no puede meter CSS propio. Un color que falta queda como el de su base.
 - El tema elegido se guarda con una copia de sus colores, para pintarse bien desde el arranque. Si se apaga o desinstala el plugin, la app vuelve a la base del tema; si vuelve el plugin, vuelve el tema.
+
+### Páginas
+
+Un plugin puede traer páginas propias (como las *webviews* de VS Code): un `.html` que la app muestra como una pantalla más. Empiezan en **MORE** y el usuario las puede arrastrar a la barra, con el título de la página.
+
+```json
+"contributes": { "pages": [{ "id": "hello", "title": "Hello", "file": "hello.html" }] }
+```
+
+- **Aislada:** la página corre en un marco aislado. Sin red (ni `fetch`, ni imágenes o scripts de fuera, ni navegar a otra URL), sin acceso a la app, a su almacenamiento ni a otras páginas: todo lo que necesite va en el propio `.html` (estilos y scripts *inline*, imágenes en `data:`).
+- **Habla solo con su plugin:** en la página, `pepino.postMessage(data)` y `pepino.onMessage(fn)`; en el plugin, `api.pages.postMessage(pageId, data)` y `api.pages.onMessage(pageId, fn)`. Lo que necesite de la app (archivos, red, avisos…) lo pide su plugin, con sus permisos.
+- **Con el tema de Pepino:** la página recibe sus colores como variables CSS (`--bg`, `--fg`, `--surface`, `--surface-variant`, `--primary`, `--on-primary`, `--error`, `--outline`, `--hairline`, `--git-*`, `--diff-*`) y cambian cuando el usuario cambia de tema.
+- **Vive mientras su plugin:** se monta la primera vez que se abre y conserva su estado mientras el plugin esté encendido. Si se apaga o desinstala, la página desaparece.
+- **Mensaje inicial:** una página suele avisar de que ya está lista (`pepino.postMessage({ type: 'ready' })`) para que su plugin le mande el estado. Hello world, que viene con Pepino, lo hace así.
 
 ## Entorno y límites
 
