@@ -1,13 +1,16 @@
 import type { ContributedTheme } from '../../ui/theme';
 import type { PluginHost, PluginLogEntry } from './host';
+import type { InstalledPlugins } from './installed';
 import { type LoadedPlugin, loadPlugins, type PluginSource } from './loader';
-import type { Permission } from './manifest';
+import { type Permission, parseManifest } from './manifest';
 import type { PluginPermissions } from './permissions';
+import type { PluginFilesContent } from './registry';
 
 /*
  * The plugins as SETTINGS → Plugins shows them (#49): every one found, on or
  * off, and the ones waiting for the user to approve what they ask for. It
  * starts a plugin only when it is on and all its permissions are approved.
+ * It installs, updates and uninstalls the ones from the repository (#56).
  */
 
 export type PluginEntryState = 'starting' | 'running' | 'failed' | 'off' | 'needs-approval';
@@ -31,6 +34,8 @@ export class PluginManager {
     private readonly host: PluginHost,
     private readonly permissions: PluginPermissions,
     private readonly sources: () => PluginSource[],
+    /** Where installed plugins are kept; without it, nothing can be installed. */
+    private readonly installed?: InstalledPlugins,
   ) {
     host.subscribe(() => this.changed());
   }
@@ -122,6 +127,47 @@ export class PluginManager {
     await this.permissions.approve(plugin.manifest);
     this.changed();
     await this.host.start(plugin);
+  }
+
+  /**
+   * Installs [files], downloaded for plugin [expected].id, or updates it to
+   * them: kept, approved for the permissions the user was shown
+   * ([expected].permissions, and no more), and started.
+   */
+  async install(files: PluginFilesContent, expected: { id: string; permissions: readonly Permission[] }) {
+    if (!this.installed) throw new Error('Plugins cannot be installed here');
+    const parsed = parseManifest(files.manifest);
+    if (!parsed.ok) throw new Error(`Not a plugin this Pepino runs: ${parsed.errors.join('; ')}`);
+    const { manifest } = parsed;
+    if (manifest.id !== expected.id) throw new Error(`The repository sent ${manifest.id}, not ${expected.id}`);
+    const unseen = manifest.permissions.filter((permission) => !expected.permissions.includes(permission));
+    if (unseen.length > 0)
+      throw new Error(`${manifest.name} asks for more than the repository says: ${unseen.join(', ')}`);
+    if (files.main.trim() === '' && manifest.contributes.commands.length > 0) {
+      throw new Error(`${manifest.name} has commands but no main.js`);
+    }
+    if (this.catalog.some((plugin) => plugin.manifest.id === manifest.id && plugin.builtin)) {
+      throw new Error(`${manifest.name} comes with Pepino`);
+    }
+
+    await this.installed.save(manifest.id, files);
+    const plugin: LoadedPlugin = { manifest, main: files.main, origin: `installed:${manifest.id}`, builtin: false };
+    this.catalog = [...this.catalog.filter((other) => other.manifest.id !== manifest.id), plugin];
+    await this.permissions.approve(manifest);
+    this.changed();
+    await this.host.start(plugin);
+  }
+
+  /** Uninstalls plugin [id]: stopped (its commands, themes and listeners gone), its files, permissions and data deleted. */
+  async uninstall(id: string): Promise<void> {
+    const plugin = this.find(id);
+    if (plugin.builtin || !this.installed)
+      throw new Error(`${plugin.manifest.name} comes with Pepino: turn it off instead`);
+    await this.host.remove(id);
+    await this.installed.remove(id);
+    await this.permissions.forget(id);
+    this.catalog = this.catalog.filter((other) => other.manifest.id !== id);
+    this.changed();
   }
 
   /** Turns plugin [id] on (it starts, once approved) or off (it stops: its commands go). */

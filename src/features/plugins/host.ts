@@ -264,6 +264,15 @@ export class PluginHost {
     this.changed();
   }
 
+  /** Plugin [id] is uninstalled (#56): stopped, and its status and api.storage gone. */
+  async remove(id: string): Promise<void> {
+    await this.stop(id);
+    this.plugins.delete(id);
+    this.data.delete(id);
+    await this.deps.storage?.set(pluginStorageKey(id), '{}');
+    this.changed();
+  }
+
   /** Stops every plugin. */
   async stopAll(): Promise<void> {
     await Promise.all([...this.plugins.keys()].map((id) => this.stop(id)));

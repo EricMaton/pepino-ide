@@ -12,7 +12,9 @@ import { type ActiveEditor, createActiveEditor } from '../features/editor/active
 import { createWorkerConnection } from '../features/plugins/connection';
 import { PluginHost } from '../features/plugins/host';
 import { builtinSource } from '../features/plugins/loader';
+import { capacitorPluginFolders, installedPlugins } from '../features/plugins/installed';
 import { PluginManager } from '../features/plugins/manager';
+import { createRegistry, type PluginRegistry } from '../features/plugins/registry';
 import { createPluginPermissions } from '../features/plugins/permissions';
 import { createRepositories, type Repositories } from '../features/git/repositories';
 import { createMemoryGitHub, createNativeGitHub, type GitHub } from '../features/github/github';
@@ -60,6 +62,8 @@ export interface Services {
   pluginHost: PluginHost;
   /** Every plugin found, on or off, and what the user approved it to do (#49). */
   plugins: PluginManager;
+  /** The plugins that can be installed (#55, #56): EricMaton/pepino-plugins. */
+  pluginRegistry: PluginRegistry;
   /** The editor's settings (#45): font size, tabs, wrap, line numbers; every editor follows. */
   editorSettings: EditorSettingsStore;
   /** The theme (#44): dark, light, the phone's, or custom; applied to the whole page. */
@@ -129,7 +133,8 @@ export function createServices(): Services {
     allowed: (plugin, permission) => pluginPermissions.allowed(plugin, permission),
     storage: preferences,
   });
-  const plugins = new PluginManager(pluginHost, pluginPermissions, () => [builtinSource()]);
+  const installed = installedPlugins(capacitorPluginFolders());
+  const plugins = new PluginManager(pluginHost, pluginPermissions, () => [builtinSource(), installed], installed);
   const theme = createThemeStore(preferences);
   // The themes plugins bring (#52), as they load, start and stop
   let pluginThemes = '';
@@ -158,6 +163,7 @@ export function createServices(): Services {
     activeEditor,
     pluginHost,
     plugins,
+    pluginRegistry: createRegistry(),
     preferences,
   };
 }

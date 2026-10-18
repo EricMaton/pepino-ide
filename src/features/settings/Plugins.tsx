@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useServices } from '../../app/services';
 import { Button, Dialog } from '../../ui/components';
 import { cx } from '../../ui/cx';
@@ -7,6 +7,7 @@ import { errorMessage } from '../projects/errors';
 import type { PluginEntry, PluginEntryState } from '../plugins/manager';
 import { PERMISSION_INFO } from '../plugins/permissions';
 import styles from './SettingsScreen.module.css';
+import { usePlugins } from './usePlugins';
 
 const STATE_LABELS: Record<PluginEntryState, string> = {
   starting: 'Starting',
@@ -16,20 +17,13 @@ const STATE_LABELS: Record<PluginEntryState, string> = {
   'needs-approval': 'Needs your approval',
 };
 
-/** The plugins, kept in step with the manager (and the log as plugins write to it). */
-function usePlugins() {
-  const { plugins } = useServices();
-  const [, setVersion] = useState(0);
-  useEffect(() => plugins.subscribe(() => setVersion((value) => value + 1)), [plugins]);
-  return { entries: plugins.entries(), rejected: plugins.rejected() };
-}
-
 /** Plugins (#49): each one, on or off, what it may do, and its log; approving what it asks for. */
 export function Plugins() {
   const { plugins } = useServices();
   const showSnackbar = useSnackbar();
   const { entries, rejected } = usePlugins();
   const [reviewing, setReviewing] = useState<PluginEntry | null>(null);
+  const [uninstalling, setUninstalling] = useState<PluginEntry | null>(null);
 
   const act = (work: Promise<void>) => work.catch((error: unknown) => showSnackbar(`Error: ${errorMessage(error)}`));
 
@@ -45,6 +39,7 @@ export function Plugins() {
             else void act(plugins.setEnabled(entry.plugin.manifest.id, on));
           }}
           onReview={() => setReviewing(entry)}
+          onUninstall={() => setUninstalling(entry)}
         />
       ))}
       {rejected.map(({ origin, errors }) => (
@@ -63,6 +58,35 @@ export function Plugins() {
           }}
         />
       )}
+      {uninstalling && (
+        <Dialog
+          title={`Uninstall ${uninstalling.plugin.manifest.name}?`}
+          eyebrow={`PLUGIN · v${uninstalling.plugin.manifest.version}`}
+          onClose={() => setUninstalling(null)}
+          actions={
+            <>
+              <Button variant="text" onClick={() => setUninstalling(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="filled"
+                onClick={() => {
+                  const { id, name } = uninstalling.plugin.manifest;
+                  setUninstalling(null);
+                  void act(plugins.uninstall(id).then(() => showSnackbar(`Uninstalled ${name}`)));
+                }}
+              >
+                Uninstall
+              </Button>
+            </>
+          }
+        >
+          <p className="body">
+            Its commands and themes go now, and so do what you allowed it and what it saved. You can install it again
+            from Available.
+          </p>
+        </Dialog>
+      )}
     </>
   );
 }
@@ -71,10 +95,12 @@ function PluginCard({
   entry,
   onToggle,
   onReview,
+  onUninstall,
 }: {
   entry: PluginEntry;
   onToggle: (on: boolean) => void;
   onReview: () => void;
+  onUninstall: () => void;
 }) {
   const { plugins } = useServices();
   const { manifest, builtin } = entry.plugin;
@@ -106,6 +132,11 @@ function PluginCard({
       {entry.state === 'needs-approval' && (
         <Button variant="filled" className={styles.cardAction} onClick={onReview}>
           Review permissions
+        </Button>
+      )}
+      {!builtin && (
+        <Button variant="text" className={styles.cardAction} onClick={onUninstall}>
+          Uninstall
         </Button>
       )}
       <Button variant="text" className={styles.cardAction} onClick={() => setShowingLog((value) => !value)}>
