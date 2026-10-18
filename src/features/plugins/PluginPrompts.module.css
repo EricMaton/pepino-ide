@@ -36,6 +36,25 @@
   font-family: var(--font-mono);
 }
 
+/* Getting a key (#190): the steps, and what went wrong */
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-5);
+}
+
+.stepAction {
+  display: flex;
+  margin-top: var(--space-2);
+}
+
+.problem {
+  margin: 0 0 var(--space-3);
+  color: var(--error);
+}
+
 .empty {
   margin: 0;
   padding: var(--space-4) var(--space-3);

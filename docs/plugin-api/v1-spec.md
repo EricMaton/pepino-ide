@@ -54,7 +54,7 @@ El comando sale en la búsqueda de arriba como **Hola: Say hello** y el aviso co
 | `description` | no | Una frase; sale en PLUGINS |
 | `permissions` | no | Lista de [permisos](#permisos); los repetidos se ignoran |
 | `networkJustification` | con `network` | Por qué necesita internet; se enseña al aprobar |
-| `secrets` | no | Claves del propio usuario que necesita: `[{ key, label, host, header, help? }]`. Ver [Claves del usuario](#claves-del-usuario). Necesitan el permiso `network` |
+| `secrets` | no | Claves del propio usuario que necesita: `[{ key, label, host, header, help?, prefix?, signIn? }]`. Ver [Claves del usuario](#claves-del-usuario). Necesitan el permiso `network` |
 | `contributes.commands` | no | `[{ id, title }]`. `id`: letras, números, `-`, `_`. Cada uno tiene que registrarse en `main.js` |
 | `contributes.settings` | no | `[{ key, type, default, title? }]`, `type`: `"number"`, `"string"` o `"boolean"`, y `default` de ese tipo. El usuario los cambia en PLUGINS → Manage |
 | `contributes.themes` | no | Ver [Temas](#temas) |
@@ -105,6 +105,7 @@ Todo lo de `api` que habla con la app devuelve una **promesa**; `api.settings.ge
 | `api.fs.search(query, { limit, caseSensitive })` | `fs.read` | Las líneas que contienen `query`: `[{ path, line, column, text }]`, hasta 200 |
 | `api.secrets.has(key)` | — | Si el usuario guardó esa clave (`true`/`false`). Nunca da la clave |
 | `api.secrets.ask(key)` | — | La app le pide la clave al usuario (campo oculto, con `help`); resuelve a `true` si la guardó, `false` si canceló |
+| `api.secrets.signIn(key)` | — | Para una clave con `signIn`: la app abre el inicio de sesión del proveedor en el navegador y guarda la clave que este le da. `true` si se guardó, `false` si el usuario canceló |
 | `api.secrets.forget(key)` | — | La borra |
 | `api.pages.postMessage(pageId, data)` | — | Manda `data` (JSON, hasta 1 MB) a su página `pageId`. Si aún no está abierta, espera a que se abra |
 | `api.pages.onMessage(pageId, fn)` | — | `fn(data)` con lo que su página le manda |
@@ -177,6 +178,20 @@ Cada persona usa **su propia cuenta**: un plugin que necesita una clave de API (
 - **El plugin nunca la ve:** cuando hace `api.network.fetch` a `https://<host>/…`, Pepino hace la petición por su lado nativo y la añade en `header`. Si el plugin pone ese header, se sustituye. A cualquier otro host, o sin HTTPS, no va.
 - **Se borra al desinstalar** el plugin.
 - En la web (desarrollo) las claves solo duran la sesión.
+- **`prefix`**: lo que va delante de la clave en su cabecera, por ejemplo `"Bearer "` para `authorization`.
+- **Pedirla guiado** (#190): si hay `help`, el diálogo de la app lo abre en el navegador, explica los pasos y tiene **Paste key**: el lado nativo lee el portapapeles y la guarda directamente, sin pasar por JavaScript. También se puede escribir.
+- **Iniciar sesión en vez de pegar una clave** (#190): con `"signIn": "openrouter"` (y `host: "openrouter.ai"`), `api.secrets.signIn(key)` abre el inicio de sesión de OpenRouter en el navegador (PKCE). Al permitir, OpenRouter vuelve a una página pública que devuelve el control a Pepino (`pepino://auth/openrouter?code=…`), y la parte nativa cambia el código por la clave del usuario y la guarda. Ni la página, ni el plugin, ni el JavaScript de la app la ven.
+
+```json
+{
+  "key": "openrouter",
+  "label": "OpenRouter account",
+  "host": "openrouter.ai",
+  "header": "authorization",
+  "prefix": "Bearer ",
+  "signIn": "openrouter"
+}
+```
 
 ## Entorno y límites
 

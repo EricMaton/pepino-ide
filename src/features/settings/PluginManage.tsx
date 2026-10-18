@@ -212,9 +212,26 @@ function Secrets({ manifest }: { manifest: PluginManifest }) {
             </span>
           </p>
           <div className={styles.cardButtons}>
-            <Button variant="outlined" onClick={() => setEntering(secret)}>
-              {saved[secret.key] ? 'Change' : 'Set'}
-            </Button>
+            {secret.signIn ? (
+              <Button
+                variant="outlined"
+                onClick={() =>
+                  void pluginHost.signInSecret(manifest, secret.key).then(
+                    (signedIn) => {
+                      setChecked((count) => count + 1);
+                      if (signedIn) showSnackbar(`Signed in: ${secret.label} saved`);
+                    },
+                    (error: unknown) => showSnackbar(`Error: ${errorMessage(error)}`),
+                  )
+                }
+              >
+                {saved[secret.key] ? 'Sign in again' : 'Sign in'}
+              </Button>
+            ) : (
+              <Button variant="outlined" onClick={() => setEntering(secret)}>
+                {saved[secret.key] ? 'Change' : 'Set'}
+              </Button>
+            )}
             {saved[secret.key] && (
               <Button
                 variant="text"
@@ -233,10 +250,15 @@ function Secrets({ manifest }: { manifest: PluginManifest }) {
           host={entering.host}
           help={entering.help}
           replacing={saved[entering.key]}
+          onPaste={() => pluginHost.pasteSecret(manifest, entering.key)}
+          onOpenHelp={entering.help ? () => pluginHost.openSecretHelp(manifest, entering.key) : undefined}
           onAnswer={(value) => {
             const secret = entering;
             setEntering(null);
-            if (value) void act(pluginHost.saveSecret(manifest, secret.key, value), `${secret.label} saved`);
+            if (value === true) {
+              setChecked((count) => count + 1);
+              showSnackbar(`${secret.label} saved`);
+            } else if (value) void act(pluginHost.saveSecret(manifest, secret.key, value), `${secret.label} saved`);
           }}
         />
       )}
