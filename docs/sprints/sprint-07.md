@@ -5,13 +5,13 @@
 
 ## Tareas
 
-- [ ] Plugin de ejemplo 1: formateador simple (JS/CSS/HTML)
-- [ ] Plugin de ejemplo 2: tema custom
-- [ ] Plugin de ejemplo 3: snippet manager
-- [ ] Publicar spec v1 de la API en `docs/plugin-api/v1-spec.md` (actualizar con lo aprendido)
-- [ ] Repo de plugins: repo de GitHub con `index.json` (sin backend propio)
-- [ ] Instalar/desinstalar plugins desde el repo (descargar, verificar permisos, activar)
-- [ ] Pantalla de gestión de plugins: lista, permisos, enable/disable
+- [x] Plugin de ejemplo 1: formateador simple (JS/CSS/HTML)
+- [x] Plugin de ejemplo 2: tema custom
+- [x] Plugin de ejemplo 3: snippet manager
+- [x] Publicar spec v1 de la API en `docs/plugin-api/v1-spec.md` (actualizar con lo aprendido)
+- [x] Repo de plugins: repo de GitHub con `index.json` (sin backend propio)
+- [x] Instalar/desinstalar plugins desde el repo (descargar, verificar permisos, activar)
+- [x] Pantalla de gestión de plugins: lista, permisos, enable/disable
 
 ## Criterios de aceptación
 

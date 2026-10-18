@@ -24,7 +24,7 @@ See [docs/decisions](docs/decisions) for the ADRs (stack: [ADR-004](docs/decisio
 
 ## Status
 
-🚧 Sprint 5 (Terminal v1) in progress: projects, editor, git and GitHub are in place.
+✅ Sprint 7 (real plugins + API v1) done: projects, editor, git and GitHub, terminal, themes and plugins (installed from [pepino-plugins](https://github.com/EricMaton/pepino-plugins)) are in place. Next: Sprint 8 (AI agent spike).
 
 ## Setup
 
