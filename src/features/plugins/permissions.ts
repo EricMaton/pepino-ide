@@ -1,11 +1,12 @@
 import type { KeyValueStore } from '../../core/storage';
-import type { Permission, PluginManifest } from './manifest';
+import type { Permission, PluginManifest, SettingValue } from './manifest';
 
 /*
  * What the user let each plugin do (#49, spec v1): permissions are declared
  * in the manifest, approved by the user before the plugin first runs, and
  * checked by the host on every call. A new version asking for more is asked
- * about again, for the new ones only. Whether a plugin is on is kept here too.
+ * about again, for the new ones only. Whether a plugin is on is kept here
+ * too, and the values the user gave its settings (#57).
  */
 
 /** Each permission, as the approval dialog explains it. */
@@ -27,6 +28,8 @@ export const PLUGINS_STATE_KEY = 'pepino.plugins';
 interface SavedPlugin {
   enabled: boolean;
   approved: Permission[];
+  /** The user's values for its settings, by key; a setting not here is its default. */
+  settings?: Record<string, SettingValue>;
 }
 
 export interface PluginPermissions {
@@ -43,6 +46,12 @@ export interface PluginPermissions {
   setEnabled(id: string, enabled: boolean): Promise<void>;
   /** Plugin [id] was uninstalled (#56): what it was allowed goes with it. */
   forget(id: string): Promise<void>;
+  /** Takes back every permission given to plugin [id] (#57): it needs approving again. */
+  revoke(id: string): Promise<void>;
+  /** [plugin]'s settings: the user's value for each, or its default. */
+  settings(plugin: PluginManifest): Record<string, SettingValue>;
+  /** Keeps the user's [values] for plugin [plugin]'s settings, each one it has and of its type. */
+  setSettings(plugin: PluginManifest, values: Record<string, SettingValue>): Promise<void>;
 }
 
 export function createPluginPermissions(preferences: KeyValueStore): PluginPermissions {
@@ -71,6 +80,27 @@ export function createPluginPermissions(preferences: KeyValueStore): PluginPermi
     },
     async setEnabled(id, enabled) {
       saved = { ...saved, [id]: { ...entry(id), enabled } };
+      await save();
+    },
+    async revoke(id) {
+      saved = { ...saved, [id]: { ...entry(id), approved: [] } };
+      await save();
+    },
+    settings(plugin) {
+      const own = entry(plugin.id).settings ?? {};
+      return Object.fromEntries(
+        plugin.contributes.settings.map(({ key, type, default: fallback }) => [
+          key,
+          typeof own[key] === type ? own[key] : fallback,
+        ]),
+      );
+    },
+    async setSettings(plugin, values) {
+      const settings = { ...entry(plugin.id).settings };
+      for (const { key, type } of plugin.contributes.settings) {
+        if (key in values && typeof values[key] === type) settings[key] = values[key];
+      }
+      saved = { ...saved, [plugin.id]: { ...entry(plugin.id), settings } };
       await save();
     },
     async forget(id) {

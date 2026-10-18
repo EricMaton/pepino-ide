@@ -60,12 +60,12 @@ plugin.onActivate(api => {
 | `api.editor.insert(text)` | `editor.write` | Lo pone en lugar de la selección, con el cursor detrás |
 | `api.editor.insertSnippet(body)` | `editor.write` | Igual, como snippet: cada `	` es una sangría del editor (espacios o tabulador, según el usuario), las líneas siguientes empiezan a la sangría de la línea donde entra, y el cursor acaba en `$0` |
 | `api.editor.onSave(fn)` / `onOpen(fn)` / `onChange(fn)` | — | Reciben `{ path }`; `onChange`, una vez por pausa al escribir (300 ms) |
-| `api.settings.get(key)` | — | Síncrono: el valor por defecto de `contributes.settings` (los del usuario, #57) |
+| `api.settings.get(key)` | — | Síncrono: el valor que el usuario le dio en PLUGINS → Manage, o el de `contributes.settings` por defecto. Si el usuario lo cambia, el plugin se reinicia para leerlo (#57) |
 | `api.window.showMessage(text)` | — | Un aviso (snackbar) con el nombre del plugin delante |
 | `api.window.showQuickPick(items, { title })` | — | Una lista para elegir (`items`: textos o `{ label, detail }`, hasta 1000); con más de 6 se puede filtrar. Resuelve al **índice** elegido, o `null` si se cierra (#53) |
 | `api.window.showInput({ title, placeholder, value })` | — | Pide una línea de texto; resuelve al texto, o `null` si se cancela |
 | `api.storage.get(key)` / `set(key, value)` / `delete(key)` | — | Datos del propio plugin (JSON), guardados entre arranques; hasta 256 KB por plugin. `get` de una clave que no hay da `null` |
-| `console.log/warn/error` | — | Al log del plugin (SETTINGS → Plugins, #57) |
+| `console.log/warn/error` | — | Al log del plugin (PLUGINS → Manage) |
 
 Una llamada sin el permiso se rechaza en el host (la promesa falla con `Not allowed: <permiso>`) y queda en el log del plugin. `git.*`, `fs.*` y la red llegan con los plugins de ejemplo (#51–#53) y la gestión de plugins (Sprint 7).
 
@@ -157,7 +157,11 @@ En PLUGINS → **Available** salen los plugins del repositorio ([EricMaton/pepin
 4. Si el repositorio tiene una versión más nueva, sale **Update to vX**, y la nueva sustituye a la vieja sin reiniciar.
 5. **Uninstall** lo para (sus comandos, temas y listeners se van al momento) y borra sus archivos, lo que se le permitió y lo que guardó en `api.storage`.
 
-Los que vienen con Pepino (Hello world, Word count) no se desinstalan: se apagan. Formatter, Pickle themes y Snippets se instalan desde el repositorio: ya no vienen dentro de la app.
+Los que vienen con Pepino (Hello world, Word count) no se desinstalan: se apagan.
+
+### Gestionar un plugin (#57)
+
+En PLUGINS cada plugin tiene **Manage**: sus permisos (cuáles están permitidos, y **Take back permissions**, que lo para hasta que el usuario lo vuelva a permitir), sus ajustes (`contributes.settings`: texto, número o sí/no), lo que aporta (comandos y temas) y su log. Formatter, Pickle themes y Snippets se instalan desde el repositorio: ya no vienen dentro de la app.
 
 `install → (usuario aprueba permisos) → onActivate → ... → onDeactivate → uninstall`
 

@@ -81,6 +81,8 @@ export interface PluginHostDeps {
   allowed?: (plugin: PluginManifest, permission: Permission) => boolean;
   /** Where api.storage persists (the app's preferences); only in memory without it. */
   storage?: KeyValueStore;
+  /** [plugin]'s settings as the user set them (#57); each one's default without it. */
+  settings?: (plugin: PluginManifest) => Record<string, SettingValue>;
   options?: SandboxOptions;
 }
 
@@ -225,7 +227,7 @@ export class PluginHost {
     try {
       await connection.init(
         plugin.main,
-        settingsOf(manifest),
+        this.deps.settings?.(manifest) ?? settingsOf(manifest),
         this.deps.options ?? DEFAULT_SANDBOX_OPTIONS,
         manifest.permissions.filter((permission) => this.may(manifest, permission)),
       );
@@ -408,7 +410,7 @@ export class PluginHost {
   }
 }
 
-/** The plugin's settings as it starts: each one's default (the user's own values come with #57). */
+/** A plugin's settings with nobody's values: each one's default. */
 function settingsOf(manifest: PluginManifest): Record<string, SettingValue> {
   return Object.fromEntries(manifest.contributes.settings.map((setting) => [setting.key, setting.default]));
 }

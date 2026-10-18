@@ -132,6 +132,7 @@ export function createServices(): Services {
     connect: createWorkerConnection,
     allowed: (plugin, permission) => pluginPermissions.allowed(plugin, permission),
     storage: preferences,
+    settings: (plugin) => pluginPermissions.settings(plugin),
   });
   const installed = installedPlugins(capacitorPluginFolders());
   const plugins = new PluginManager(pluginHost, pluginPermissions, () => [builtinSource(), installed], installed);
