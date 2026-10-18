@@ -1,0 +1,20 @@
+/* A plugin's page (#185): the whole content area, like the terminal */
+.page {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.page[hidden] {
+  display: none;
+}
+
+.frame {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: none;
+  background: var(--bg);
+}

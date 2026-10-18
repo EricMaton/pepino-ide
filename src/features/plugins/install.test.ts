@@ -167,7 +167,7 @@ describe('the plugins repository (#55, #56)', () => {
   it('downloads a plugin’s files, and refuses one that is not what the index lists', async () => {
     const { registry, served } = repository(FILES);
     const [entry] = await registry.list();
-    expect(await registry.download(entry)).toEqual({ manifest: MANIFEST(), main: MAIN });
+    expect(await registry.download(entry)).toEqual({ manifest: MANIFEST(), main: MAIN, assets: {} });
 
     served['plugins/counter/main.js'] = MAIN.replace('+ 1', '+ 1000');
     await expect(registry.download(entry)).rejects.toThrow(

@@ -1,4 +1,4 @@
-import { PERMISSIONS, type Permission } from './manifest';
+import { PAGE_FILE, PERMISSIONS, type Permission } from './manifest';
 
 /*
  * The plugins that can be installed (#55, #56): EricMaton/pepino-plugins on
@@ -9,8 +9,8 @@ import { PERMISSIONS, type Permission } from './manifest';
 
 export const REGISTRY_URL = 'https://raw.githubusercontent.com/EricMaton/pepino-plugins/main/';
 
-/** The files a plugin is made of; plugin.json is the only one it must have. */
-const PLUGIN_FILES = ['plugin.json', 'main.js'] as const;
+/** The files a plugin is made of: plugin.json (the only one it must have), main.js, and its pages' HTML (#185). */
+const isPluginFile = (name: string) => name === 'plugin.json' || name === 'main.js' || PAGE_FILE.test(name);
 
 export interface RegistryEntry {
   id: string;
@@ -22,7 +22,7 @@ export interface RegistryEntry {
   /** Its folder in the repository: `plugins/<folder>`. */
   path: string;
   /** Each of its files, by name, and its SHA-256 (hex). */
-  files: Partial<Record<(typeof PLUGIN_FILES)[number], string>>;
+  files: Record<string, string>;
 }
 
 /** A plugin as downloaded: what an installed one is made of. */
@@ -30,6 +30,8 @@ export interface PluginFilesContent {
   manifest: string;
   /** Empty for a plugin without main.js. */
   main: string;
+  /** Its pages' HTML, by file name (#185). */
+  assets?: Record<string, string>;
 }
 
 export interface PluginRegistry {
@@ -68,8 +70,7 @@ export function parseIndex(text: string): RegistryEntry[] {
       files !== null &&
       typeof files['plugin.json'] === 'string' &&
       Object.entries(files).every(
-        ([name, hash]) =>
-          (PLUGIN_FILES as readonly string[]).includes(name) && typeof hash === 'string' && SHA256.test(hash),
+        ([name, hash]) => isPluginFile(name) && typeof hash === 'string' && SHA256.test(hash),
       );
     if (!valid) {
       console.warn('Plugins index: an entry left out', item);
@@ -83,7 +84,7 @@ export function parseIndex(text: string): RegistryEntry[] {
       ...(typeof item.description === 'string' && { description: item.description }),
       permissions: item.permissions as Permission[],
       path: item.path as string,
-      files: files as RegistryEntry['files'],
+      files: files as Record<string, string>,
     });
   }
   return entries;
@@ -124,7 +125,8 @@ export function createRegistry(
         }),
       );
       const files = Object.fromEntries(fetched);
-      return { manifest: files['plugin.json'], main: files['main.js'] ?? '' };
+      const { 'plugin.json': manifest, 'main.js': main, ...assets } = files;
+      return { manifest, main: main ?? '', assets };
     },
   };
 }

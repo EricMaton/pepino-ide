@@ -4,7 +4,7 @@ import { cx } from '../ui/cx';
 import { BranchIcon, FolderIcon, MoreScreensIcon, PluginIcon, PromptIcon, SlidersIcon } from '../ui/icons';
 import { useSnackbar } from '../ui/useSnackbar';
 import styles from './App.module.css';
-import { type AppDestination, DESTINATIONS } from './destinations';
+import { type AppDestination, DESTINATIONS, isPluginPage, type NativeDestination } from './destinations';
 import {
   DEFAULT_ORDER,
   layoutNav,
@@ -16,7 +16,7 @@ import {
 } from './navLayout';
 import { useServices } from './services';
 
-const NAV_ICONS: Record<AppDestination, typeof FolderIcon> = {
+const NAV_ICONS: Record<NativeDestination, typeof FolderIcon> = {
   projects: FolderIcon,
   git: BranchIcon,
   terminal: PromptIcon,
@@ -24,7 +24,8 @@ const NAV_ICONS: Record<AppDestination, typeof FolderIcon> = {
   settings: SlidersIcon,
 };
 
-const label = (id: AppDestination) => DESTINATIONS.find((destination) => destination.id === id)!.label;
+/** A plugin's page wears the plugins' icon. */
+const iconOf = (id: AppDestination) => (isPluginPage(id) ? PluginIcon : NAV_ICONS[id]);
 
 /** How long a finger stays still on a destination before it can be dragged. */
 const HOLD_MS = 350;
@@ -51,13 +52,20 @@ interface Drag {
 export function NavBar({
   destination,
   available,
+  pages = [],
   onSelect,
 }: {
   destination: AppDestination;
-  /** What this platform has (no TERMINAL on iOS or the web). */
+  /** What this platform has (no TERMINAL on iOS or the web), and the plugins' pages. */
   available: readonly AppDestination[];
+  /** The plugins' pages' titles (#185). */
+  pages?: readonly { destination: AppDestination; title: string }[];
   onSelect: (id: AppDestination) => void;
 }) {
+  const label = (id: AppDestination) =>
+    isPluginPage(id)
+      ? (pages.find((page) => page.destination === id)?.title ?? 'Plugin').toUpperCase()
+      : DESTINATIONS.find((info) => info.id === id)!.label;
   const { preferences } = useServices();
   const showSnackbar = useSnackbar();
   const [order, setOrder] = useState<NavOrder>(DEFAULT_ORDER);
@@ -202,7 +210,7 @@ export function NavBar({
             ? styles.dropAfter
             : undefined
         : undefined;
-    const Icon = NAV_ICONS[id];
+    const Icon = iconOf(id);
     return (
       <button
         key={id}
@@ -257,7 +265,7 @@ export function NavBar({
       {drag && (
         <div className={styles.navGhost} style={{ left: drag.x, top: drag.y }} aria-hidden>
           {(() => {
-            const Icon = NAV_ICONS[drag.id];
+            const Icon = iconOf(drag.id);
             return <Icon size={22} />;
           })()}
           <span className="label">{label(drag.id)}</span>

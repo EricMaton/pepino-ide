@@ -102,6 +102,10 @@ const PRELUDE = `
       onOpen: (listener) => on('file.opened', listener),
     }),
     settings: Object.freeze({ get: (key) => settings[key] }),
+    pages: Object.freeze({
+      postMessage: (pageId, data) => call('pages.postMessage', String(pageId), data === undefined ? null : data),
+      onMessage: (pageId, listener) => on('page.message:' + String(pageId), listener),
+    }),
     window: Object.freeze({
       showMessage: (text) => call('window.showMessage', String(text)),
       showQuickPick: (items, options) =>

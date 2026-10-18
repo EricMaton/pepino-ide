@@ -96,10 +96,19 @@ export function moveDestination(
   return { order: { bar: nextBar.filter((other) => other !== displaced), more: nextMore }, displaced };
 }
 
-/** The saved arrangement read back; anything broken or unknown is left out (the default when nothing is). */
+/**
+ * The saved arrangement read back; anything broken or unknown is left out
+ * (the default when nothing is). A plugin's page is kept even while its
+ * plugin has not loaded (or is off): it takes its place again when it is back.
+ */
 export function parseNavOrder(raw: string | null, known: readonly AppDestination[]): NavOrder {
   const ids = (value: unknown): AppDestination[] =>
-    Array.isArray(value) ? value.filter((id): id is AppDestination => known.includes(id)) : [];
+    Array.isArray(value)
+      ? value.filter(
+          (id): id is AppDestination =>
+            known.includes(id) || (typeof id === 'string' && /^plugin:[^.\s]+(\.[^.\s]+)+$/.test(id)),
+        )
+      : [];
   try {
     const value = raw ? (JSON.parse(raw) as unknown) : null;
     if (value && typeof value === 'object' && 'bar' in value) {

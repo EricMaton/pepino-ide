@@ -46,7 +46,7 @@ function plugin(main: string, permissions: Permission[] = [], commands = ['run']
     }),
   );
   if (!parsed.ok) throw new Error(parsed.errors.join('; '));
-  return { manifest: parsed.manifest, main, origin: 'test', builtin: false };
+  return { manifest: parsed.manifest, main, assets: {}, origin: 'test', builtin: false };
 }
 
 function setUp() {

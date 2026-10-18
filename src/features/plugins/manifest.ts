@@ -3,7 +3,7 @@ import { parseThemeColors, type ThemeBase, type ThemeColors } from '../../ui/the
 /*
  * A plugin's manifest, plugin.json (#46, docs/plugin-api/v1-spec.md): who it
  * is, which API version it speaks, the permissions it asks for, and what it
- * contributes (commands, toolbar keys, settings, themes). Read from untrusted
+ * contributes (commands, toolbar keys, settings, themes, pages). Read from untrusted
  * JSON: everything is checked, and a plugin whose manifest fails is not loaded.
  */
 
@@ -51,6 +51,18 @@ export interface ThemeContribution {
   colors: ThemeColors;
 }
 
+/** A page of the plugin's own (#185): one of its HTML files, shown isolated as a destination of the app. */
+export interface PageContribution {
+  /** Unique within the plugin; the app's destination is `plugin:<plugin id>.<id>`. */
+  id: string;
+  title: string;
+  /** The HTML file, in the plugin's folder. */
+  file: string;
+}
+
+/** The name of a page's file: an .html in the plugin's own folder. */
+export const PAGE_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]*\.html$/;
+
 export interface PluginManifest {
   /** Reverse-domain: "com.example.beautifier". */
   id: string;
@@ -66,6 +78,7 @@ export interface PluginManifest {
     toolbar: ToolbarContribution[];
     settings: SettingContribution[];
     themes: ThemeContribution[];
+    pages: PageContribution[];
   };
 }
 
@@ -162,6 +175,17 @@ export function parseManifest(text: string): ManifestResult {
     }
   }
 
+  const pages: PageContribution[] = [];
+  for (const [i, page] of list('pages').entries()) {
+    if (!isObject(page) || !isText(page.id) || !LOCAL_ID.test(page.id) || !isText(page.title)) {
+      errors.push(`contributes.pages[${i}]: { id, title, file }`);
+    } else if (!isText(page.file) || !PAGE_FILE.test(page.file)) {
+      errors.push(`contributes.pages[${i}].file: an .html file in the plugin's folder`);
+    } else if (pages.some((other) => other.id === page.id)) {
+      errors.push(`contributes.pages[${i}]: "${page.id}" twice`);
+    } else pages.push({ id: page.id, title: page.title.trim(), file: page.file });
+  }
+
   const themes: ThemeContribution[] = [];
   for (const [i, theme] of list('themes').entries()) {
     if (
@@ -194,7 +218,7 @@ export function parseManifest(text: string): ManifestResult {
       ...(typeof raw.description === 'string' && { description: raw.description }),
       permissions,
       ...(isText(raw.networkJustification) && { networkJustification: raw.networkJustification }),
-      contributes: { commands, toolbar, settings, themes },
+      contributes: { commands, toolbar, settings, themes, pages },
     },
   };
 }

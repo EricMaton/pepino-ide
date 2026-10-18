@@ -16,6 +16,8 @@ export interface PluginPackage {
   manifest: string;
   /** Empty for a plugin with nothing to run, such as one that only brings themes. */
   main: string;
+  /** Its other files, by name: its pages' HTML (#185). */
+  assets?: Record<string, string>;
   /** Comes with Pepino: it can be turned off, not uninstalled. */
   builtin: boolean;
 }
@@ -27,6 +29,8 @@ export interface PluginSource {
 export interface LoadedPlugin {
   manifest: PluginManifest;
   main: string;
+  /** Its other files, by name: its pages' HTML (#185). */
+  assets: Record<string, string>;
   origin: string;
   builtin: boolean;
 }
@@ -49,10 +53,14 @@ export async function loadPlugins(sources: readonly PluginSource[]): Promise<Loa
         result.rejected.push({ origin: found.origin, errors: [`id "${parsed.manifest.id}" is already loaded`] });
       } else if (found.main.trim() === '' && parsed.manifest.contributes.commands.length > 0) {
         result.rejected.push({ origin: found.origin, errors: ['main.js is empty, and the plugin has commands'] });
+      } else if (parsed.manifest.contributes.pages.some((page) => found.assets?.[page.file] === undefined)) {
+        const missing = parsed.manifest.contributes.pages.filter((page) => found.assets?.[page.file] === undefined);
+        result.rejected.push({ origin: found.origin, errors: missing.map((page) => `${page.file}: not found`) });
       } else {
         result.plugins.push({
           manifest: parsed.manifest,
           main: found.main,
+          assets: found.assets ?? {},
           origin: found.origin,
           builtin: found.builtin,
         });
@@ -94,6 +102,7 @@ export function builtinSource(): PluginSource {
     eager: true,
   });
   const mains = import.meta.glob<string>('../../plugins/*/main.js', { query: '?raw', import: 'default', eager: true });
+  const pages = import.meta.glob<string>('../../plugins/*/*.html', { query: '?raw', import: 'default', eager: true });
   return {
     async list() {
       return Object.entries(manifests).map(([path, manifest]) => {
@@ -102,6 +111,11 @@ export function builtinSource(): PluginSource {
           origin: `builtin:${folder.split('/').at(-2)}`,
           manifest,
           main: mains[`${folder}main.js`] ?? '',
+          assets: Object.fromEntries(
+            Object.entries(pages)
+              .filter(([path]) => path.startsWith(folder))
+              .map(([path, html]) => [path.slice(folder.length), html]),
+          ),
           builtin: true,
         };
       });

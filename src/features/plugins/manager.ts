@@ -13,6 +13,18 @@ import type { PluginFilesContent } from './registry';
  * It installs, updates and uninstalls the ones from the repository (#56).
  */
 
+/** A running plugin's page (#185), as the app shows it. */
+export interface PluginPage {
+  /** The app's destination: `plugin:<plugin id>.<page id>`. */
+  destination: `plugin:${string}`;
+  pluginId: string;
+  pageId: string;
+  title: string;
+  /** The plugin's name. */
+  plugin: string;
+  html: string;
+}
+
 export type PluginEntryState = 'starting' | 'running' | 'failed' | 'off' | 'needs-approval';
 
 export interface PluginEntry {
@@ -60,6 +72,28 @@ export class PluginManager {
     await Promise.all(plugins.filter((plugin) => this.startable(plugin)).map((plugin) => this.host.start(plugin)));
     this.loaded = true;
     this.changed();
+  }
+
+  /** The pages of the running plugins (#185), in the order they were found. */
+  pages(): PluginPage[] {
+    const running = new Set(
+      this.host
+        .list()
+        .filter((status) => status.state === 'running')
+        .map((status) => status.manifest.id),
+    );
+    return this.catalog
+      .filter((plugin) => running.has(plugin.manifest.id))
+      .flatMap(({ manifest, assets }) =>
+        manifest.contributes.pages.map((page) => ({
+          destination: `plugin:${manifest.id}.${page.id}` as const,
+          pluginId: manifest.id,
+          pageId: page.id,
+          title: page.title,
+          plugin: manifest.name,
+          html: assets[page.file] ?? '',
+        })),
+      );
   }
 
   /** The themes the running plugins bring (#52); null until the plugins have loaded. */
@@ -146,12 +180,22 @@ export class PluginManager {
     if (files.main.trim() === '' && manifest.contributes.commands.length > 0) {
       throw new Error(`${manifest.name} has commands but no main.js`);
     }
+    const assets = files.assets ?? {};
+    const missing = manifest.contributes.pages.filter((page) => assets[page.file] === undefined);
+    if (missing.length > 0)
+      throw new Error(`${manifest.name}: ${missing.map((page) => page.file).join(', ')} not found`);
     if (this.catalog.some((plugin) => plugin.manifest.id === manifest.id && plugin.builtin)) {
       throw new Error(`${manifest.name} comes with Pepino`);
     }
 
     await this.installed.save(manifest.id, files);
-    const plugin: LoadedPlugin = { manifest, main: files.main, origin: `installed:${manifest.id}`, builtin: false };
+    const plugin: LoadedPlugin = {
+      manifest,
+      main: files.main,
+      assets,
+      origin: `installed:${manifest.id}`,
+      builtin: false,
+    };
     this.catalog = [...this.catalog.filter((other) => other.manifest.id !== manifest.id), plugin];
     await this.permissions.approve(manifest);
     this.changed();

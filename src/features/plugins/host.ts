@@ -102,6 +102,8 @@ export class PluginHost {
   private readonly listeners = new Set<() => void>();
   private notifier: (text: string) => void = (text) => console.info(text);
   private prompter: PluginPrompter | null = null;
+  /** Where a plugin's messages to its pages go (the pages on screen, #185). */
+  private pageSink: (pluginId: string, pageId: string, data: unknown) => void = () => undefined;
   /** Each plugin's api.storage, once read. */
   private readonly data = new Map<string, Promise<Record<string, unknown>>>();
 
@@ -115,6 +117,20 @@ export class PluginHost {
   /** Who shows api.window.showQuickPick / showInput (the app, once it is up); without one, they are dismissed. */
   setPrompter(prompter: PluginPrompter | null) {
     this.prompter = prompter;
+  }
+
+  /** Where api.pages.postMessage delivers: the app's plugin pages, once they are up. */
+  setPageSink(sink: (pluginId: string, pageId: string, data: unknown) => void) {
+    this.pageSink = sink;
+  }
+
+  /** Page [pageId] of plugin [pluginId] posted [data]: its plugin hears it (api.pages.onMessage). */
+  async fromPage(pluginId: string, pageId: string, data: unknown): Promise<void> {
+    const running = this.plugins.get(pluginId);
+    if (!running || running.status.state !== 'running' || !running.connection) return;
+    await running.connection
+      .emit(`page.message:${pageId}`, data)
+      .catch((failure: unknown) => this.record(running, 'error', `page ${pageId}: ${messageOf(failure)}`));
   }
 
   /** Plugin [id]'s api.storage. */
@@ -340,6 +356,15 @@ export class PluginHost {
       'window.showMessage': {
         run: ([text]) => {
           this.notifier(`${manifest.name}: ${String(text)}`);
+        },
+      },
+      'pages.postMessage': {
+        run: ([pageId, data]) => {
+          const page = String(pageId);
+          if (!manifest.contributes.pages.some((declared) => declared.id === page)) {
+            throw new Error(`The plugin has no page "${page}"`);
+          }
+          this.pageSink(manifest.id, page, data ?? null);
         },
       },
       'window.showQuickPick': {

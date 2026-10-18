@@ -113,6 +113,7 @@ describe('plugin watchdog (#50)', () => {
     await host.start({
       manifest: parsed.manifest,
       main: `plugin.onActivate((api) => api.commands.register('go', () => {}));`,
+      assets: {},
       origin: 'test',
       builtin: false,
     });
