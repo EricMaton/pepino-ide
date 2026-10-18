@@ -2,6 +2,8 @@ import type { CommandDispatcher, CommandRegistry } from '../../core/commands';
 import type { EventChannel } from '../../core/events';
 import type { KeyValueStore } from '../../core/storage';
 import type { ActiveEditor } from '../editor/activeEditor';
+import { basename } from '../projects/paths';
+import type { Workspace } from '../workspace/workspace';
 import type { PluginConnection } from './connection';
 import { secretName, type SecretVault } from './secrets';
 import { commandId, type LoadedPlugin, registerContributions } from './loader';
@@ -60,6 +62,9 @@ export const pluginStorageKey = (id: string) => `pepino.plugin-data.${id}`;
 /** How much a plugin may keep in api.storage, as JSON. */
 export const STORAGE_LIMIT = 256 * 1024;
 
+/** What api.fs gives at most (#187): files listed, a file read, matches found. */
+export const FS_LIMITS = { files: 5000, readBytes: 1024 * 1024, found: 100, matches: 200 };
+
 /** The most items a quick pick shows, and the longest text a prompt takes. */
 const MAX_ITEMS = 1000;
 const MAX_TEXT = 500;
@@ -84,6 +89,8 @@ export interface PluginHostDeps {
   allowed?: (plugin: PluginManifest, permission: Permission) => boolean;
   /** Where api.storage persists (the app's preferences); only in memory without it. */
   storage?: KeyValueStore;
+  /** The open project, for api.fs (#187): read, listed and searched, nothing outside it. */
+  workspace?: Pick<Workspace, 'getState' | 'listFiles' | 'findFiles' | 'searchText' | 'readFile'>;
   /** Where the users' own keys are kept, and the requests that carry them go (#186). */
   secrets?: SecretVault;
   /** [plugin]'s settings as the user set them (#57); each one's default without it. */
@@ -339,6 +346,26 @@ export class PluginHost {
     return secret && (await this.hasSecret(manifest, secret.key)) ? secret : null;
   }
 
+  /** The open project, as api.fs sees it: its root, and its paths made relative to it and back. */
+  private project() {
+    const workspace = this.deps.workspace;
+    const root = workspace?.getState().root ?? '';
+    if (!workspace || root === '') throw new Error('No project is open');
+    return {
+      workspace,
+      root,
+      relative: (path: string) => path.slice(root.length + 1),
+      absolute: (path: string) => {
+        const parts = path
+          .replace(/\\/g, '/')
+          .split('/')
+          .filter((part) => part !== '' && part !== '.');
+        if (path.startsWith('/') || parts.includes('..')) throw new Error(`Outside the project: ${path}`);
+        return [root, ...parts].join('/');
+      },
+    };
+  }
+
   /** What [manifest]'s plugin can call, as the spec's api names it. */
   private handlers(manifest: PluginManifest): Record<string, Handler> {
     const declared = (key: string) => {
@@ -472,6 +499,54 @@ export class PluginHost {
       'secrets.forget': {
         run: async ([key]) => {
           await this.forgetSecret(manifest, declared(String(key)).key);
+        },
+      },
+      'fs.root': {
+        permission: 'fs.read',
+        run: () => {
+          const root = this.deps.workspace?.getState().root ?? '';
+          return root === '' ? null : basename(root);
+        },
+      },
+      'fs.list': {
+        permission: 'fs.read',
+        run: async () => {
+          const { workspace, relative } = this.project();
+          return (await workspace.listFiles())
+            .slice(0, FS_LIMITS.files)
+            .map((file) => ({ path: relative(file.path), size: file.sizeBytes }));
+        },
+      },
+      'fs.read': {
+        permission: 'fs.read',
+        run: async ([path]) => {
+          const { workspace, absolute } = this.project();
+          const text = await workspace.readFile(absolute(String(path)));
+          if (text.includes('\u0000')) throw new Error(`Not a text file: ${String(path)}`);
+          if (text.length > FS_LIMITS.readBytes) {
+            throw new Error(`Too big to read: ${String(path)} (over ${FS_LIMITS.readBytes / 1024} KB)`);
+          }
+          return text;
+        },
+      },
+      'fs.find': {
+        permission: 'fs.read',
+        run: async ([query, limit]) => {
+          const { workspace, relative } = this.project();
+          const most = Math.min(Number(limit) || 20, FS_LIMITS.found);
+          return (await workspace.findFiles(String(query), most)).map(relative);
+        },
+      },
+      'fs.search': {
+        permission: 'fs.read',
+        run: async ([query, options]) => {
+          const { workspace, relative } = this.project();
+          const { limit, caseSensitive } = (options ?? {}) as { limit?: unknown; caseSensitive?: unknown };
+          const matches = await workspace.searchText(String(query), {
+            limit: Math.min(Number(limit) || 50, FS_LIMITS.matches),
+            caseSensitive: caseSensitive === true,
+          });
+          return matches.map((match) => ({ ...match, path: relative(match.path) }));
         },
       },
       'storage.get': { run: async ([key]) => (await this.storageOf(manifest.id))[String(key)] ?? null },

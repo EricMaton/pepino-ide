@@ -102,6 +102,13 @@ const PRELUDE = `
       onOpen: (listener) => on('file.opened', listener),
     }),
     settings: Object.freeze({ get: (key) => settings[key] }),
+    fs: Object.freeze({
+      root: () => call('fs.root'),
+      list: () => call('fs.list'),
+      read: (path) => call('fs.read', String(path)),
+      find: (query, limit) => call('fs.find', String(query), limit === undefined ? 20 : limit),
+      search: (query, options) => call('fs.search', String(query), options === undefined ? {} : options),
+    }),
     secrets: Object.freeze({
       has: (key) => call('secrets.has', String(key)),
       ask: (key) => call('secrets.ask', String(key)),
