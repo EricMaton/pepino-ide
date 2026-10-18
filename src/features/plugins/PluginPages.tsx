@@ -90,11 +90,10 @@ export function PluginPages({ pages, current }: { pages: readonly PluginPage[]; 
             page={page}
             visible={current === page.destination}
             onFrame={(frame) => {
-              if (frame) frames.current.set(page.destination, frame);
-              else {
-                frames.current.delete(page.destination);
-                loaded.current.delete(page.destination);
-              }
+              // Called again on every render (with null, then the frame): only another frame starts over
+              if (!frame || frames.current.get(page.destination) === frame) return;
+              frames.current.set(page.destination, frame);
+              loaded.current.delete(page.destination);
             }}
             onLoad={() => {
               loaded.current.add(page.destination);
