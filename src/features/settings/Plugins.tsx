@@ -6,6 +6,7 @@ import { useSnackbar } from '../../ui/useSnackbar';
 import { errorMessage } from '../projects/errors';
 import type { PluginEntry, PluginEntryState } from '../plugins/manager';
 import { PERMISSION_INFO } from '../plugins/permissions';
+import { PluginManage } from './PluginManage';
 import styles from './SettingsScreen.module.css';
 import { usePlugins } from './usePlugins';
 
@@ -17,13 +18,14 @@ const STATE_LABELS: Record<PluginEntryState, string> = {
   'needs-approval': 'Needs your approval',
 };
 
-/** Plugins (#49): each one, on or off, what it may do, and its log; approving what it asks for. */
+/** Plugins (#49): each one, on or off, what it may do; approving what it asks for, and managing it (#57). */
 export function Plugins() {
   const { plugins } = useServices();
   const showSnackbar = useSnackbar();
   const { entries, rejected } = usePlugins();
   const [reviewing, setReviewing] = useState<PluginEntry | null>(null);
   const [uninstalling, setUninstalling] = useState<PluginEntry | null>(null);
+  const [managing, setManaging] = useState<string | null>(null);
 
   const act = (work: Promise<void>) => work.catch((error: unknown) => showSnackbar(`Error: ${errorMessage(error)}`));
 
@@ -40,6 +42,7 @@ export function Plugins() {
           }}
           onReview={() => setReviewing(entry)}
           onUninstall={() => setUninstalling(entry)}
+          onManage={() => setManaging(entry.plugin.manifest.id)}
         />
       ))}
       {rejected.map(({ origin, errors }) => (
@@ -58,6 +61,7 @@ export function Plugins() {
           }}
         />
       )}
+      {managing && <PluginManage id={managing} onClose={() => setManaging(null)} />}
       {uninstalling && (
         <Dialog
           title={`Uninstall ${uninstalling.plugin.manifest.name}?`}
@@ -96,16 +100,15 @@ function PluginCard({
   onToggle,
   onReview,
   onUninstall,
+  onManage,
 }: {
   entry: PluginEntry;
   onToggle: (on: boolean) => void;
   onReview: () => void;
   onUninstall: () => void;
+  onManage: () => void;
 }) {
-  const { plugins } = useServices();
   const { manifest, builtin } = entry.plugin;
-  const [showingLog, setShowingLog] = useState(false);
-  const log = plugins.log(manifest.id);
   const on = entry.state === 'running' || entry.state === 'starting';
 
   return (
@@ -134,24 +137,16 @@ function PluginCard({
           Review permissions
         </Button>
       )}
-      {!builtin && (
-        <Button variant="text" className={styles.cardAction} onClick={onUninstall}>
-          Uninstall
+      <div className={styles.cardButtons}>
+        <Button variant="outlined" onClick={onManage}>
+          Manage
         </Button>
-      )}
-      <Button variant="text" className={styles.cardAction} onClick={() => setShowingLog((value) => !value)}>
-        {showingLog ? 'Hide log' : `Log (${log.length})`}
-      </Button>
-      {showingLog && (
-        <ol className={styles.log} aria-label={`${manifest.name}'s log`}>
-          {log.length === 0 && <li className="caption muted">Nothing yet.</li>}
-          {log.map((line, i) => (
-            <li key={i} className={cx('caption', line.level === 'error' && styles.expired)}>
-              <span className="muted">{new Date(line.time).toLocaleTimeString()}</span> {line.text}
-            </li>
-          ))}
-        </ol>
-      )}
+        {!builtin && (
+          <Button variant="text" onClick={onUninstall}>
+            Uninstall
+          </Button>
+        )}
+      </div>
     </section>
   );
 }

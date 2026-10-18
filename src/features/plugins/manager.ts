@@ -2,7 +2,7 @@ import type { ContributedTheme } from '../../ui/theme';
 import type { PluginHost, PluginLogEntry } from './host';
 import type { InstalledPlugins } from './installed';
 import { type LoadedPlugin, loadPlugins, type PluginSource } from './loader';
-import { type Permission, parseManifest } from './manifest';
+import { type Permission, parseManifest, type SettingValue } from './manifest';
 import type { PluginPermissions } from './permissions';
 import type { PluginFilesContent } from './registry';
 
@@ -167,6 +167,29 @@ export class PluginManager {
     await this.installed.remove(id);
     await this.permissions.forget(id);
     this.catalog = this.catalog.filter((other) => other.manifest.id !== id);
+    this.changed();
+  }
+
+  /** Plugin [id]'s settings (#57): the user's values, or the defaults. */
+  settings(id: string): Record<string, SettingValue> {
+    return this.permissions.settings(this.find(id).manifest);
+  }
+
+  /** Keeps the user's [values] for plugin [id]'s settings; a running plugin restarts once to read them. */
+  async setSettings(id: string, values: Record<string, SettingValue>): Promise<void> {
+    const plugin = this.find(id);
+    await this.permissions.setSettings(plugin.manifest, values);
+    this.changed();
+    if (this.host.list().some((status) => status.manifest.id === id && status.state === 'running')) {
+      await this.host.start(plugin);
+    }
+  }
+
+  /** Takes back what plugin [id] was allowed (#57): it stops, and waits for the user to approve it again. */
+  async revoke(id: string): Promise<void> {
+    const plugin = this.find(id);
+    await this.permissions.revoke(id);
+    if (plugin.manifest.permissions.length > 0) await this.host.stop(id);
     this.changed();
   }
 
