@@ -24,6 +24,7 @@ describe('plugin manifest (#46)', () => {
       manifest: {
         ...valid,
         permissions: ['editor.read', 'editor.write'],
+        secrets: [],
         contributes: {
           commands: [{ id: 'hello', title: 'Say hello' }],
           toolbar: [{ command: 'hello', icon: 'wave' }],

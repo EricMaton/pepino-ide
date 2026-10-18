@@ -120,6 +120,8 @@ interface TextFieldProps {
   prefix?: string;
   /** The on-screen keyboard to show, e.g. 'email'. */
   inputMode?: 'text' | 'email';
+  /** Hidden as it is typed (a key, a password). */
+  hidden?: boolean;
   /** A multi-line field of this many rows (Enter adds a line; [onSubmit] is not called). */
   rows?: number;
 }
@@ -134,6 +136,7 @@ export function TextField({
   placeholder,
   prefix,
   inputMode,
+  hidden,
   rows,
 }: TextFieldProps) {
   const id = useId();
@@ -171,6 +174,7 @@ export function TextField({
           <input
             {...shared}
             inputMode={inputMode}
+            type={hidden ? 'password' : 'text'}
             className={cx('body', styles.input)}
             onChange={(event) => onChange(event.target.value)}
             onKeyDown={(event) => {

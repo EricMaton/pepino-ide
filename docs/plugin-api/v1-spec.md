@@ -54,6 +54,7 @@ El comando sale en la búsqueda de arriba como **Hola: Say hello** y el aviso co
 | `description` | no | Una frase; sale en PLUGINS |
 | `permissions` | no | Lista de [permisos](#permisos); los repetidos se ignoran |
 | `networkJustification` | con `network` | Por qué necesita internet; se enseña al aprobar |
+| `secrets` | no | Claves del propio usuario que necesita: `[{ key, label, host, header, help? }]`. Ver [Claves del usuario](#claves-del-usuario). Necesitan el permiso `network` |
 | `contributes.commands` | no | `[{ id, title }]`. `id`: letras, números, `-`, `_`. Cada uno tiene que registrarse en `main.js` |
 | `contributes.settings` | no | `[{ key, type, default, title? }]`, `type`: `"number"`, `"string"` o `"boolean"`, y `default` de ese tipo. El usuario los cambia en PLUGINS → Manage |
 | `contributes.themes` | no | Ver [Temas](#temas) |
@@ -95,7 +96,10 @@ Todo lo de `api` que habla con la app devuelve una **promesa**; `api.settings.ge
 | `api.window.showQuickPick(items, { title })` | — | Una lista para elegir. `items`: textos o `{ label, detail }`, hasta 1000; con más de 6 se puede filtrar. Resuelve al **índice** elegido, o `null` si se cierra |
 | `api.window.showInput({ title, placeholder, value })` | — | Pide una línea de texto; resuelve al texto, o `null` si se cancela |
 | `api.storage.get(key)` / `set(key, value)` / `delete(key)` | — | Datos del propio plugin (cualquier valor JSON), guardados entre arranques; hasta 256 KB por plugin. `get` de una clave que no hay da `null`; `set(key, null)` la borra. Se borran al desinstalar |
-| `api.network.fetch(url, { method, headers, body })` | `network` | Solo existe si el usuario lo permitió. Resuelve a `{ status, headers, text }` |
+| `api.network.fetch(url, { method, headers, body })` | `network` | Solo existe si el usuario lo permitió. Resuelve a `{ status, headers, text }`. Hacia el `host` de una de sus claves guardadas, la petición sale con la clave |
+| `api.secrets.has(key)` | — | Si el usuario guardó esa clave (`true`/`false`). Nunca da la clave |
+| `api.secrets.ask(key)` | — | La app le pide la clave al usuario (campo oculto, con `help`); resuelve a `true` si la guardó, `false` si canceló |
+| `api.secrets.forget(key)` | — | La borra |
 | `api.pages.postMessage(pageId, data)` | — | Manda `data` (JSON, hasta 1 MB) a su página `pageId`. Si aún no está abierta, espera a que se abra |
 | `api.pages.onMessage(pageId, fn)` | — | `fn(data)` con lo que su página le manda |
 | `console.log` / `warn` / `error` | — | Al log del plugin, en PLUGINS → Manage |
@@ -143,6 +147,30 @@ Un plugin puede traer páginas propias (como las *webviews* de VS Code): un `.ht
 - **Con el tema de Pepino:** la página recibe sus colores como variables CSS (`--bg`, `--fg`, `--surface`, `--surface-variant`, `--primary`, `--on-primary`, `--error`, `--outline`, `--hairline`, `--git-*`, `--diff-*`) y cambian cuando el usuario cambia de tema.
 - **Vive mientras su plugin:** se monta la primera vez que se abre y conserva su estado mientras el plugin esté encendido. Si se apaga o desinstala, la página desaparece.
 - **Mensaje inicial:** una página suele avisar de que ya está lista (`pepino.postMessage({ type: 'ready' })`) para que su plugin le mande el estado. Hello world, que viene con Pepino, lo hace así.
+
+### Claves del usuario
+
+Cada persona usa **su propia cuenta**: un plugin que necesita una clave de API (la de Anthropic, por ejemplo) no la trae dentro, se la pide al usuario.
+
+```json
+"permissions": ["network"],
+"networkJustification": "Talks to Claude with your own key",
+"secrets": [
+  {
+    "key": "anthropic",
+    "label": "Anthropic API key",
+    "host": "api.anthropic.com",
+    "header": "x-api-key",
+    "help": "https://console.anthropic.com/settings/keys"
+  }
+]
+```
+
+- **La pide la app:** `api.secrets.ask('anthropic')` abre un diálogo de Pepino (no de la página del plugin), con el campo oculto y dónde conseguirla. En PLUGINS → Manage el usuario la ve como "guardada" o "sin poner" y la puede cambiar u olvidar.
+- **Se guarda cifrada en el móvil** (Keystore de Android, como el token de GitHub), junto al único `host` al que puede ir.
+- **El plugin nunca la ve:** cuando hace `api.network.fetch` a `https://<host>/…`, Pepino hace la petición por su lado nativo y la añade en `header`. Si el plugin pone ese header, se sustituye. A cualquier otro host, o sin HTTPS, no va.
+- **Se borra al desinstalar** el plugin.
+- En la web (desarrollo) las claves solo duran la sesión.
 
 ## Entorno y límites
 

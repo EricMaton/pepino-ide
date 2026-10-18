@@ -102,6 +102,11 @@ const PRELUDE = `
       onOpen: (listener) => on('file.opened', listener),
     }),
     settings: Object.freeze({ get: (key) => settings[key] }),
+    secrets: Object.freeze({
+      has: (key) => call('secrets.has', String(key)),
+      ask: (key) => call('secrets.ask', String(key)),
+      forget: (key) => call('secrets.forget', String(key)),
+    }),
     pages: Object.freeze({
       postMessage: (pageId, data) => call('pages.postMessage', String(pageId), data === undefined ? null : data),
       onMessage: (pageId, listener) => on('page.message:' + String(pageId), listener),

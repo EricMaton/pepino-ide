@@ -107,7 +107,7 @@ describe('plugin api for the example plugins (#53)', () => {
   it('asks the user to choose: the app shows the items, the plugin gets the index chosen', async () => {
     const { host, notify, run } = setUp();
     const quickPick = vi.fn<PluginPrompter['quickPick']>(async () => 1);
-    host.setPrompter({ quickPick, input: async () => null });
+    host.setPrompter({ quickPick, input: async () => null, secret: async () => null });
 
     await run(
       `const chosen = await api.window.showQuickPick(['one', { label: 'two', detail: 'the second' }], { title: 'Pick' });
@@ -125,7 +125,7 @@ describe('plugin api for the example plugins (#53)', () => {
     const { host, notify, run } = setUp();
     const main = `await api.window.showMessage(String(await api.window.showQuickPick(['one'])));`;
     await run(main);
-    host.setPrompter({ quickPick: async () => 7, input: async () => null });
+    host.setPrompter({ quickPick: async () => 7, input: async () => null, secret: async () => null });
     await run(main);
     expect(notify.mock.calls).toEqual([['Tool: null'], ['Tool: null']]);
   });
@@ -133,7 +133,7 @@ describe('plugin api for the example plugins (#53)', () => {
   it('asks for a line of text', async () => {
     const { host, notify, run } = setUp();
     const input = vi.fn<PluginPrompter['input']>(async () => 'fetch json');
-    host.setPrompter({ quickPick: async () => null, input });
+    host.setPrompter({ quickPick: async () => null, input, secret: async () => null });
 
     await run(`await api.window.showMessage(await api.window.showInput({ title: 'Name', value: 'x' }));`);
     expect(input).toHaveBeenCalledWith({ plugin: 'Tool', title: 'Name', value: 'x' });

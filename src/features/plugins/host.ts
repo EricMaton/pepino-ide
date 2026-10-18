@@ -3,6 +3,7 @@ import type { EventChannel } from '../../core/events';
 import type { KeyValueStore } from '../../core/storage';
 import type { ActiveEditor } from '../editor/activeEditor';
 import type { PluginConnection } from './connection';
+import { secretName, type SecretVault } from './secrets';
 import { commandId, type LoadedPlugin, registerContributions } from './loader';
 import type { Permission, PluginManifest, SettingValue } from './manifest';
 import { DEFAULT_SANDBOX_OPTIONS, type SandboxHost, type SandboxOptions } from './sandbox';
@@ -49,6 +50,8 @@ export interface PluginPrompter {
   quickPick(request: { plugin: string; title?: string; items: QuickPickItem[] }): Promise<number | null>;
   /** The text entered, or null when dismissed. */
   input(request: { plugin: string; title?: string; placeholder?: string; value?: string }): Promise<string | null>;
+  /** A key of the user's own (#186), entered hidden; null when dismissed. */
+  secret(request: { plugin: string; label: string; host: string; help?: string }): Promise<string | null>;
 }
 
 /** Where a plugin's api.storage is kept: one JSON object per plugin. */
@@ -81,6 +84,8 @@ export interface PluginHostDeps {
   allowed?: (plugin: PluginManifest, permission: Permission) => boolean;
   /** Where api.storage persists (the app's preferences); only in memory without it. */
   storage?: KeyValueStore;
+  /** Where the users' own keys are kept, and the requests that carry them go (#186). */
+  secrets?: SecretVault;
   /** [plugin]'s settings as the user set them (#57); each one's default without it. */
   settings?: (plugin: PluginManifest) => Record<string, SettingValue>;
   options?: SandboxOptions;
@@ -282,8 +287,28 @@ export class PluginHost {
     this.changed();
   }
 
-  /** Plugin [id] is uninstalled (#56): stopped, and its status and api.storage gone. */
+  /** Whether the user saved [manifest]'s secret [key] (#186). */
+  async hasSecret(manifest: PluginManifest, key: string): Promise<boolean> {
+    return (await this.deps.secrets?.has(secretName(manifest.id, key))) ?? false;
+  }
+
+  /** Keeps [value] as [manifest]'s secret [key], for its host only. */
+  async saveSecret(manifest: PluginManifest, key: string, value: string): Promise<void> {
+    const secret = manifest.secrets.find((declared) => declared.key === key);
+    if (!secret || !this.deps.secrets) throw new Error(`The plugin has no secret "${key}"`);
+    await this.deps.secrets.save(secretName(manifest.id, key), value.trim(), secret.host);
+    this.changed();
+  }
+
+  async forgetSecret(manifest: PluginManifest, key: string): Promise<void> {
+    await this.deps.secrets?.delete(secretName(manifest.id, key));
+    this.changed();
+  }
+
+  /** Plugin [id] is uninstalled (#56): stopped, and its status, api.storage and secrets gone. */
   async remove(id: string): Promise<void> {
+    const manifest = this.plugins.get(id)?.plugin.manifest;
+    if (manifest) for (const { key } of manifest.secrets) await this.forgetSecret(manifest, key);
     await this.stop(id);
     this.plugins.delete(id);
     this.data.delete(id);
@@ -301,8 +326,26 @@ export class PluginHost {
     return this.deps.allowed ? this.deps.allowed(manifest, permission) : true;
   }
 
+  /** [manifest]'s secret for [url]'s host, when the user saved it: the requests there carry it. */
+  private async secretFor(manifest: PluginManifest, url: string) {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return null;
+    }
+    if (parsed.protocol !== 'https:') return null;
+    const secret = manifest.secrets.find((declared) => declared.host === parsed.hostname.toLowerCase());
+    return secret && (await this.hasSecret(manifest, secret.key)) ? secret : null;
+  }
+
   /** What [manifest]'s plugin can call, as the spec's api names it. */
   private handlers(manifest: PluginManifest): Record<string, Handler> {
+    const declared = (key: string) => {
+      const secret = manifest.secrets.find((candidate) => candidate.key === key);
+      if (!secret) throw new Error(`The plugin has no secret "${key}" in its manifest`);
+      return secret;
+    };
     const editor = () => {
       const current = this.deps.activeEditor.current();
       if (!current) throw new Error('No file is open in the editor');
@@ -341,6 +384,18 @@ export class PluginHost {
         permission: 'network',
         run: async ([url, init]) => {
           const options = (init ?? {}) as { method?: string; headers?: Record<string, string>; body?: string };
+          // To a host of one of its secrets, saved: the request goes with it, through the vault (#186)
+          const secret = await this.secretFor(manifest, String(url));
+          if (secret && this.deps.secrets) {
+            return this.deps.secrets.request({
+              name: secretName(manifest.id, secret.key),
+              header: secret.header,
+              url: String(url),
+              method: options.method ?? 'GET',
+              headers: options.headers,
+              body: options.body,
+            });
+          }
           const response = await fetch(String(url), {
             method: options.method ?? 'GET',
             headers: options.headers,
@@ -397,6 +452,26 @@ export class PluginHost {
               ...(value !== undefined && { value: String(value).slice(0, STORAGE_LIMIT) }),
             })) ?? null
           );
+        },
+      },
+      'secrets.has': { run: ([key]) => this.hasSecret(manifest, declared(String(key)).key) },
+      'secrets.ask': {
+        run: async ([key]) => {
+          const secret = declared(String(key));
+          const value = await this.prompter?.secret({
+            plugin: manifest.name,
+            label: secret.label,
+            host: secret.host,
+            ...(secret.help && { help: secret.help }),
+          });
+          if (!value || value.trim() === '') return false;
+          await this.saveSecret(manifest, secret.key, value);
+          return true;
+        },
+      },
+      'secrets.forget': {
+        run: async ([key]) => {
+          await this.forgetSecret(manifest, declared(String(key)).key);
         },
       },
       'storage.get': { run: async ([key]) => (await this.storageOf(manifest.id))[String(key)] ?? null },
