@@ -1,4 +1,5 @@
 import { parseThemeColors, type ThemeBase, type ThemeColors } from '../../ui/theme';
+import { SIGN_IN_PROVIDERS, type SignInProvider } from './signIn';
 
 /*
  * A plugin's manifest, plugin.json (#46, docs/plugin-api/v1-spec.md): who it
@@ -78,6 +79,10 @@ export interface SecretDeclaration {
   header: string;
   /** Where the user gets one, shown when asked: an https URL. */
   help?: string;
+  /** Before the key in its header: "Bearer " for an Authorization header. */
+  prefix?: string;
+  /** A provider the user can sign in to instead of pasting a key (#190): it then needs its host. */
+  signIn?: SignInProvider;
 }
 
 export interface PluginManifest {
@@ -156,9 +161,15 @@ export function parseManifest(text: string): ManifestResult {
       !HOST.test(secret.host) ||
       !isText(secret.header) ||
       !HEADER.test(secret.header) ||
-      (secret.help !== undefined && (!isText(secret.help) || !secret.help.startsWith('https://')))
+      (secret.help !== undefined && (!isText(secret.help) || !secret.help.startsWith('https://'))) ||
+      (secret.prefix !== undefined && (typeof secret.prefix !== 'string' || !/^[A-Za-z]{0,20} ?$/.test(secret.prefix)))
     ) {
-      errors.push(`secrets[${i}]: { key, label, host (a domain), header, help? (https URL) }`);
+      errors.push(`secrets[${i}]: { key, label, host (a domain), header, help? (https URL), prefix?, signIn? }`);
+    } else if (
+      secret.signIn !== undefined &&
+      !((SIGN_IN_PROVIDERS as readonly unknown[]).includes(secret.signIn) && secret.host === 'openrouter.ai')
+    ) {
+      errors.push(`secrets[${i}].signIn: one of ${SIGN_IN_PROVIDERS.join(', ')}, with its host (openrouter.ai)`);
     } else if (secrets.some((other) => other.key === secret.key)) {
       errors.push(`secrets[${i}]: "${secret.key}" twice`);
     } else {
@@ -168,6 +179,8 @@ export function parseManifest(text: string): ManifestResult {
         host: secret.host.toLowerCase(),
         header: secret.header,
         ...(isText(secret.help) && { help: secret.help }),
+        ...(typeof secret.prefix === 'string' && secret.prefix !== '' && { prefix: secret.prefix }),
+        ...(secret.signIn !== undefined && { signIn: secret.signIn as SignInProvider }),
       });
     }
   }

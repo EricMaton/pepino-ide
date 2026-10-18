@@ -1,5 +1,10 @@
 package dev.pepino.ide.plugins;
 
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
+import android.content.Intent;
+import android.net.Uri;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -23,6 +28,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import javax.net.ssl.SSLHandshakeException;
+import org.json.JSONObject;
 
 /**
  * The `Secrets` Capacitor plugin (#186): each user's own keys for the
@@ -99,6 +105,7 @@ public class SecretsPlugin extends Plugin {
         String id = call.getString("id", "");
         String name = call.getString("name", "");
         String header = call.getString("header", "");
+        String prefix = call.getString("prefix", "");
         String address = call.getString("url", "");
         String method = call.getString("method", "GET");
         JSObject headers = call.getObject("headers", new JSObject());
@@ -127,7 +134,7 @@ public class SecretsPlugin extends Plugin {
                     String key = keys.next();
                     if (!key.equalsIgnoreCase(header)) connection.setRequestProperty(key, headers.getString(key));
                 }
-                connection.setRequestProperty(header, secret);
+                connection.setRequestProperty(header, prefix + secret);
                 if (body != null) {
                     connection.setDoOutput(true);
                     try (OutputStream out = connection.getOutputStream()) {
@@ -174,6 +181,104 @@ public class SecretsPlugin extends Plugin {
                 if (connection != null) connection.disconnect();
             }
         });
+    }
+
+    /**
+     * Signing in (#190): POSTs `body` (JSON) to `url`, HTTPS on `host`, and
+     * keeps the `field` of its JSON answer as secret `name` for `host`. The
+     * key the answer carries never leaves this side.
+     */
+    @PluginMethod
+    public void exchange(PluginCall call) {
+        String name = call.getString("name", "");
+        String host = call.getString("host", "");
+        String address = call.getString("url", "");
+        String body = call.getString("body", "{}");
+        String field = call.getString("field", "key");
+        executor.execute(() -> {
+            HttpURLConnection connection = null;
+            try {
+                URL url = new URL(address);
+                if (!"https".equals(url.getProtocol()) || !host.equalsIgnoreCase(url.getHost())) {
+                    call.reject("Signing in only goes to https://" + host, "WRONG_HOST");
+                    return;
+                }
+                connection = (HttpURLConnection) url.openConnection();
+                connection.setConnectTimeout(15_000);
+                connection.setReadTimeout(30_000);
+                connection.setRequestMethod("POST");
+                connection.setRequestProperty("content-type", "application/json");
+                connection.setDoOutput(true);
+                try (OutputStream out = connection.getOutputStream()) {
+                    out.write(body.getBytes(StandardCharsets.UTF_8));
+                }
+                int status = connection.getResponseCode();
+                InputStream in = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
+                StringBuilder text = new StringBuilder();
+                if (in != null) {
+                    try (Reader reader = new InputStreamReader(in, StandardCharsets.UTF_8)) {
+                        char[] buffer = new char[4096];
+                        for (int read; (read = reader.read(buffer)) != -1 && text.length() < 65_536; ) text.append(buffer, 0, read);
+                    }
+                }
+                String secret = status < 400 ? new JSONObject(text.toString()).optString(field, "") : "";
+                if (secret.isEmpty()) {
+                    call.reject("Signing in did not work (" + status + "): try again", "SIGN_IN_FAILED");
+                    return;
+                }
+                store.save(name, secret);
+                store.save(hostKey(name), host.toLowerCase());
+                call.resolve();
+            } catch (IOException e) {
+                call.reject(describe(e, address), "NETWORK");
+            } catch (Exception e) {
+                call.reject(e.getMessage() != null ? e.getMessage() : "Signing in did not work", "FAILED");
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+        });
+    }
+
+    /**
+     * Keeps what is on the clipboard as secret `name` for `host` (#190): a
+     * key pasted this way never passes through the WebView. It must look
+     * like a key: one word, 20 to 400 characters.
+     */
+    @PluginMethod
+    public void paste(PluginCall call) {
+        String name = call.getString("name", "");
+        String host = call.getString("host", "");
+        ClipboardManager clipboard = (ClipboardManager) getContext().getSystemService(Context.CLIPBOARD_SERVICE);
+        ClipData clip = clipboard == null ? null : clipboard.getPrimaryClip();
+        CharSequence pasted = clip != null && clip.getItemCount() > 0 ? clip.getItemAt(0).coerceToText(getContext()) : null;
+        String value = pasted == null ? "" : pasted.toString().trim();
+        if (!value.matches("\\S{20,400}")) {
+            call.reject("The clipboard has no key: copy it first", "NOT_A_KEY");
+            return;
+        }
+        executor.execute(() -> {
+            try {
+                store.save(name, value);
+                store.save(hostKey(name), host.toLowerCase());
+                call.resolve();
+            } catch (Exception e) {
+                call.reject(e.getMessage() != null ? e.getMessage() : "Cannot keep the key", "FAILED");
+            }
+        });
+    }
+
+    /** Opens an https link in the browser: where to get a key, or to sign in. */
+    @PluginMethod
+    public void openUrl(PluginCall call) {
+        String url = call.getString("url", "");
+        if (!url.startsWith("https://")) {
+            call.reject("Only https links open", "FAILED");
+            return;
+        }
+        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        getContext().startActivity(intent);
+        call.resolve();
     }
 
     /** Stops request `id`: it fails as CANCELLED. */

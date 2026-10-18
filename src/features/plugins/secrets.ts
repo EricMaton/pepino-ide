@@ -19,9 +19,10 @@ export interface SecretAnswer {
 }
 
 export interface SecretRequest {
-  /** The secret, and the header it goes in. */
+  /** The secret, and the header it goes in (after [prefix], such as "Bearer "). */
   name: string;
   header: string;
+  prefix?: string;
   url: string;
   method?: string;
   headers?: Record<string, string>;
@@ -38,6 +39,12 @@ export interface SecretVault {
    * comes to it as it arrives (streaming), and [SecretAnswer.text] is empty.
    */
   request(request: SecretRequest, onChunk?: (text: string) => void, signal?: AbortSignal): Promise<SecretAnswer>;
+  /** Signing in (#190): POSTs [body] to [url] on [host] and keeps its answer's [field] as secret [name]. */
+  exchange(exchange: { name: string; host: string; url: string; body: string; field: string }): Promise<void>;
+  /** Keeps the key on the clipboard as secret [name] (#190). */
+  paste(name: string, host: string): Promise<void>;
+  /** Opens an https link in the browser. */
+  openUrl(url: string): Promise<void>;
 }
 
 interface SecretsPlugin {
@@ -48,6 +55,9 @@ interface SecretsPlugin {
     options: SecretRequest & { id: string; stream: boolean; headers: Record<string, string>; method: string },
   ): Promise<SecretAnswer>;
   cancel(options: { id: string }): Promise<void>;
+  exchange(options: { name: string; host: string; url: string; body: string; field: string }): Promise<void>;
+  paste(options: { name: string; host: string }): Promise<void>;
+  openUrl(options: { url: string }): Promise<void>;
   addListener(
     event: 'chunk',
     listener: (chunk: { id: string; text: string }) => void,
@@ -82,6 +92,9 @@ export function nativeSecretVault(): SecretVault {
         await listener?.remove();
       }
     },
+    exchange: (exchange) => plugin.exchange(exchange),
+    paste: (name, host) => plugin.paste({ name, host }),
+    openUrl: (url) => plugin.openUrl({ url }),
   };
 }
 
@@ -104,7 +117,7 @@ export function memorySecretVault(fetcher: typeof fetch = (...args) => fetch(...
       );
       const response = await fetcher(url.toString(), {
         method: request.method ?? 'GET',
-        headers: { ...headers, [request.header]: secret.value },
+        headers: { ...headers, [request.header]: (request.prefix ?? '') + secret.value },
         body: request.body,
         signal,
       });
@@ -113,6 +126,22 @@ export function memorySecretVault(fetcher: typeof fetch = (...args) => fetch(...
       const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
       for (let part = await reader.read(); !part.done; part = await reader.read()) onChunk(part.value);
       return { ...answer, text: '' };
+    },
+    async exchange({ name, host, url, body, field }) {
+      if (new URL(url).hostname !== host) throw new Error(`Signing in only goes to https://${host}`);
+      const response = await fetcher(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+      const value = response.ok ? ((await response.json()) as Record<string, unknown>)[field] : undefined;
+      if (typeof value !== 'string' || value === '')
+        throw new Error(`Signing in did not work (${response.status}): try again`);
+      secrets.set(name, { value, host: host.toLowerCase() });
+    },
+    async paste(name, host) {
+      const value = (await navigator.clipboard.readText()).trim();
+      if (!/^\S{20,400}$/.test(value)) throw new Error('The clipboard has no key: copy it first');
+      secrets.set(name, { value, host: host.toLowerCase() });
+    },
+    async openUrl(url) {
+      window.open(url, '_blank', 'noopener');
     },
   };
 }

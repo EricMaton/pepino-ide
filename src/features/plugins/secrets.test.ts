@@ -81,8 +81,8 @@ function setUp(main: string) {
   });
   const notify = vi.fn();
   host.setNotifier(notify);
-  const secret = vi.fn(async () => 'sk-mine' as string | null);
-  host.setPrompter({ quickPick: async () => null, input: async () => null, secret });
+  const secret = vi.fn(async (_request: unknown) => 'sk-mine' as string | true | null);
+  host.setPrompter({ quickPick: async () => null, input: async () => null, secret, signIn: async () => false });
   return { host, plugin, dispatcher, notify, secret, sent, vault };
 }
 
@@ -104,7 +104,7 @@ describe('plugin secrets (#186)', () => {
     ).toEqual({
       ok: false,
       errors: [
-        'secrets[1]: { key, label, host (a domain), header, help? (https URL) }',
+        'secrets[1]: { key, label, host (a domain), header, help? (https URL), prefix?, signIn? }',
         'secrets: the plugin needs the network permission to use them',
       ],
     });
@@ -127,12 +127,14 @@ describe('plugin secrets (#186)', () => {
     await host.start(plugin);
     await dispatcher.execute('dev.test.ai.run');
 
-    expect(secret).toHaveBeenCalledWith({
-      plugin: 'AI',
-      label: 'Example API key',
-      host: 'api.example.com',
-      help: 'https://example.com/keys',
-    });
+    expect(secret).toHaveBeenCalledWith(
+      expect.objectContaining({
+        plugin: 'AI',
+        label: 'Example API key',
+        host: 'api.example.com',
+        help: 'https://example.com/keys',
+      }),
+    );
     expect(sent).toEqual([
       {
         url: 'https://api.example.com/v1/messages',

@@ -113,6 +113,7 @@ const PRELUDE = `
     secrets: Object.freeze({
       has: (key) => call('secrets.has', String(key)),
       ask: (key) => call('secrets.ask', String(key)),
+      signIn: (key) => call('secrets.signIn', String(key)),
       forget: (key) => call('secrets.forget', String(key)),
     }),
     pages: Object.freeze({

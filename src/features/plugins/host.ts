@@ -6,6 +6,7 @@ import { basename } from '../projects/paths';
 import type { Workspace } from '../workspace/workspace';
 import type { PluginConnection } from './connection';
 import { secretName, type SecretVault } from './secrets';
+import { OPENROUTER, pkce, type SignInProvider } from './signIn';
 import { commandId, type LoadedPlugin, registerContributions } from './loader';
 import type { Permission, PluginManifest, SettingValue } from './manifest';
 import { DEFAULT_SANDBOX_OPTIONS, type SandboxHost, type SandboxOptions } from './sandbox';
@@ -52,8 +53,31 @@ export interface PluginPrompter {
   quickPick(request: { plugin: string; title?: string; items: QuickPickItem[] }): Promise<number | null>;
   /** The text entered, or null when dismissed. */
   input(request: { plugin: string; title?: string; placeholder?: string; value?: string }): Promise<string | null>;
-  /** A key of the user's own (#186), entered hidden; null when dismissed. */
-  secret(request: { plugin: string; label: string; host: string; help?: string }): Promise<string | null>;
+  /**
+   * A key of the user's own (#186), entered hidden: the text, true when it
+   * was kept already ([paste]), null when dismissed.
+   */
+  secret(request: {
+    plugin: string;
+    label: string;
+    host: string;
+    help?: string;
+    /** Keeps the clipboard's key, natively (#190). */
+    paste: () => Promise<void>;
+    /** Opens [help] in the browser. */
+    openHelp?: () => Promise<void>;
+  }): Promise<string | true | null>;
+  /**
+   * Signing in to [provider] (#190): the app shows it is waiting for the
+   * browser, and calls [run], which ends when the key is kept. True when it
+   * was; false when the user cancelled (which aborts [run]'s signal).
+   */
+  signIn(request: {
+    plugin: string;
+    label: string;
+    provider: SignInProvider;
+    run: (signal: AbortSignal) => Promise<void>;
+  }): Promise<boolean>;
 }
 
 /** Where a plugin's api.storage is kept: one JSON object per plugin. */
@@ -93,6 +117,8 @@ export interface PluginHostDeps {
   workspace?: Pick<Workspace, 'getState' | 'listFiles' | 'findFiles' | 'searchText' | 'readFile'>;
   /** Where the users' own keys are kept, and the requests that carry them go (#186). */
   secrets?: SecretVault;
+  /** The code the provider's sign-in sends back to the app (#190). */
+  waitForCode?: (provider: SignInProvider, signal: AbortSignal) => Promise<string>;
   /** [plugin]'s settings as the user set them (#57); each one's default without it. */
   settings?: (plugin: PluginManifest) => Record<string, SettingValue>;
   options?: SandboxOptions;
@@ -312,6 +338,47 @@ export class PluginHost {
     this.changed();
   }
 
+  /** Keeps the key on the clipboard as [manifest]'s secret [key] (#190): it never goes through here. */
+  async pasteSecret(manifest: PluginManifest, key: string): Promise<void> {
+    const secret = manifest.secrets.find((declared) => declared.key === key);
+    if (!secret || !this.deps.secrets) throw new Error(`The plugin has no secret "${key}"`);
+    await this.deps.secrets.paste(secretName(manifest.id, key), secret.host);
+    this.changed();
+  }
+
+  /** Opens where to get [manifest]'s secret [key]. */
+  async openSecretHelp(manifest: PluginManifest, key: string): Promise<void> {
+    const help = manifest.secrets.find((declared) => declared.key === key)?.help;
+    if (help && this.deps.secrets) await this.deps.secrets.openUrl(help);
+  }
+
+  /** Signs in to the provider of [manifest]'s secret [key] and keeps the key it gives (#190). */
+  async signInSecret(manifest: PluginManifest, key: string): Promise<boolean> {
+    const secret = manifest.secrets.find((declared) => declared.key === key);
+    const { secrets, waitForCode } = this.deps;
+    if (!secret?.signIn) throw new Error(`"${key}" is not signed in to`);
+    if (!secrets || !waitForCode || !this.prompter) throw new Error('Signing in works in the app on a phone');
+    const saved = await this.prompter.signIn({
+      plugin: manifest.name,
+      label: secret.label,
+      provider: secret.signIn,
+      run: async (signal) => {
+        const { verifier, challenge } = await pkce();
+        const code = waitForCode(secret.signIn!, signal);
+        await secrets.openUrl(OPENROUTER.authorize(challenge));
+        await secrets.exchange({
+          name: secretName(manifest.id, key),
+          host: secret.host,
+          url: OPENROUTER.exchange,
+          body: OPENROUTER.body(await code, verifier),
+          field: OPENROUTER.field,
+        });
+      },
+    });
+    this.changed();
+    return saved;
+  }
+
   async forgetSecret(manifest: PluginManifest, key: string): Promise<void> {
     await this.deps.secrets?.delete(secretName(manifest.id, key));
     this.changed();
@@ -390,6 +457,7 @@ export class PluginHost {
         {
           name: secretName(manifest.id, secret.key),
           header: secret.header,
+          prefix: secret.prefix,
           url,
           method: options.method ?? 'GET',
           headers: options.headers,
@@ -541,13 +609,16 @@ export class PluginHost {
             plugin: manifest.name,
             label: secret.label,
             host: secret.host,
-            ...(secret.help && { help: secret.help }),
+            ...(secret.help && { help: secret.help, openHelp: () => this.openSecretHelp(manifest, secret.key) }),
+            paste: () => this.pasteSecret(manifest, secret.key),
           });
+          if (value === true) return true;
           if (!value || value.trim() === '') return false;
           await this.saveSecret(manifest, secret.key, value);
           return true;
         },
       },
+      'secrets.signIn': { run: ([key]) => this.signInSecret(manifest, declared(String(key)).key) },
       'secrets.forget': {
         run: async ([key]) => {
           await this.forgetSecret(manifest, declared(String(key)).key);
