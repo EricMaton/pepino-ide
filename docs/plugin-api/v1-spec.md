@@ -119,6 +119,32 @@ un plugin colgado nunca congela la app.
 3. **Timeout de ejecución** en todo callback de plugin.
 4. **Comandos y eventos son el único punto de entrada** — la UI nunca llama a plugins directamente.
 
+## Repositorio de plugins (#55)
+
+Los plugins que se pueden instalar viven en [EricMaton/pepino-plugins](https://github.com/EricMaton/pepino-plugins), sin backend propio: la app lee su `index.json` y descarga los archivos de cada plugin desde GitHub (`raw.githubusercontent.com`).
+
+```json
+{
+  "schema": 1,
+  "plugins": [
+    {
+      "id": "dev.pepino.formatter",
+      "name": "Formatter",
+      "version": "1.0.0",
+      "apiVersion": "1",
+      "description": "Formats the open JavaScript, CSS or HTML file (js-beautify).",
+      "permissions": ["editor.read", "editor.write"],
+      "path": "plugins/formatter",
+      "files": { "plugin.json": "<sha256>", "main.js": "<sha256>" }
+    }
+  ]
+}
+```
+
+- `index.json` se genera con `node scripts/build-index.mjs` a partir de `plugins/<carpeta>/`; su CI comprueba los manifiestos y que el índice esté al día.
+- `files` lleva el SHA-256 de cada archivo: la app lo comprueba tras descargarlo, y descarta el plugin si no coincide.
+- Para publicar uno: su carpeta con `plugin.json` (y `main.js`), regenerar el índice y abrir un PR en ese repo.
+
 ## Ciclo de vida
 
 `install → (usuario aprueba permisos) → onActivate → ... → onDeactivate → uninstall`
