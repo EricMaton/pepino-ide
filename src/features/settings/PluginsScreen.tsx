@@ -1,9 +1,10 @@
 import { TopBar } from '../../app/TopBar';
 import { cx } from '../../ui/cx';
+import { PluginCatalog } from './PluginCatalog';
 import { Plugins } from './Plugins';
 import styles from './SettingsScreen.module.css';
 
-/** PLUGINS (#171): every plugin, on or off, what it may do, and its log (#49). */
+/** PLUGINS (#171): every plugin, on or off, what it may do, and its log (#49); and the ones to install (#56). */
 export function PluginsScreen({ subtitle }: { subtitle: string }) {
   return (
     <div className={styles.screen}>
@@ -13,9 +14,12 @@ export function PluginsScreen({ subtitle }: { subtitle: string }) {
           <span className="accent">//</span> Installed
         </h2>
         <Plugins />
+        <h2 className={cx('label', 'muted', styles.heading)}>
+          <span className="accent">//</span> Available
+        </h2>
+        <PluginCatalog />
         <p className={cx('caption', 'muted', styles.note, styles.footnote)}>
-          Plugins run sandboxed, each on its own: they reach Pepino only through what you allow. Installing more comes
-          next.
+          Plugins run sandboxed, each on its own: they reach Pepino only through what you allow.
         </p>
       </div>
     </div>

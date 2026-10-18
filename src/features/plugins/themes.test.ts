@@ -3,7 +3,7 @@ import { CommandDispatcher, CommandRegistry } from '../../core/commands';
 import { EventBus } from '../../core/events';
 import { createActiveEditor } from '../editor/activeEditor';
 import { PluginHost } from './host';
-import { builtinSource, loadPlugins, type PluginSource } from './loader';
+import { loadPlugins, type PluginSource } from './loader';
 import { parseManifest } from './manifest';
 import { PluginManager } from './manager';
 import { createPluginPermissions } from './permissions';
@@ -127,15 +127,5 @@ describe('themes from plugins (#52)', () => {
     expect(manager.themes()).toEqual([]);
     await manager.setEnabled('dev.test.themes', true);
     expect(manager.themes()?.map((theme) => theme.id)).toEqual(['dev.test.themes.night']);
-  });
-
-  it('Pickle themes, which comes with Pepino, loads with its two themes', async () => {
-    const { plugins } = await loadPlugins([builtinSource()]);
-    const pickle = plugins.find((plugin) => plugin.manifest.id === 'dev.pepino.pickle-themes');
-    expect(pickle?.main).toBe('');
-    expect(pickle?.manifest.contributes.themes.map((theme) => [theme.label, theme.base])).toEqual([
-      ['Pickle night', 'dark'],
-      ['Pickle brine', 'light'],
-    ]);
   });
 });

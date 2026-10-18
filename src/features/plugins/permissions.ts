@@ -41,6 +41,8 @@ export interface PluginPermissions {
   /** Approves every permission [plugin] asks for, and turns it on. */
   approve(plugin: PluginManifest): Promise<void>;
   setEnabled(id: string, enabled: boolean): Promise<void>;
+  /** Plugin [id] was uninstalled (#56): what it was allowed goes with it. */
+  forget(id: string): Promise<void>;
 }
 
 export function createPluginPermissions(preferences: KeyValueStore): PluginPermissions {
@@ -69,6 +71,11 @@ export function createPluginPermissions(preferences: KeyValueStore): PluginPermi
     },
     async setEnabled(id, enabled) {
       saved = { ...saved, [id]: { ...entry(id), enabled } };
+      await save();
+    },
+    async forget(id) {
+      const { [id]: _forgotten, ...rest } = saved;
+      saved = rest;
       await save();
     },
   };

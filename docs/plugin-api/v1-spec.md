@@ -121,6 +121,18 @@ un plugin colgado nunca congela la app.
 
 ## Ciclo de vida
 
+### Instalar, actualizar y desinstalar (#56)
+
+En PLUGINS → **Available** salen los plugins del repositorio ([EricMaton/pepino-plugins](https://github.com/EricMaton/pepino-plugins)):
+
+1. **Install** muestra los permisos que pide (los del `index.json`) antes de descargar nada.
+2. Al aceptar, se descargan sus archivos y se comprueba el SHA-256 de cada uno. El manifest descargado tiene que ser el mismo plugin y no pedir más permisos que los mostrados; si no, no se instala nada.
+3. Se guarda en los datos de la app (`plugins/<id>/`), con esos permisos aprobados, y arranca. Al abrir la app otra vez sigue ahí.
+4. Si el repositorio tiene una versión más nueva, sale **Update to vX**, y la nueva sustituye a la vieja sin reiniciar.
+5. **Uninstall** lo para (sus comandos, temas y listeners se van al momento) y borra sus archivos, lo que se le permitió y lo que guardó en `api.storage`.
+
+Los que vienen con Pepino (Hello world, Word count) no se desinstalan: se apagan. Formatter, Pickle themes y Snippets se instalan desde el repositorio: ya no vienen dentro de la app.
+
 `install → (usuario aprueba permisos) → onActivate → ... → onDeactivate → uninstall`
 
 ## Implementación del host (ADR-004)
