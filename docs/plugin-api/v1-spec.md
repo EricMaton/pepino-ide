@@ -97,6 +97,7 @@ Todo lo de `api` que habla con la app devuelve una **promesa**; `api.settings.ge
 | `api.window.showInput({ title, placeholder, value })` | — | Pide una línea de texto; resuelve al texto, o `null` si se cancela |
 | `api.storage.get(key)` / `set(key, value)` / `delete(key)` | — | Datos del propio plugin (cualquier valor JSON), guardados entre arranques; hasta 256 KB por plugin. `get` de una clave que no hay da `null`; `set(key, null)` la borra. Se borran al desinstalar |
 | `api.network.fetch(url, { method, headers, body })` | `network` | Solo existe si el usuario lo permitió. Resuelve a `{ status, headers, text }`. Hacia el `host` de una de sus claves guardadas, la petición sale con la clave |
+| `api.network.stream(url, init, onChunk)` | `network` | Como `fetch`, pero la respuesta llega a `onChunk(text)` por trozos según llega (para respuestas largas, como las de un modelo de IA), en orden y todos antes de que la promesa termine con `{ status, headers }`. La promesa tiene `cancel()`: la corta y falla con `Cancelled`. Con clave, igual que `fetch` |
 | `api.fs.root()` | `fs.read` | El nombre del proyecto abierto, o `null` si no hay ninguno |
 | `api.fs.list()` | `fs.read` | Sus archivos: `[{ path, size }]` (rutas relativas al proyecto; sin `.git`, `.pepino` ni `node_modules`; hasta 5000) |
 | `api.fs.read(path)` | `fs.read` | El texto de un archivo del proyecto (`src/a.js`), hasta 1 MB; falla si es binario o si la ruta sale del proyecto |

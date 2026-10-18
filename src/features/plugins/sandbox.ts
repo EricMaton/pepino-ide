@@ -79,6 +79,7 @@ const PRELUDE = `
     if (!listeners.has(topic)) listeners.set(topic, []);
     listeners.get(topic).push(listener);
   };
+  let nextStream = 1;
   const settings = __settings;
   const capabilities = __capabilities;
   const api = Object.freeze({
@@ -141,6 +142,18 @@ const PRELUDE = `
     ...(capabilities.includes('network') && {
       network: Object.freeze({
         fetch: (url, init) => call('network.fetch', String(url), init === undefined ? {} : init),
+        // The answer to onChunk as it arrives; the promise ends with { status, headers }, and has cancel()
+        stream(url, init, onChunk) {
+          if (typeof onChunk !== 'function') throw new TypeError('network.stream: give a function for the chunks');
+          const id = String(nextStream++);
+          const topic = 'network.chunk:' + id;
+          on(topic, onChunk);
+          const answer = call('network.stream', String(url), init === undefined ? {} : init, id).finally(() =>
+            listeners.delete(topic),
+          );
+          answer.cancel = () => call('network.cancel', id);
+          return answer;
+        },
       }),
     }),
   });

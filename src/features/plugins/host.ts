@@ -107,6 +107,8 @@ interface Running {
   connection: PluginConnection | null;
   log: PluginLogEntry[];
   stop: () => void;
+  /** Its streams in progress (api.network.stream, #58), to cancel. */
+  streams: Map<string, AbortController>;
 }
 
 export class PluginHost {
@@ -217,7 +219,10 @@ export class PluginHost {
       connection: null,
       log: [],
       stop: () => disposers.splice(0).forEach((dispose) => dispose()),
+      streams: new Map(),
     };
+    // Stopped, its streams stop too
+    disposers.push(() => running.streams.forEach((stream) => stream.abort()));
     this.plugins.set(manifest.id, running);
     this.changed();
 
@@ -228,7 +233,7 @@ export class PluginHost {
       return;
     }
 
-    const handlers = this.handlers(manifest);
+    const handlers = this.handlers(manifest, running);
     const connection = this.deps.connect({
       call: async (method, args) => {
         const handler = handlers[method];
@@ -366,8 +371,49 @@ export class PluginHost {
     };
   }
 
+  /**
+   * A plugin's request: through the vault with its key when [url] is a
+   * saved secret's host (#186), by the WebView's fetch otherwise. With
+   * [onChunk], the answer comes to it as it arrives.
+   */
+  private async send(
+    manifest: PluginManifest,
+    url: string,
+    init: unknown,
+    onChunk?: (text: string) => void,
+    signal?: AbortSignal,
+  ) {
+    const options = (init ?? {}) as { method?: string; headers?: Record<string, string>; body?: string };
+    const secret = await this.secretFor(manifest, url);
+    if (secret && this.deps.secrets) {
+      return this.deps.secrets.request(
+        {
+          name: secretName(manifest.id, secret.key),
+          header: secret.header,
+          url,
+          method: options.method ?? 'GET',
+          headers: options.headers,
+          body: options.body,
+        },
+        onChunk,
+        signal,
+      );
+    }
+    const response = await fetch(url, {
+      method: options.method ?? 'GET',
+      headers: options.headers,
+      body: options.body,
+      signal,
+    });
+    const answer = { status: response.status, headers: Object.fromEntries(response.headers.entries()) };
+    if (!onChunk || !response.ok || !response.body) return { ...answer, text: await response.text() };
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+    for (let part = await reader.read(); !part.done; part = await reader.read()) onChunk(part.value);
+    return { ...answer, text: '' };
+  }
+
   /** What [manifest]'s plugin can call, as the spec's api names it. */
-  private handlers(manifest: PluginManifest): Record<string, Handler> {
+  private handlers(manifest: PluginManifest, running: Running): Record<string, Handler> {
     const declared = (key: string) => {
       const secret = manifest.secrets.find((candidate) => candidate.key === key);
       if (!secret) throw new Error(`The plugin has no secret "${key}" in its manifest`);
@@ -409,30 +455,36 @@ export class PluginHost {
       },
       'network.fetch': {
         permission: 'network',
-        run: async ([url, init]) => {
-          const options = (init ?? {}) as { method?: string; headers?: Record<string, string>; body?: string };
-          // To a host of one of its secrets, saved: the request goes with it, through the vault (#186)
-          const secret = await this.secretFor(manifest, String(url));
-          if (secret && this.deps.secrets) {
-            return this.deps.secrets.request({
-              name: secretName(manifest.id, secret.key),
-              header: secret.header,
-              url: String(url),
-              method: options.method ?? 'GET',
-              headers: options.headers,
-              body: options.body,
-            });
-          }
-          const response = await fetch(String(url), {
-            method: options.method ?? 'GET',
-            headers: options.headers,
-            body: options.body,
-          });
-          return {
-            status: response.status,
-            headers: Object.fromEntries(response.headers.entries()),
-            text: await response.text(),
+        // To a host of one of its secrets, saved: the request goes with it, through the vault (#186)
+        run: ([url, init]) => this.send(manifest, String(url), init),
+      },
+      'network.stream': {
+        permission: 'network',
+        // The answer as it arrives, each part to the plugin's listener in order, all of it before this resolves
+        run: async ([url, init, id]) => {
+          const stream = String(id);
+          const controller = new AbortController();
+          running.streams.set(stream, controller);
+          let delivered: Promise<unknown> = Promise.resolve();
+          const onChunk = (text: string) => {
+            delivered = delivered.then(() => running.connection?.emit(`network.chunk:${stream}`, text));
           };
+          try {
+            const answer = await this.send(manifest, String(url), init, onChunk, controller.signal);
+            await delivered;
+            return answer;
+          } catch (failure) {
+            if (controller.signal.aborted) throw new Error('Cancelled', { cause: failure });
+            throw failure;
+          } finally {
+            running.streams.delete(stream);
+          }
+        },
+      },
+      'network.cancel': {
+        permission: 'network',
+        run: ([id]) => {
+          running.streams.get(String(id))?.abort();
         },
       },
       'window.showMessage': {
