@@ -97,6 +97,11 @@ Todo lo de `api` que habla con la app devuelve una **promesa**; `api.settings.ge
 | `api.window.showInput({ title, placeholder, value })` | — | Pide una línea de texto; resuelve al texto, o `null` si se cancela |
 | `api.storage.get(key)` / `set(key, value)` / `delete(key)` | — | Datos del propio plugin (cualquier valor JSON), guardados entre arranques; hasta 256 KB por plugin. `get` de una clave que no hay da `null`; `set(key, null)` la borra. Se borran al desinstalar |
 | `api.network.fetch(url, { method, headers, body })` | `network` | Solo existe si el usuario lo permitió. Resuelve a `{ status, headers, text }`. Hacia el `host` de una de sus claves guardadas, la petición sale con la clave |
+| `api.fs.root()` | `fs.read` | El nombre del proyecto abierto, o `null` si no hay ninguno |
+| `api.fs.list()` | `fs.read` | Sus archivos: `[{ path, size }]` (rutas relativas al proyecto; sin `.git`, `.pepino` ni `node_modules`; hasta 5000) |
+| `api.fs.read(path)` | `fs.read` | El texto de un archivo del proyecto (`src/a.js`), hasta 1 MB; falla si es binario o si la ruta sale del proyecto |
+| `api.fs.find(query, limit?)` | `fs.read` | Rutas cuyo nombre se parece a `query` (búsqueda difusa, como la de arriba), hasta 100 |
+| `api.fs.search(query, { limit, caseSensitive })` | `fs.read` | Las líneas que contienen `query`: `[{ path, line, column, text }]`, hasta 200 |
 | `api.secrets.has(key)` | — | Si el usuario guardó esa clave (`true`/`false`). Nunca da la clave |
 | `api.secrets.ask(key)` | — | La app le pide la clave al usuario (campo oculto, con `help`); resuelve a `true` si la guardó, `false` si canceló |
 | `api.secrets.forget(key)` | — | La borra |
@@ -187,8 +192,9 @@ Cada persona usa **su propia cuenta**: un plugin que necesita una clave de API (
 |---|---|
 | `editor.read` | Leer el archivo abierto: su ruta, texto y selección |
 | `editor.write` | Insertar o sustituir texto en el archivo abierto (se puede deshacer) |
+| `fs.read` | Listar, leer y buscar los archivos del proyecto abierto (nada fuera de él) |
 | `network` | `api.network.fetch`; necesita `networkJustification` |
-| `git.read`, `git.write`, `fs.read`, `fs.write` | **Reservados**: se pueden declarar, pero en v1 todavía no hay `api.git` ni `api.fs` |
+| `git.read`, `git.write`, `fs.write` | **Reservados**: se pueden declarar, pero en v1 todavía no hay `api.git` ni escritura de archivos (los cambios del asistente de IA se proponen como diffs que el usuario acepta, #60) |
 
 - Los permisos se aprueban antes de que el plugin se ejecute por primera vez: al instalarlo, o con **Review permissions**.
 - Si una versión nueva pide más, se pregunta otra vez, solo por los nuevos.

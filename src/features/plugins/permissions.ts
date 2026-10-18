@@ -19,7 +19,7 @@ export const PERMISSION_INFO: Record<Permission, { title: string; detail: string
   'git.read': { title: 'Read git', detail: "Your repositories' status, history and diffs." },
   'git.write': { title: 'Write git', detail: 'Commit and push, each time with your confirmation.' },
   network: { title: 'Use the internet', detail: 'Send and receive data over the network.' },
-  'fs.read': { title: 'Read files', detail: "Your projects' files." },
+  'fs.read': { title: 'Read the project', detail: 'List, read and search the files of the open project.' },
   'fs.write': { title: 'Write files', detail: "Create, change and delete your projects' files." },
 };
 

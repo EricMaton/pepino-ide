@@ -133,6 +133,7 @@ export function createServices(): Services {
     connect: createWorkerConnection,
     allowed: (plugin, permission) => pluginPermissions.allowed(plugin, permission),
     storage: preferences,
+    workspace,
     settings: (plugin) => pluginPermissions.settings(plugin),
     // Kept encrypted on Android; elsewhere only for the session
     secrets: Capacitor.getPlatform() === 'android' ? nativeSecretVault() : memorySecretVault(),
