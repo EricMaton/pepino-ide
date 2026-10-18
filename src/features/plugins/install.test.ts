@@ -76,7 +76,7 @@ function repository(files: Record<string, string>, entry: Partial<RegistryEntry>
   };
   const served: Record<string, string> = { 'index.json': JSON.stringify(index), ...files };
   const fetcher = vi.fn(async (url: string | URL | Request) => {
-    const path = String(url).slice('https://repo.test/'.length);
+    const path = new URL(String(url)).pathname.slice(1);
     const text = served[path];
     return text === undefined ? new Response('', { status: 404 }) : new Response(text);
   });
@@ -168,6 +168,11 @@ describe('the plugins repository (#55, #56)', () => {
     const { registry, served } = repository(FILES);
     const [entry] = await registry.list();
     expect(await registry.download(entry)).toEqual({ manifest: MANIFEST(), main: MAIN, assets: {} });
+
+    // Each request asks past GitHub's CDN cache, which keeps a file for 5 minutes
+    const { fetcher } = repository(FILES);
+    await createRegistry(fetcher as typeof fetch, 'https://repo.test/').list();
+    expect(new URL(String(fetcher.mock.calls[0][0])).searchParams.get('fresh')).toMatch(/^\d+$/);
 
     served['plugins/counter/main.js'] = MAIN.replace('+ 1', '+ 1000');
     await expect(registry.download(entry)).rejects.toThrow(

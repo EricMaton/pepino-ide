@@ -102,7 +102,10 @@ export function createRegistry(
   const get = async (path: string) => {
     let response: Response;
     try {
-      response = await fetcher(new URL(path, base).toString(), { cache: 'no-cache' });
+      // GitHub's CDN keeps raw files for 5 minutes: a query of its own each time asks for the current one
+      const url = new URL(path, base);
+      url.searchParams.set('fresh', String(Date.now()));
+      response = await fetcher(url.toString(), { cache: 'no-store' });
     } catch {
       throw new Error('Cannot reach the plugins repository: are you online?');
     }
