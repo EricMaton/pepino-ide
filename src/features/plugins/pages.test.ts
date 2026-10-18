@@ -163,7 +163,7 @@ describe('plugin pages (#185)', () => {
       'plugins/echo/echo.html': HTML,
     };
     const repository = createRegistry(
-      (async (url: string) => new Response(served[String(url).slice('https://repo.test/'.length)])) as typeof fetch,
+      (async (url: string) => new Response(served[new URL(String(url)).pathname.slice(1)])) as typeof fetch,
       'https://repo.test/',
     );
     const folders = memoryPluginFolders();
